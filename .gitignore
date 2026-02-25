@@ -19,5 +19,8 @@ dist/
 # Logs
 *.log
 
+# Lefthook
+lefthook-local.yml
+
 # OS
 .DS_Store

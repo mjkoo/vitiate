@@ -1,7 +1,8 @@
+#![deny(clippy::all)]
+
 use swc_core::ecma::{
     ast::Program,
-    transforms::testing::test_inline,
-    visit::{visit_mut_pass, VisitMut},
+    visit::{VisitMut, VisitMutWith},
 };
 use swc_core::plugin::{plugin_transform, proxies::TransformPluginProgramMetadata};
 
@@ -29,7 +30,10 @@ impl VisitMut for TransformVisitor {
 /// This requires manual handling of serialization / deserialization from ptrs.
 /// Refer swc_plugin_macro to see how does it work internally.
 #[plugin_transform]
-pub fn process_transform(mut program: Program, _metadata: TransformPluginProgramMetadata) -> Program {
+pub fn process_transform(
+    mut program: Program,
+    _metadata: TransformPluginProgramMetadata,
+) -> Program {
     program.visit_mut_with(&mut TransformVisitor);
     program
 }
@@ -38,12 +42,18 @@ pub fn process_transform(mut program: Program, _metadata: TransformPluginProgram
 // Recommended strategy to test plugin's transform is verify
 // the Visitor's behavior, instead of trying to run `process_transform` with mocks
 // unless explicitly required to do so.
-test_inline!(
-    Default::default(),
-    |_| visit_mut_pass(TransformVisitor),
-    boo,
-    // Input codes
-    r#"console.log("transform");"#,
-    // Output codes after transformed with plugin
-    r#"console.log("transform");"#
-);
+#[cfg(test)]
+mod tests {
+    use super::TransformVisitor;
+    use swc_core::ecma::{transforms::testing::test_inline, visit::visit_mut_pass};
+
+    test_inline!(
+        Default::default(),
+        |_| visit_mut_pass(TransformVisitor),
+        boo,
+        // Input codes
+        r#"console.log("transform");"#,
+        // Output codes after transformed with plugin
+        r#"console.log("transform");"#
+    );
+}

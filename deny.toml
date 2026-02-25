@@ -1,0 +1,29 @@
+[advisories]
+ignore = [
+  # Unmaintained transitive dependencies from swc_ecma_transforms_testing
+  "RUSTSEC-2021-0139", # ansi_term
+  "RUSTSEC-2020-0095", # difference
+]
+
+[licenses]
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "BSL-1.0",
+  "Unicode-3.0",
+  "Unlicense",
+]
+exceptions = [
+  { allow = ["MPL-2.0"], crate = "smartstring" },
+  { allow = ["LGPL-2.1-or-later"], crate = "r-efi" },
+]
+
+[bans]
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"

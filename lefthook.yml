@@ -1,0 +1,33 @@
+colors: true
+skip_in_ci: true
+
+pre-commit:
+  parallel: true
+  commands:
+    lint-staged:
+      run: pnpm exec lint-staged
+
+    rust-fmt-check:
+      glob: "*.rs"
+      run: cargo fmt -- --check
+
+    rust-clippy:
+      glob: "*.rs"
+      run: cargo clippy --workspace --all-targets -- --deny warnings
+
+    rust-deny:
+      glob: "{*.rs,*.toml,Cargo.lock}"
+      run: cargo deny check
+
+    rust-autoinherit:
+      glob: "*.toml"
+      run: >
+        cargo autoinherit --prefer-simple-dotted &&
+        git diff --exit-code -- Cargo.toml */Cargo.toml ||
+        { git checkout -- Cargo.toml */Cargo.toml;
+          echo "Run: cargo autoinherit --prefer-simple-dotted"; exit 1; }
+
+commit-msg:
+  commands:
+    commitlint:
+      run: pnpm exec commitlint --edit {1}

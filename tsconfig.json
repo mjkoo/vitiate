@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "noUncheckedIndexedAccess": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "target": "ESNext",
+    "esModuleInterop": true,
+    "skipLibCheck": true
+  },
+  "include": ["frotz/src/**/*.ts"]
+}

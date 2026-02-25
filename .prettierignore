@@ -1,0 +1,10 @@
+dist/
+target/
+*.node
+*.wasm
+node_modules/
+pnpm-lock.yaml
+Cargo.lock
+.turbo/
+.claude/
+frotz-napi/npm/

@@ -3,6 +3,12 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"]
+    },
+    "lint": {
+      "cache": false
+    },
+    "check": {
+      "cache": false
     }
   }
 }
