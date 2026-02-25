@@ -72,14 +72,14 @@ function requireNative() {
   } else if (process.platform === "android") {
     if (process.arch === "arm64") {
       try {
-        return require("./frotz-napi.android-arm64.node");
+        return require("./vitiate-napi.android-arm64.node");
       } catch (e) {
         loadErrors.push(e);
       }
       try {
-        const binding = require("frotz-napi-android-arm64");
+        const binding = require("vitiate-napi-android-arm64");
         const bindingPackageVersion =
-          require("frotz-napi-android-arm64/package.json").version;
+          require("vitiate-napi-android-arm64/package.json").version;
         if (
           bindingPackageVersion !== "0.1.0" &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
@@ -95,14 +95,14 @@ function requireNative() {
       }
     } else if (process.arch === "arm") {
       try {
-        return require("./frotz-napi.android-arm-eabi.node");
+        return require("./vitiate-napi.android-arm-eabi.node");
       } catch (e) {
         loadErrors.push(e);
       }
       try {
-        const binding = require("frotz-napi-android-arm-eabi");
+        const binding = require("vitiate-napi-android-arm-eabi");
         const bindingPackageVersion =
-          require("frotz-napi-android-arm-eabi/package.json").version;
+          require("vitiate-napi-android-arm-eabi/package.json").version;
         if (
           bindingPackageVersion !== "0.1.0" &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
@@ -128,14 +128,14 @@ function requireNative() {
         process.config?.variables?.node_target_type === "shared_library"
       ) {
         try {
-          return require("./frotz-napi.win32-x64-gnu.node");
+          return require("./vitiate-napi.win32-x64-gnu.node");
         } catch (e) {
           loadErrors.push(e);
         }
         try {
-          const binding = require("frotz-napi-win32-x64-gnu");
+          const binding = require("vitiate-napi-win32-x64-gnu");
           const bindingPackageVersion =
-            require("frotz-napi-win32-x64-gnu/package.json").version;
+            require("vitiate-napi-win32-x64-gnu/package.json").version;
           if (
             bindingPackageVersion !== "0.1.0" &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
@@ -151,14 +151,14 @@ function requireNative() {
         }
       } else {
         try {
-          return require("./frotz-napi.win32-x64-msvc.node");
+          return require("./vitiate-napi.win32-x64-msvc.node");
         } catch (e) {
           loadErrors.push(e);
         }
         try {
-          const binding = require("frotz-napi-win32-x64-msvc");
+          const binding = require("vitiate-napi-win32-x64-msvc");
           const bindingPackageVersion =
-            require("frotz-napi-win32-x64-msvc/package.json").version;
+            require("vitiate-napi-win32-x64-msvc/package.json").version;
           if (
             bindingPackageVersion !== "0.1.0" &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
@@ -175,14 +175,14 @@ function requireNative() {
       }
     } else if (process.arch === "ia32") {
       try {
-        return require("./frotz-napi.win32-ia32-msvc.node");
+        return require("./vitiate-napi.win32-ia32-msvc.node");
       } catch (e) {
         loadErrors.push(e);
       }
       try {
-        const binding = require("frotz-napi-win32-ia32-msvc");
+        const binding = require("vitiate-napi-win32-ia32-msvc");
         const bindingPackageVersion =
-          require("frotz-napi-win32-ia32-msvc/package.json").version;
+          require("vitiate-napi-win32-ia32-msvc/package.json").version;
         if (
           bindingPackageVersion !== "0.1.0" &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
@@ -198,14 +198,14 @@ function requireNative() {
       }
     } else if (process.arch === "arm64") {
       try {
-        return require("./frotz-napi.win32-arm64-msvc.node");
+        return require("./vitiate-napi.win32-arm64-msvc.node");
       } catch (e) {
         loadErrors.push(e);
       }
       try {
-        const binding = require("frotz-napi-win32-arm64-msvc");
+        const binding = require("vitiate-napi-win32-arm64-msvc");
         const bindingPackageVersion =
-          require("frotz-napi-win32-arm64-msvc/package.json").version;
+          require("vitiate-napi-win32-arm64-msvc/package.json").version;
         if (
           bindingPackageVersion !== "0.1.0" &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
@@ -226,14 +226,14 @@ function requireNative() {
     }
   } else if (process.platform === "darwin") {
     try {
-      return require("./frotz-napi.darwin-universal.node");
+      return require("./vitiate-napi.darwin-universal.node");
     } catch (e) {
       loadErrors.push(e);
     }
     try {
-      const binding = require("frotz-napi-darwin-universal");
+      const binding = require("vitiate-napi-darwin-universal");
       const bindingPackageVersion =
-        require("frotz-napi-darwin-universal/package.json").version;
+        require("vitiate-napi-darwin-universal/package.json").version;
       if (
         bindingPackageVersion !== "0.1.0" &&
         process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
@@ -249,14 +249,14 @@ function requireNative() {
     }
     if (process.arch === "x64") {
       try {
-        return require("./frotz-napi.darwin-x64.node");
+        return require("./vitiate-napi.darwin-x64.node");
       } catch (e) {
         loadErrors.push(e);
       }
       try {
-        const binding = require("frotz-napi-darwin-x64");
+        const binding = require("vitiate-napi-darwin-x64");
         const bindingPackageVersion =
-          require("frotz-napi-darwin-x64/package.json").version;
+          require("vitiate-napi-darwin-x64/package.json").version;
         if (
           bindingPackageVersion !== "0.1.0" &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
@@ -272,14 +272,14 @@ function requireNative() {
       }
     } else if (process.arch === "arm64") {
       try {
-        return require("./frotz-napi.darwin-arm64.node");
+        return require("./vitiate-napi.darwin-arm64.node");
       } catch (e) {
         loadErrors.push(e);
       }
       try {
-        const binding = require("frotz-napi-darwin-arm64");
+        const binding = require("vitiate-napi-darwin-arm64");
         const bindingPackageVersion =
-          require("frotz-napi-darwin-arm64/package.json").version;
+          require("vitiate-napi-darwin-arm64/package.json").version;
         if (
           bindingPackageVersion !== "0.1.0" &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
@@ -301,14 +301,14 @@ function requireNative() {
   } else if (process.platform === "freebsd") {
     if (process.arch === "x64") {
       try {
-        return require("./frotz-napi.freebsd-x64.node");
+        return require("./vitiate-napi.freebsd-x64.node");
       } catch (e) {
         loadErrors.push(e);
       }
       try {
-        const binding = require("frotz-napi-freebsd-x64");
+        const binding = require("vitiate-napi-freebsd-x64");
         const bindingPackageVersion =
-          require("frotz-napi-freebsd-x64/package.json").version;
+          require("vitiate-napi-freebsd-x64/package.json").version;
         if (
           bindingPackageVersion !== "0.1.0" &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
@@ -324,14 +324,14 @@ function requireNative() {
       }
     } else if (process.arch === "arm64") {
       try {
-        return require("./frotz-napi.freebsd-arm64.node");
+        return require("./vitiate-napi.freebsd-arm64.node");
       } catch (e) {
         loadErrors.push(e);
       }
       try {
-        const binding = require("frotz-napi-freebsd-arm64");
+        const binding = require("vitiate-napi-freebsd-arm64");
         const bindingPackageVersion =
-          require("frotz-napi-freebsd-arm64/package.json").version;
+          require("vitiate-napi-freebsd-arm64/package.json").version;
         if (
           bindingPackageVersion !== "0.1.0" &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
@@ -354,14 +354,14 @@ function requireNative() {
     if (process.arch === "x64") {
       if (isMusl()) {
         try {
-          return require("./frotz-napi.linux-x64-musl.node");
+          return require("./vitiate-napi.linux-x64-musl.node");
         } catch (e) {
           loadErrors.push(e);
         }
         try {
-          const binding = require("frotz-napi-linux-x64-musl");
+          const binding = require("vitiate-napi-linux-x64-musl");
           const bindingPackageVersion =
-            require("frotz-napi-linux-x64-musl/package.json").version;
+            require("vitiate-napi-linux-x64-musl/package.json").version;
           if (
             bindingPackageVersion !== "0.1.0" &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
@@ -377,14 +377,14 @@ function requireNative() {
         }
       } else {
         try {
-          return require("./frotz-napi.linux-x64-gnu.node");
+          return require("./vitiate-napi.linux-x64-gnu.node");
         } catch (e) {
           loadErrors.push(e);
         }
         try {
-          const binding = require("frotz-napi-linux-x64-gnu");
+          const binding = require("vitiate-napi-linux-x64-gnu");
           const bindingPackageVersion =
-            require("frotz-napi-linux-x64-gnu/package.json").version;
+            require("vitiate-napi-linux-x64-gnu/package.json").version;
           if (
             bindingPackageVersion !== "0.1.0" &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
@@ -402,14 +402,14 @@ function requireNative() {
     } else if (process.arch === "arm64") {
       if (isMusl()) {
         try {
-          return require("./frotz-napi.linux-arm64-musl.node");
+          return require("./vitiate-napi.linux-arm64-musl.node");
         } catch (e) {
           loadErrors.push(e);
         }
         try {
-          const binding = require("frotz-napi-linux-arm64-musl");
+          const binding = require("vitiate-napi-linux-arm64-musl");
           const bindingPackageVersion =
-            require("frotz-napi-linux-arm64-musl/package.json").version;
+            require("vitiate-napi-linux-arm64-musl/package.json").version;
           if (
             bindingPackageVersion !== "0.1.0" &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
@@ -425,14 +425,14 @@ function requireNative() {
         }
       } else {
         try {
-          return require("./frotz-napi.linux-arm64-gnu.node");
+          return require("./vitiate-napi.linux-arm64-gnu.node");
         } catch (e) {
           loadErrors.push(e);
         }
         try {
-          const binding = require("frotz-napi-linux-arm64-gnu");
+          const binding = require("vitiate-napi-linux-arm64-gnu");
           const bindingPackageVersion =
-            require("frotz-napi-linux-arm64-gnu/package.json").version;
+            require("vitiate-napi-linux-arm64-gnu/package.json").version;
           if (
             bindingPackageVersion !== "0.1.0" &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
@@ -450,14 +450,14 @@ function requireNative() {
     } else if (process.arch === "arm") {
       if (isMusl()) {
         try {
-          return require("./frotz-napi.linux-arm-musleabihf.node");
+          return require("./vitiate-napi.linux-arm-musleabihf.node");
         } catch (e) {
           loadErrors.push(e);
         }
         try {
-          const binding = require("frotz-napi-linux-arm-musleabihf");
+          const binding = require("vitiate-napi-linux-arm-musleabihf");
           const bindingPackageVersion =
-            require("frotz-napi-linux-arm-musleabihf/package.json").version;
+            require("vitiate-napi-linux-arm-musleabihf/package.json").version;
           if (
             bindingPackageVersion !== "0.1.0" &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
@@ -473,14 +473,14 @@ function requireNative() {
         }
       } else {
         try {
-          return require("./frotz-napi.linux-arm-gnueabihf.node");
+          return require("./vitiate-napi.linux-arm-gnueabihf.node");
         } catch (e) {
           loadErrors.push(e);
         }
         try {
-          const binding = require("frotz-napi-linux-arm-gnueabihf");
+          const binding = require("vitiate-napi-linux-arm-gnueabihf");
           const bindingPackageVersion =
-            require("frotz-napi-linux-arm-gnueabihf/package.json").version;
+            require("vitiate-napi-linux-arm-gnueabihf/package.json").version;
           if (
             bindingPackageVersion !== "0.1.0" &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
@@ -498,14 +498,14 @@ function requireNative() {
     } else if (process.arch === "loong64") {
       if (isMusl()) {
         try {
-          return require("./frotz-napi.linux-loong64-musl.node");
+          return require("./vitiate-napi.linux-loong64-musl.node");
         } catch (e) {
           loadErrors.push(e);
         }
         try {
-          const binding = require("frotz-napi-linux-loong64-musl");
+          const binding = require("vitiate-napi-linux-loong64-musl");
           const bindingPackageVersion =
-            require("frotz-napi-linux-loong64-musl/package.json").version;
+            require("vitiate-napi-linux-loong64-musl/package.json").version;
           if (
             bindingPackageVersion !== "0.1.0" &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
@@ -521,14 +521,14 @@ function requireNative() {
         }
       } else {
         try {
-          return require("./frotz-napi.linux-loong64-gnu.node");
+          return require("./vitiate-napi.linux-loong64-gnu.node");
         } catch (e) {
           loadErrors.push(e);
         }
         try {
-          const binding = require("frotz-napi-linux-loong64-gnu");
+          const binding = require("vitiate-napi-linux-loong64-gnu");
           const bindingPackageVersion =
-            require("frotz-napi-linux-loong64-gnu/package.json").version;
+            require("vitiate-napi-linux-loong64-gnu/package.json").version;
           if (
             bindingPackageVersion !== "0.1.0" &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
@@ -546,14 +546,14 @@ function requireNative() {
     } else if (process.arch === "riscv64") {
       if (isMusl()) {
         try {
-          return require("./frotz-napi.linux-riscv64-musl.node");
+          return require("./vitiate-napi.linux-riscv64-musl.node");
         } catch (e) {
           loadErrors.push(e);
         }
         try {
-          const binding = require("frotz-napi-linux-riscv64-musl");
+          const binding = require("vitiate-napi-linux-riscv64-musl");
           const bindingPackageVersion =
-            require("frotz-napi-linux-riscv64-musl/package.json").version;
+            require("vitiate-napi-linux-riscv64-musl/package.json").version;
           if (
             bindingPackageVersion !== "0.1.0" &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
@@ -569,14 +569,14 @@ function requireNative() {
         }
       } else {
         try {
-          return require("./frotz-napi.linux-riscv64-gnu.node");
+          return require("./vitiate-napi.linux-riscv64-gnu.node");
         } catch (e) {
           loadErrors.push(e);
         }
         try {
-          const binding = require("frotz-napi-linux-riscv64-gnu");
+          const binding = require("vitiate-napi-linux-riscv64-gnu");
           const bindingPackageVersion =
-            require("frotz-napi-linux-riscv64-gnu/package.json").version;
+            require("vitiate-napi-linux-riscv64-gnu/package.json").version;
           if (
             bindingPackageVersion !== "0.1.0" &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
@@ -593,14 +593,14 @@ function requireNative() {
       }
     } else if (process.arch === "ppc64") {
       try {
-        return require("./frotz-napi.linux-ppc64-gnu.node");
+        return require("./vitiate-napi.linux-ppc64-gnu.node");
       } catch (e) {
         loadErrors.push(e);
       }
       try {
-        const binding = require("frotz-napi-linux-ppc64-gnu");
+        const binding = require("vitiate-napi-linux-ppc64-gnu");
         const bindingPackageVersion =
-          require("frotz-napi-linux-ppc64-gnu/package.json").version;
+          require("vitiate-napi-linux-ppc64-gnu/package.json").version;
         if (
           bindingPackageVersion !== "0.1.0" &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
@@ -616,14 +616,14 @@ function requireNative() {
       }
     } else if (process.arch === "s390x") {
       try {
-        return require("./frotz-napi.linux-s390x-gnu.node");
+        return require("./vitiate-napi.linux-s390x-gnu.node");
       } catch (e) {
         loadErrors.push(e);
       }
       try {
-        const binding = require("frotz-napi-linux-s390x-gnu");
+        const binding = require("vitiate-napi-linux-s390x-gnu");
         const bindingPackageVersion =
-          require("frotz-napi-linux-s390x-gnu/package.json").version;
+          require("vitiate-napi-linux-s390x-gnu/package.json").version;
         if (
           bindingPackageVersion !== "0.1.0" &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
@@ -645,14 +645,14 @@ function requireNative() {
   } else if (process.platform === "openharmony") {
     if (process.arch === "arm64") {
       try {
-        return require("./frotz-napi.openharmony-arm64.node");
+        return require("./vitiate-napi.openharmony-arm64.node");
       } catch (e) {
         loadErrors.push(e);
       }
       try {
-        const binding = require("frotz-napi-openharmony-arm64");
+        const binding = require("vitiate-napi-openharmony-arm64");
         const bindingPackageVersion =
-          require("frotz-napi-openharmony-arm64/package.json").version;
+          require("vitiate-napi-openharmony-arm64/package.json").version;
         if (
           bindingPackageVersion !== "0.1.0" &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
@@ -668,14 +668,14 @@ function requireNative() {
       }
     } else if (process.arch === "x64") {
       try {
-        return require("./frotz-napi.openharmony-x64.node");
+        return require("./vitiate-napi.openharmony-x64.node");
       } catch (e) {
         loadErrors.push(e);
       }
       try {
-        const binding = require("frotz-napi-openharmony-x64");
+        const binding = require("vitiate-napi-openharmony-x64");
         const bindingPackageVersion =
-          require("frotz-napi-openharmony-x64/package.json").version;
+          require("vitiate-napi-openharmony-x64/package.json").version;
         if (
           bindingPackageVersion !== "0.1.0" &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
@@ -691,14 +691,14 @@ function requireNative() {
       }
     } else if (process.arch === "arm") {
       try {
-        return require("./frotz-napi.openharmony-arm.node");
+        return require("./vitiate-napi.openharmony-arm.node");
       } catch (e) {
         loadErrors.push(e);
       }
       try {
-        const binding = require("frotz-napi-openharmony-arm");
+        const binding = require("vitiate-napi-openharmony-arm");
         const bindingPackageVersion =
-          require("frotz-napi-openharmony-arm/package.json").version;
+          require("vitiate-napi-openharmony-arm/package.json").version;
         if (
           bindingPackageVersion !== "0.1.0" &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
@@ -732,7 +732,7 @@ if (!nativeBinding || process.env.NAPI_RS_FORCE_WASI) {
   let wasiBinding = null;
   let wasiBindingError = null;
   try {
-    wasiBinding = require("./frotz-napi.wasi.cjs");
+    wasiBinding = require("./vitiate-napi.wasi.cjs");
     nativeBinding = wasiBinding;
   } catch (err) {
     if (process.env.NAPI_RS_FORCE_WASI) {
@@ -741,7 +741,7 @@ if (!nativeBinding || process.env.NAPI_RS_FORCE_WASI) {
   }
   if (!nativeBinding || process.env.NAPI_RS_FORCE_WASI) {
     try {
-      wasiBinding = require("frotz-napi-wasm32-wasi");
+      wasiBinding = require("vitiate-napi-wasm32-wasi");
       nativeBinding = wasiBinding;
     } catch (err) {
       if (process.env.NAPI_RS_FORCE_WASI) {

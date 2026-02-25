@@ -1,7 +1,7 @@
 {
-  "name": "frotz",
+  "name": "vitiate",
   "version": "0.1.0",
-  "description": "Frotz - JavaScript instrumentation toolkit",
+  "description": "Vitiate - JavaScript instrumentation toolkit",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
@@ -15,7 +15,7 @@
     "test": "echo 'TODO: add tests'"
   },
   "dependencies": {
-    "frotz-napi": "workspace:*",
-    "frotz-instrument": "workspace:*"
+    "vitiate-napi": "workspace:*",
+    "vitiate-instrument": "workspace:*"
   }
 }

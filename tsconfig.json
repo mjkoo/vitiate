@@ -8,5 +8,5 @@
     "target": "ESNext",
     "skipLibCheck": true
   },
-  "include": ["frotz/src/**/*.ts"]
+  "include": ["vitiate/src/**/*.ts"]
 }

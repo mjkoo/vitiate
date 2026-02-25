@@ -1,5 +1,5 @@
 packages:
-  - frotz
-  - frotz-napi
-  - frotz-napi/npm/*
-  - frotz-instrument
+  - vitiate
+  - vitiate-napi
+  - vitiate-napi/npm/*
+  - vitiate-instrument

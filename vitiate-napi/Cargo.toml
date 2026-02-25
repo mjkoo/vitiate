@@ -2,7 +2,7 @@
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-name = "frotz_napi"
+name = "vitiate_napi"
 version.workspace = true
 
 [lints]
@@ -12,7 +12,7 @@ workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
-frotz-engine.workspace = true
+vitiate-engine.workspace = true
 napi.workspace = true
 napi-derive.workspace = true
 

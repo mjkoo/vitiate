@@ -1,14 +1,14 @@
 {
-  "name": "frotz-napi-darwin-x64",
+  "name": "vitiate-napi-darwin-x64",
   "version": "0.1.0",
   "cpu": [
     "x64"
   ],
-  "main": "frotz-napi.darwin-x64.node",
+  "main": "vitiate-napi.darwin-x64.node",
   "files": [
-    "frotz-napi.darwin-x64.node"
+    "vitiate-napi.darwin-x64.node"
   ],
-  "description": "Native Node.js addon for frotz",
+  "description": "Native Node.js addon for vitiate",
   "license": "MIT",
   "engines": {
     "node": ">= 18"

@@ -1,14 +1,14 @@
 {
-  "name": "frotz-napi-win32-x64-msvc",
+  "name": "vitiate-napi-darwin-arm64",
   "version": "0.1.0",
   "cpu": [
-    "x64"
+    "arm64"
   ],
-  "main": "frotz-napi.win32-x64-msvc.node",
+  "main": "vitiate-napi.darwin-arm64.node",
   "files": [
-    "frotz-napi.win32-x64-msvc.node"
+    "vitiate-napi.darwin-arm64.node"
   ],
-  "description": "Native Node.js addon for frotz",
+  "description": "Native Node.js addon for vitiate",
   "license": "MIT",
   "engines": {
     "node": ">= 18"
@@ -18,6 +18,6 @@
     "access": "public"
   },
   "os": [
-    "win32"
+    "darwin"
   ]
 }

@@ -1,5 +1,5 @@
 [package]
-name = "frotz-engine"
+name = "vitiate-engine"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -1,0 +1,17 @@
+{
+  "name": "vitiate-instrument",
+  "version": "0.1.0",
+  "description": "SWC WASM plugin for vitiate instrumentation",
+  "license": "MIT",
+  "keywords": [
+    "swc-plugin"
+  ],
+  "main": "vitiate_instrument.wasm",
+  "scripts": {
+    "build": "cargo build-wasip1 -p vitiate-instrument --release && cp ../target/wasm32-wasip1/release/vitiate_instrument.wasm ."
+  },
+  "files": [
+    "vitiate_instrument.wasm"
+  ],
+  "preferUnplugged": true
+}

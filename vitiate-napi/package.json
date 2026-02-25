@@ -1,7 +1,7 @@
 {
-  "name": "frotz-napi",
+  "name": "vitiate-napi",
   "version": "0.1.0",
-  "description": "Native Node.js addon for frotz",
+  "description": "Native Node.js addon for vitiate",
   "type": "commonjs",
   "main": "index.js",
   "license": "MIT",
@@ -10,7 +10,7 @@
     "index.js"
   ],
   "napi": {
-    "binaryName": "frotz-napi",
+    "binaryName": "vitiate-napi",
     "targets": [
       "x86_64-pc-windows-msvc",
       "x86_64-apple-darwin",

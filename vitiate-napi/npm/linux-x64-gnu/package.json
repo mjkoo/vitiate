@@ -1,14 +1,14 @@
 {
-  "name": "frotz-napi-linux-x64-gnu",
+  "name": "vitiate-napi-linux-x64-gnu",
   "version": "0.1.0",
   "cpu": [
     "x64"
   ],
-  "main": "frotz-napi.linux-x64-gnu.node",
+  "main": "vitiate-napi.linux-x64-gnu.node",
   "files": [
-    "frotz-napi.linux-x64-gnu.node"
+    "vitiate-napi.linux-x64-gnu.node"
   ],
-  "description": "Native Node.js addon for frotz",
+  "description": "Native Node.js addon for vitiate",
   "license": "MIT",
   "engines": {
     "node": ">= 18"

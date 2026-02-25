@@ -1,5 +1,5 @@
 [workspace]
-members = ["frotz-engine", "frotz-instrument", "frotz-napi"]
+members = ["vitiate-engine", "vitiate-instrument", "vitiate-napi"]
 resolver = "3"
 
 [workspace.package]
@@ -9,7 +9,7 @@ rust-version = "1.88"
 license = "MIT"
 
 [workspace.dependencies]
-frotz-engine = { path = "frotz-engine" }
+vitiate-engine = { path = "vitiate-engine" }
 napi = "3.0.0"
 napi-build = "2"
 napi-derive = "3.0.0"

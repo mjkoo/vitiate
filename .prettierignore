@@ -7,4 +7,4 @@ pnpm-lock.yaml
 Cargo.lock
 .turbo/
 .claude/
-frotz-napi/npm/
+vitiate-napi/npm/
