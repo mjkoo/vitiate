@@ -5,6 +5,7 @@ resolver = "3"
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
 license = "MIT"
 
 [workspace.dependencies]
@@ -14,6 +15,9 @@ napi-build = "2"
 napi-derive = "3.0.0"
 serde = "1"
 swc_core = "57.0.*"
+
+[workspace.lints.clippy]
+all = "deny"
 
 [profile.release]
 lto = true

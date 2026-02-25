@@ -1,8 +1,11 @@
 {
-  "name": "frotz",
+  "name": "frotz-root",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.30.2",
+  "engines": {
+    "node": ">= 18"
+  },
   "scripts": {
     "build": "turbo run build",
     "test": "turbo run test",
@@ -10,22 +13,21 @@
     "prepare": "lefthook install"
   },
   "lint-staged": {
-    "*.{ts,js,json,yaml,yml,md}": "prettier --check",
+    "*.{ts,js,json,yaml,yml,md}": "prettier --write",
     "*.ts": "eslint"
   },
   "devDependencies": {
     "@commitlint/cli": "^20.4.2",
     "@commitlint/config-conventional": "^20.4.2",
     "@eslint/js": "^10.0.1",
-    "@typescript-eslint/eslint-plugin": "^8.56.1",
-    "@typescript-eslint/parser": "^8.56.1",
     "eslint": "^10.0.2",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.3.0",
     "lefthook": "^2.1.1",
     "lint-staged": "^16.2.7",
     "prettier": "^3.8.1",
-    "turbo": "latest",
-    "typescript": "^5.9.3"
+    "turbo": "^2.8.10",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.56.1"
   }
 }

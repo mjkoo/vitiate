@@ -2,6 +2,7 @@
   "name": "frotz-napi",
   "version": "0.1.0",
   "description": "Native Node.js addon for frotz",
+  "type": "commonjs",
   "main": "index.js",
   "license": "MIT",
   "files": [

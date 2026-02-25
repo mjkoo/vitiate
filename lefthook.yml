@@ -19,6 +19,19 @@ pre-commit:
       glob: "{*.rs,*.toml,Cargo.lock}"
       run: cargo deny check
 
+    rust-msrv:
+      glob: "{*.rs,*.toml,Cargo.lock}"
+      run: >
+        cargo msrv verify --rust-version
+        "$(cargo metadata --format-version 1 --no-deps |
+           jq -r '[.packages[].rust_version // empty] | unique |
+                   if length == 1 then .[0]
+                   else error("inconsistent MSRVs: \(.)") end')"
+
+    ts-typecheck:
+      glob: "*.ts"
+      run: pnpm exec tsc --noEmit
+
     rust-autoinherit:
       glob: "*.toml"
       run: >

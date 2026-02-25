@@ -1,5 +1,3 @@
-#![deny(clippy::all)]
-
 use swc_core::ecma::{
     ast::Program,
     visit::{VisitMut, VisitMutWith},

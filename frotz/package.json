@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Frotz - JavaScript instrumentation toolkit",
   "license": "MIT",
+  "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
@@ -10,6 +11,7 @@
   ],
   "scripts": {
     "build": "echo 'TODO: add build step'",
+    "check": "tsc --noEmit",
     "test": "echo 'TODO: add tests'"
   },
   "dependencies": {
