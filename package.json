@@ -1,0 +1,13 @@
+{
+  "name": "frotz",
+  "private": true,
+  "packageManager": "pnpm@10.30.2",
+  "scripts": {
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "publish": "turbo run publish"
+  },
+  "devDependencies": {
+    "turbo": "latest"
+  }
+}

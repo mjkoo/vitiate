@@ -1,0 +1,26 @@
+{
+  "name": "frotz-napi-linux-arm64-gnu",
+  "version": "0.1.0",
+  "cpu": [
+    "arm64"
+  ],
+  "main": "frotz-napi.linux-arm64-gnu.node",
+  "files": [
+    "frotz-napi.linux-arm64-gnu.node"
+  ],
+  "description": "Native Node.js addon for frotz",
+  "license": "MIT",
+  "engines": {
+    "node": ">= 18"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
+  "os": [
+    "linux"
+  ],
+  "libc": [
+    "glibc"
+  ]
+}

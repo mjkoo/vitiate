@@ -1,0 +1,23 @@
+# Rust
+/target
+
+# Node
+node_modules/
+
+# Turbo
+.turbo
+
+# Build artifacts
+dist/
+*.node
+*.wasm
+
+# Env
+.env
+.env.*
+
+# Logs
+*.log
+
+# OS
+.DS_Store

@@ -1,0 +1,19 @@
+{
+  "name": "frotz",
+  "version": "0.1.0",
+  "description": "Frotz - JavaScript instrumentation toolkit",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "echo 'TODO: add build step'",
+    "test": "echo 'TODO: add tests'"
+  },
+  "dependencies": {
+    "frotz-napi": "workspace:*",
+    "frotz-instrument": "workspace:*"
+  }
+}

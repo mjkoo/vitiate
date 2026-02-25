@@ -1,0 +1,23 @@
+{
+  "name": "frotz-napi-darwin-x64",
+  "version": "0.1.0",
+  "cpu": [
+    "x64"
+  ],
+  "main": "frotz-napi.darwin-x64.node",
+  "files": [
+    "frotz-napi.darwin-x64.node"
+  ],
+  "description": "Native Node.js addon for frotz",
+  "license": "MIT",
+  "engines": {
+    "node": ">= 18"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
+  "os": [
+    "darwin"
+  ]
+}

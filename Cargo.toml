@@ -1,0 +1,19 @@
+[workspace]
+members = ["frotz-engine", "frotz-instrument", "frotz-napi"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+frotz-engine = { path = "frotz-engine" }
+napi = "3.0.0"
+napi-build = "2"
+napi-derive = "3.0.0"
+serde = "1"
+swc_core = "57.0.*"
+
+[profile.release]
+lto = true
+strip = "symbols"

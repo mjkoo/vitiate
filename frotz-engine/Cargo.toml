@@ -1,0 +1,6 @@
+[package]
+name = "frotz-engine"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
