@@ -23,7 +23,7 @@ jobs:
 
       - name: Install treefmt
         run: |
-          curl -sSfL https://github.com/numtide/treefmt/releases/latest/download/treefmt-x86_64-unknown-linux-gnu.tar.gz \
+          curl -sSfL https://github.com/numtide/treefmt/releases/download/v2.4.0/treefmt_2.4.0_linux_amd64.tar.gz \
             | tar -xz -C /usr/local/bin
 
       - name: Format check
