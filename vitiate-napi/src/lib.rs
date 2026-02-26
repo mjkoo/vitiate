@@ -1,3 +1,7 @@
+mod coverage;
+mod engine;
+mod types;
+
 use napi_derive::napi;
 
 #[napi]

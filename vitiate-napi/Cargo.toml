@@ -12,7 +12,8 @@ workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
-vitiate-engine.workspace = true
+libafl.workspace = true
+libafl_bolts.workspace = true
 napi.workspace = true
 napi-derive.workspace = true
 

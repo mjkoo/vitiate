@@ -3,6 +3,8 @@ ignore = [
   # Unmaintained transitive dependencies from swc_ecma_transforms_testing
   "RUSTSEC-2021-0139", # ansi_term
   "RUSTSEC-2020-0095", # difference
+  # Unmaintained transitive dependency from libafl
+  "RUSTSEC-2025-0141", # bincode
 ]
 
 [licenses]
@@ -16,6 +18,7 @@ allow = [
   "BSL-1.0",
   "Unicode-3.0",
   "Unlicense",
+  "Zlib",
 ]
 exceptions = [
   { allow = ["MPL-2.0"], crate = "smartstring" },
@@ -27,3 +30,4 @@ multiple-versions = "warn"
 
 [sources]
 unknown-registry = "deny"
+allow-git = ["https://github.com/AFLplusplus/LibAFL"]

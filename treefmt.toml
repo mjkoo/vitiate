@@ -1,0 +1,21 @@
+[global]
+excludes = [
+  "node_modules/**",
+  "target/**",
+  ".git/**",
+  ".turbo/**",
+  "*.lock",
+  "vitiate-napi/npm/**",
+  "vitiate-napi/index.js",
+  "vitiate-napi/index.d.ts",
+]
+
+[formatter.rust]
+command = "rustfmt"
+options = ["--edition", "2024"]
+includes = ["*.rs"]
+
+[formatter.prettier]
+command = "./node_modules/.bin/prettier"
+options = ["--write"]
+includes = ["*.ts", "*.js", "*.mjs", "*.json", "*.yaml", "*.yml", "*.md"]

@@ -8,13 +8,17 @@
   },
   "scripts": {
     "build": "turbo run build",
-    "test": "turbo run test",
+    "test": "cargo test --workspace && turbo run test",
+    "test:cargo": "cargo test --workspace",
+    "test:js": "turbo run test",
+    "format": "treefmt",
+    "format:check": "treefmt --ci",
+    "lint": "cargo clippy --workspace --all-targets -- -D warnings && pnpm exec eslint .",
+    "lint:cargo": "cargo clippy --workspace --all-targets -- -D warnings",
+    "lint:js": "pnpm exec eslint .",
+    "check": "turbo run check",
     "publish": "turbo run publish",
     "prepare": "lefthook install"
-  },
-  "lint-staged": {
-    "*.{ts,js,json,yaml,yml,md}": "prettier --write",
-    "*.ts": "eslint"
   },
   "devDependencies": {
     "@commitlint/cli": "^20.4.2",
@@ -24,7 +28,6 @@
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.3.0",
     "lefthook": "^2.1.1",
-    "lint-staged": "^16.2.7",
     "prettier": "^3.8.1",
     "turbo": "^2.8.10",
     "typescript": "^5.9.3",

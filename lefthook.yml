@@ -4,12 +4,12 @@ skip_in_ci: true
 pre-commit:
   parallel: true
   commands:
-    lint-staged:
-      run: pnpm exec lint-staged
+    format-check:
+      run: treefmt --ci
 
-    rust-fmt-check:
-      glob: "*.rs"
-      run: cargo fmt -- --check
+    eslint:
+      glob: "*.{ts,js,mjs}"
+      run: pnpm exec eslint .
 
     rust-clippy:
       glob: "*.rs"

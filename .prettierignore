@@ -8,3 +8,5 @@ Cargo.lock
 .turbo/
 .claude/
 vitiate-napi/npm/
+vitiate-napi/index.js
+vitiate-napi/index.d.ts

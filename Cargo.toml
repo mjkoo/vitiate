@@ -1,15 +1,16 @@
 [workspace]
-members = ["vitiate-engine", "vitiate-instrument", "vitiate-napi"]
+members = ["vitiate-instrument", "vitiate-napi"]
 resolver = "3"
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 license = "MIT"
 
 [workspace.dependencies]
-vitiate-engine = { path = "vitiate-engine" }
+libafl = { git = "https://github.com/AFLplusplus/LibAFL", branch = "main", default-features = false, features = ["std", "derive", "serdeany_autoreg"] }
+libafl_bolts = { git = "https://github.com/AFLplusplus/LibAFL", branch = "main", default-features = false, features = ["std", "derive", "serdeany_autoreg"] }
 napi = "3.0.0"
 napi-build = "2"
 napi-derive = "3.0.0"
