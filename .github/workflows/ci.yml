@@ -18,6 +18,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.89"
+          components: rustfmt
 
       - uses: Swatinem/rust-cache@v2
 
@@ -26,11 +27,7 @@ jobs:
           curl -sSfL https://github.com/numtide/treefmt/releases/download/v2.4.0/treefmt_2.4.0_linux_amd64.tar.gz \
             | tar -xz -C /usr/local/bin
 
-      - name: Format check
-        run: treefmt --ci
-
-      - name: Cargo deny
-        run: cargo deny check
+      - uses: EmbarkStudios/cargo-deny-action@v2
 
       - uses: pnpm/action-setup@v4
 
@@ -41,8 +38,11 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Format check
+        run: treefmt --ci
+
       - name: Type check
-        run: turbo run check
+        run: pnpm exec turbo run check
 
   test:
     name: Test
@@ -54,6 +54,7 @@ jobs:
         with:
           toolchain: "1.89"
           components: clippy
+          targets: wasm32-wasip1
 
       - uses: Swatinem/rust-cache@v2
 
@@ -73,10 +74,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Build
-        run: pnpm build
+        run: pnpm run build
 
       - name: JS test
-        run: turbo run test
+        run: pnpm exec turbo run test
 
       - name: ESLint
         run: pnpm exec eslint .

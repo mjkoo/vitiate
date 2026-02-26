@@ -1,6 +1,7 @@
 [global]
 excludes = [
   "node_modules/**",
+  ".pnpm-store/**",
   "target/**",
   ".git/**",
   ".turbo/**",
