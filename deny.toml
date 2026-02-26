@@ -27,6 +27,20 @@ exceptions = [
 
 [bans]
 multiple-versions = "warn"
+# Transitive duplicates from libafl (git main) and swc_core v57 that we can't resolve.
+# cargo-deny will warn if any of these become unused after a future cargo update.
+skip = [
+  { crate = "arbitrary-int@1.3.0", reason = "libafl internal: bitbybit requires 1.x" },
+  { crate = "cargo-platform@0.1.9", reason = "swc_core internal: testing uses cargo_metadata 0.18" },
+  { crate = "cargo_metadata@0.18.1", reason = "swc_core internal: testing vs vergen" },
+  { crate = "getrandom@0.3.4", reason = "libafl internal: fastbloom requires 0.3" },
+  { crate = "hashbrown@0.14.5", reason = "swc hstr/allocator require 0.14" },
+  { crate = "siphasher@0.3.11", reason = "swc_common requires 0.3" },
+  { crate = "thiserror@1.0.69", reason = "swc_core testing transitive via cargo_metadata 0.18" },
+  { crate = "thiserror-impl@1.0.69", reason = "follows thiserror 1.x" },
+  { crate = "unicode-width@0.1.14", reason = "swc_core internal: miette requires 0.1" },
+  { crate = "windows-sys@0.59.0", reason = "swc_core internal: stacker requires 0.59" },
+]
 
 [sources]
 unknown-registry = "deny"

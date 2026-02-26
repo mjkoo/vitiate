@@ -1,10 +1,12 @@
-colors: true
+colors: false
 skip_in_ci: true
 
 pre-commit:
   parallel: true
   commands:
     format-check:
+      env:
+        TERM: dumb
       run: treefmt --ci
 
     eslint:
