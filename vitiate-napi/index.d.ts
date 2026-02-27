@@ -45,4 +45,13 @@ export declare const enum IterationResult {
   Solution = 2
 }
 
+/**
+ * Perform a JS comparison and return the boolean result.
+ *
+ * This is a passthrough stub: it evaluates the comparison correctly but does
+ * not feed operand values to LibAFL for value-profile feedback. When CmpLog
+ * integration lands, the function body changes but the signature stays the same.
+ */
+export declare function traceCmp(left: unknown, right: unknown, cmpId: number, op: string): boolean
+
 export declare function version(): string

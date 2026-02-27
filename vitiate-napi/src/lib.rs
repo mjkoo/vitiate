@@ -1,5 +1,6 @@
 mod coverage;
 mod engine;
+mod trace;
 mod types;
 
 use napi_derive::napi;

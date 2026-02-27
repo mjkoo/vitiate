@@ -580,4 +580,5 @@ module.exports.Fuzzer = nativeBinding.Fuzzer
 module.exports.createCoverageMap = nativeBinding.createCoverageMap
 module.exports.ExitKind = nativeBinding.ExitKind
 module.exports.IterationResult = nativeBinding.IterationResult
+module.exports.traceCmp = nativeBinding.traceCmp
 module.exports.version = nativeBinding.version

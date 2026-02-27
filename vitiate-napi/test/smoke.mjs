@@ -4,6 +4,7 @@ import {
   Fuzzer,
   ExitKind,
   IterationResult,
+  traceCmp,
 } from "../index.js";
 
 // Create coverage map.
@@ -164,6 +165,60 @@ assert.equal(
   `Expected ${ITERATIONS + 2} total execs after crash+timeout, got ${stats.totalExecs}`,
 );
 
+// ===== traceCmp tests (Task 8.4) =====
+
+// Strict equality
+assert.equal(traceCmp(42, 42, 0, "==="), true, "42 === 42");
+assert.equal(traceCmp(42, "42", 0, "==="), false, '42 === "42"');
+assert.equal(traceCmp("hello", "hello", 0, "==="), true, '"hello" === "hello"');
+assert.equal(traceCmp(null, undefined, 0, "==="), false, "null === undefined");
+assert.equal(traceCmp(0, false, 0, "==="), false, "0 === false");
+
+// Strict inequality
+assert.equal(traceCmp(1, 2, 0, "!=="), true, "1 !== 2");
+assert.equal(traceCmp(1, 1, 0, "!=="), false, "1 !== 1");
+assert.equal(traceCmp("a", "b", 0, "!=="), true, '"a" !== "b"');
+
+// Abstract equality (type coercion)
+assert.equal(traceCmp(42, "42", 0, "=="), true, '42 == "42"');
+assert.equal(traceCmp(null, undefined, 0, "=="), true, "null == undefined");
+assert.equal(traceCmp(0, false, 0, "=="), true, "0 == false");
+assert.equal(traceCmp(1, "2", 0, "=="), false, '1 == "2"');
+
+// Abstract inequality
+assert.equal(traceCmp(42, "42", 0, "!="), false, '42 != "42"');
+assert.equal(traceCmp(1, 2, 0, "!="), true, "1 != 2");
+
+// Less than
+assert.equal(traceCmp(3, 5, 0, "<"), true, "3 < 5");
+assert.equal(traceCmp(5, 3, 0, "<"), false, "5 < 3");
+assert.equal(traceCmp(3, 3, 0, "<"), false, "3 < 3");
+assert.equal(traceCmp("a", "b", 0, "<"), true, '"a" < "b"');
+
+// Greater than
+assert.equal(traceCmp(5, 3, 0, ">"), true, "5 > 3");
+assert.equal(traceCmp(3, 5, 0, ">"), false, "3 > 5");
+
+// Less than or equal
+assert.equal(traceCmp(3, 5, 0, "<="), true, "3 <= 5");
+assert.equal(traceCmp(3, 3, 0, "<="), true, "3 <= 3");
+assert.equal(traceCmp(5, 3, 0, "<="), false, "5 <= 3");
+
+// Greater than or equal
+assert.equal(traceCmp("b", "a", 0, ">="), true, '"b" >= "a"');
+assert.equal(traceCmp(3, 3, 0, ">="), true, "3 >= 3");
+assert.equal(traceCmp(3, 5, 0, ">="), false, "3 >= 5");
+
+// Unknown operator should throw
+assert.throws(
+  () => traceCmp(1, 2, 0, "???"),
+  { message: /unknown operator/ },
+  "unknown operator should throw",
+);
+
+console.log("traceCmp tests passed!");
+
+// ===== Fuzzer smoke test summary =====
 console.log("Smoke test passed!");
 console.log(`  Total execs: ${stats.totalExecs}`);
 console.log(`  Corpus size: ${stats.corpusSize}`);
