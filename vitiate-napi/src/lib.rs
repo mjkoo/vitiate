@@ -1,3 +1,4 @@
+mod cmplog;
 mod coverage;
 mod engine;
 mod trace;

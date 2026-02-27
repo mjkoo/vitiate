@@ -7,7 +7,7 @@ pre-commit:
     format-check:
       env:
         TERM: dumb
-      run: treefmt --ci
+      run: cargo fmt --check && pnpm exec prettier --check .
 
     eslint:
       glob: "*.{ts,js,mjs}"

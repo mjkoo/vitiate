@@ -22,11 +22,6 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install treefmt
-        run: |
-          curl -sSfL https://github.com/numtide/treefmt/releases/download/v2.4.0/treefmt_2.4.0_linux_amd64.tar.gz \
-            | tar -xz -C /usr/local/bin
-
       - uses: EmbarkStudios/cargo-deny-action@v2
 
       - uses: pnpm/action-setup@v4
@@ -39,7 +34,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Format check
-        run: treefmt --ci
+        run: cargo fmt --check && pnpm exec prettier --check .
 
       - name: Type check
         run: pnpm exec turbo run check

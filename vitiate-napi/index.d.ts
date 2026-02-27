@@ -48,9 +48,9 @@ export declare const enum IterationResult {
 /**
  * Perform a JS comparison and return the boolean result.
  *
- * This is a passthrough stub: it evaluates the comparison correctly but does
- * not feed operand values to LibAFL for value-profile feedback. When CmpLog
- * integration lands, the function body changes but the signature stays the same.
+ * When a Fuzzer is active (CmpLog enabled), the comparison operands are
+ * recorded for use by the I2S replacement mutator. When no Fuzzer is active,
+ * this is a pure passthrough with no side effects beyond the comparison.
  */
 export declare function traceCmp(left: unknown, right: unknown, cmpId: number, op: string): boolean
 

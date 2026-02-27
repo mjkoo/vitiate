@@ -218,6 +218,62 @@ assert.throws(
 
 console.log("traceCmp tests passed!");
 
+// ===== CmpLog end-to-end tests (Task 5.4) =====
+
+// Test that traceCmp records comparison operands and I2S mutations use them.
+// Strategy: seed with "foo", emit constant comparison traceCmp("foo", "bar"),
+// and verify I2S replaces "foo" with "bar" in generated inputs.
+{
+  const cmpMap = createCoverageMap(MAP_SIZE);
+  const cmpFuzzer = new Fuzzer(cmpMap, { maxInputLen: 256, seed: 12345 });
+
+  // Seed with a string containing one side of the comparison.
+  cmpFuzzer.addSeed(Buffer.from("foo"));
+
+  const CMP_ITERATIONS = 5000;
+  let foundBar = false;
+  let cmpCorpusGrew = false;
+
+  for (let i = 0; i < CMP_ITERATIONS; i++) {
+    const input = cmpFuzzer.getNextInput();
+
+    // Emit a constant comparison: I2S will learn that "foo" <-> "bar".
+    traceCmp("foo", "bar", 1, "===");
+
+    // Set some coverage based on input content.
+    if (input.length > 0) {
+      cmpMap[input[0] % MAP_SIZE] = 1;
+    }
+
+    const result = cmpFuzzer.reportResult(ExitKind.Ok);
+    if (result === IterationResult.Interesting) {
+      cmpCorpusGrew = true;
+    }
+
+    // Check if I2S produced "bar" in the input.
+    if (input.includes("bar")) {
+      foundBar = true;
+    }
+  }
+
+  assert.ok(
+    cmpCorpusGrew,
+    "CmpLog fuzzer corpus should grow with coverage feedback",
+  );
+
+  // I2S replacement should produce "bar" by replacing "foo" bytes in the input.
+  assert.ok(
+    foundBar,
+    "I2S replacement should produce 'bar' from 'foo' comparison",
+  );
+
+  const cmpStats = cmpFuzzer.stats;
+  assert.equal(cmpStats.totalExecs, CMP_ITERATIONS);
+  console.log("CmpLog tests passed!");
+  console.log(`  CmpLog corpus size: ${cmpStats.corpusSize}`);
+  console.log(`  Found I2S replacement: ${foundBar}`);
+}
+
 // ===== Fuzzer smoke test summary =====
 console.log("Smoke test passed!");
 console.log(`  Total execs: ${stats.totalExecs}`);

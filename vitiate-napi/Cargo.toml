@@ -16,6 +16,7 @@ libafl.workspace = true
 libafl_bolts.workspace = true
 napi.workspace = true
 napi-derive.workspace = true
+ryu-js.workspace = true
 
 [build-dependencies]
 napi-build.workspace = true

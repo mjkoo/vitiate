@@ -3,9 +3,9 @@ use napi_derive::napi;
 
 /// Perform a JS comparison and return the boolean result.
 ///
-/// This is a passthrough stub: it evaluates the comparison correctly but does
-/// not feed operand values to LibAFL for value-profile feedback. When CmpLog
-/// integration lands, the function body changes but the signature stays the same.
+/// When a Fuzzer is active (CmpLog enabled), the comparison operands are
+/// recorded for use by the I2S replacement mutator. When no Fuzzer is active,
+/// this is a pure passthrough with no side effects beyond the comparison.
 #[napi]
 #[cfg_attr(test, allow(dead_code))]
 pub fn trace_cmp(
@@ -15,6 +15,15 @@ pub fn trace_cmp(
     #[napi(ts_arg_type = "number")] _cmp_id: u32,
     op: String,
 ) -> Result<bool> {
+    if crate::cmplog::is_enabled()
+        && let Some(entries) =
+            crate::cmplog::serialize_to_cmp_values(env.raw(), left.raw(), right.raw())
+    {
+        for entry in entries {
+            crate::cmplog::push(entry);
+        }
+    }
+
     match op.as_str() {
         "===" => env.strict_equals(left, right),
         "!==" => env.strict_equals(left, right).map(|v| !v),

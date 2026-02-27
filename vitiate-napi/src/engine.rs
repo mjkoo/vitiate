@@ -1,6 +1,5 @@
 use std::time::Instant;
 
-use libafl::HasNamedMetadata;
 use libafl::corpus::{Corpus, InMemoryCorpus, Testcase};
 use libafl::events::NopEventManager;
 use libafl::executors::ExitKind as LibaflExitKind;
@@ -9,10 +8,13 @@ use libafl::feedbacks::{
     CrashFeedback, Feedback, MaxMapFeedback, StateInitializer, TimeoutFeedback,
 };
 use libafl::inputs::BytesInput;
+use libafl::mutators::token_mutations::I2SRandReplace;
 use libafl::mutators::{HavocMutationsType, HavocScheduledMutator, Mutator, havoc_mutations};
 use libafl::observers::StdMapObserver;
+use libafl::observers::cmp::CmpValuesMetadata;
 use libafl::schedulers::{ProbabilitySamplingScheduler, Scheduler, TestcaseScore};
-use libafl::state::{HasCorpus, HasExecutions, HasSolutions, StdState};
+use libafl::state::{HasCorpus, HasExecutions, HasMaxSize, HasSolutions, StdState};
+use libafl::{HasMetadata, HasNamedMetadata};
 use libafl_bolts::rands::StdRand;
 use libafl_bolts::tuples::tuple_list;
 use napi::bindgen_prelude::*;
@@ -64,6 +66,7 @@ pub struct Fuzzer {
     crash_objective: CrashObjective,
     timeout_objective: TimeoutObjective,
     mutator: FuzzerMutator,
+    i2s_mutator: I2SRandReplace,
     map_ptr: *mut u8,
     map_len: usize,
     _coverage_map: Buffer,
@@ -129,9 +132,17 @@ impl Fuzzer {
 
         let scheduler = ProbabilitySamplingScheduler::new();
         let mutator = HavocScheduledMutator::new(havoc_mutations());
+        let i2s_mutator = I2SRandReplace::new();
 
         // Drop the temporary observer — feedback only holds a name-based Handle.
         drop(temp_observer);
+
+        // Set max input size on state for I2SRandReplace bounds.
+        state.set_max_size(max_input_len as usize);
+
+        // Initialize CmpLog: enable recording and add empty CmpValuesMetadata.
+        crate::cmplog::enable();
+        state.metadata_map_mut().insert(CmpValuesMetadata::new());
 
         Ok(Self {
             state,
@@ -140,6 +151,7 @@ impl Fuzzer {
             crash_objective,
             timeout_objective,
             mutator,
+            i2s_mutator,
             map_ptr,
             map_len,
             _coverage_map: coverage_map,
@@ -194,11 +206,15 @@ impl Fuzzer {
             .cloned_input_for_id(corpus_id)
             .map_err(|e| Error::from_reason(format!("Failed to get input: {e}")))?;
 
-        // Mutate the input.
+        // Mutate the input: havoc first, then I2S replacement.
         let _ = self
             .mutator
             .mutate(&mut self.state, &mut input)
             .map_err(|e| Error::from_reason(format!("Mutation failed: {e}")))?;
+        let _ = self
+            .i2s_mutator
+            .mutate(&mut self.state, &mut input)
+            .map_err(|e| Error::from_reason(format!("I2S mutation failed: {e}")))?;
 
         // Enforce max_input_len.
         let mut bytes: Vec<u8> = input.into();
@@ -305,6 +321,12 @@ impl Fuzzer {
             }
         };
 
+        // Drain CmpLog accumulator into state metadata for the next I2S pass.
+        let cmp_entries = crate::cmplog::drain();
+        self.state
+            .metadata_map_mut()
+            .insert(CmpValuesMetadata { list: cmp_entries });
+
         // Zero the coverage map in place for the next iteration.
         // SAFETY: Same pointer validity invariants as the observer construction
         // above. `write_bytes` zeroes `self.map_len` bytes starting at
@@ -344,6 +366,12 @@ impl Fuzzer {
             coverage_edges: coverage_edges as u32,
             execs_per_sec,
         }
+    }
+}
+
+impl Drop for Fuzzer {
+    fn drop(&mut self) {
+        crate::cmplog::disable();
     }
 }
 
@@ -631,5 +659,127 @@ mod tests {
             bytes.truncate(max_input_len as usize);
             assert!(bytes.len() <= max_input_len as usize);
         }
+    }
+
+    // === CmpLog integration tests (Tasks 5.1-5.3) ===
+
+    #[test]
+    fn test_cmplog_enable_disable_on_fuzzer_lifecycle() {
+        use crate::cmplog;
+        use libafl::observers::cmp::CmpValues;
+
+        // Reset cmplog state.
+        cmplog::disable();
+        cmplog::drain();
+        assert!(!cmplog::is_enabled());
+
+        // Simulate Fuzzer construction (enable cmplog + init metadata).
+        cmplog::enable();
+        assert!(cmplog::is_enabled());
+
+        // Push should work while enabled.
+        cmplog::push(CmpValues::U8((1, 2, false)));
+        let entries = cmplog::drain();
+        assert_eq!(entries.len(), 1);
+
+        // Simulate Fuzzer drop (disable cmplog).
+        cmplog::disable();
+        assert!(!cmplog::is_enabled());
+
+        // Push should be silently dropped while disabled.
+        cmplog::push(CmpValues::U8((3, 4, false)));
+        let entries = cmplog::drain();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn test_cmplog_entries_drained_into_metadata() {
+        use crate::cmplog;
+        use libafl::observers::cmp::{CmpValues, CmpValuesMetadata};
+
+        // Reset cmplog state.
+        cmplog::disable();
+        cmplog::drain();
+
+        let (map_ptr, _map) = make_coverage_map(65536);
+        let (mut state, _feedback, _objective) = make_state_and_feedback(map_ptr, 65536);
+
+        // Initialize CmpValuesMetadata on state (as Fuzzer::new() does).
+        state.metadata_map_mut().insert(CmpValuesMetadata::new());
+
+        // Simulate a fuzz iteration: enable, push entries, drain to metadata.
+        cmplog::enable();
+        cmplog::push(CmpValues::U8((10, 20, false)));
+        cmplog::push(CmpValues::U16((1000, 2000, false)));
+
+        let entries = cmplog::drain();
+        assert_eq!(entries.len(), 2);
+
+        // Insert into state metadata (as reportResult does).
+        state
+            .metadata_map_mut()
+            .insert(CmpValuesMetadata { list: entries });
+
+        // Verify metadata is accessible.
+        let meta = state
+            .metadata_map()
+            .get::<CmpValuesMetadata>()
+            .expect("CmpValuesMetadata should exist");
+        assert_eq!(meta.list.len(), 2);
+        assert_eq!(meta.list[0], CmpValues::U8((10, 20, false)));
+        assert_eq!(meta.list[1], CmpValues::U16((1000, 2000, false)));
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_i2s_replaces_matching_bytes() {
+        use crate::cmplog;
+        use libafl::observers::cmp::{CmpValues, CmpValuesMetadata, CmplogBytes};
+
+        // Reset cmplog state.
+        cmplog::disable();
+        cmplog::drain();
+
+        let (map_ptr, _map) = make_coverage_map(65536);
+        let (mut state, _feedback, _objective) = make_state_and_feedback(map_ptr, 65536);
+        state.set_max_size(4096);
+
+        // Create CmpValuesMetadata with a known comparison: "foo" vs "bar".
+        let mut foo_buf = [0u8; 32];
+        foo_buf[..3].copy_from_slice(b"foo");
+        let mut bar_buf = [0u8; 32];
+        bar_buf[..3].copy_from_slice(b"bar");
+        let cmp = CmpValues::Bytes((
+            CmplogBytes::from_buf_and_len(foo_buf, 3),
+            CmplogBytes::from_buf_and_len(bar_buf, 3),
+        ));
+        state
+            .metadata_map_mut()
+            .insert(CmpValuesMetadata { list: vec![cmp] });
+
+        // Seed the corpus with an input containing "foo".
+        let mut scheduler = ProbabilitySamplingScheduler::<UniformScore>::new();
+        let testcase = Testcase::new(BytesInput::new(b"foo".to_vec()));
+        let id = state.corpus_mut().add(testcase).unwrap();
+        scheduler.on_add(&mut state, id).unwrap();
+
+        // Run I2S mutations many times and check if "bar" ever appears.
+        let mut i2s = I2SRandReplace::new();
+        let mut found_bar = false;
+        for _ in 0..1000 {
+            let corpus_id = scheduler.next(&mut state).unwrap();
+            let mut input = state.corpus().cloned_input_for_id(corpus_id).unwrap();
+            let _ = i2s.mutate(&mut state, &mut input).unwrap();
+            let bytes: &[u8] = input.as_ref();
+            if bytes == b"bar" {
+                found_bar = true;
+                break;
+            }
+        }
+        assert!(
+            found_bar,
+            "I2SRandReplace should have produced 'bar' from 'foo'"
+        );
     }
 }

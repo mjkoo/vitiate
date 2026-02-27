@@ -13,16 +13,22 @@ The config SHALL support the following fields, all optional with defaults:
 - `seed` (bigint, optional): RNG seed for reproducible mutation sequences. If omitted,
   a random seed is used.
 
+On construction, the Fuzzer SHALL enable the CmpLog accumulator so that `traceCmp` calls
+record comparison operands. The Fuzzer SHALL also initialize `CmpValuesMetadata` on the
+fuzzer state and include `I2SRandReplace` in its mutation pipeline.
+
 #### Scenario: Create with defaults
 
 - **WHEN** `new Fuzzer(createCoverageMap(65536))` is called with no config
 - **THEN** a Fuzzer instance is created with maxInputLen=4096 and a random seed, holding
   a reference to the provided coverage map
+- **AND** the CmpLog accumulator is enabled
 
 #### Scenario: Create with custom config
 
 - **WHEN** `new Fuzzer(createCoverageMap(32768), { maxInputLen: 1024, seed: 42n })` is called
 - **THEN** a Fuzzer instance is created with the specified configuration
+- **AND** the CmpLog accumulator is enabled
 
 #### Scenario: Reproducible with same seed
 
@@ -65,7 +71,8 @@ structural tokens (JSON braces, null bytes, printable ASCII) as starting materia
 The system SHALL provide `fuzzer.getNextInput()` which returns a `Buffer` containing a
 mutated input derived from the corpus. The system uses LibAFL's havoc mutations (bit
 flips, byte flips, arithmetic, block insert/delete/copy, splicing) applied to a corpus
-entry selected by the scheduler.
+entry selected by the scheduler, followed by `I2SRandReplace` which may replace byte
+patterns matching recorded comparison operands.
 
 #### Scenario: Mutations produce varied outputs
 
@@ -77,12 +84,25 @@ entry selected by the scheduler.
 - **WHEN** a Fuzzer is configured with `maxInputLen: 128` and `getNextInput()` is called
 - **THEN** the returned Buffer length SHALL NOT exceed 128 bytes
 
+#### Scenario: I2S mutation uses comparison metadata
+
+- **WHEN** `CmpValuesMetadata` contains `CmpValues::Bytes("foo", "bar")`
+- **AND** the corpus contains an input with bytes `"foo"`
+- **AND** `getNextInput()` is called multiple times
+- **THEN** at least one returned input SHALL contain the bytes `"bar"` replacing `"foo"`
+  (demonstrating I2S replacement)
+
 ### Requirement: Report execution result
 
 The system SHALL provide `fuzzer.reportResult(exitKind: ExitKind)` which reads coverage
 data directly from the stashed coverage map pointer, evaluates whether the input was
 interesting (new coverage) or a crash, updates the corpus accordingly, zeroes the coverage
 map in place, and returns an `IterationResult`.
+
+Additionally, `reportResult` SHALL drain the thread-local CmpLog accumulator and store the
+resulting entries as `CmpValuesMetadata` on the fuzzer state. This metadata is available to
+`I2SRandReplace` during the next `getNextInput()` call. The CmpLog drain occurs after
+coverage feedback evaluation and before the method returns.
 
 The `ExitKind` enum SHALL have values: `Ok` (0), `Crash` (1), `Timeout` (2).
 
@@ -107,6 +127,12 @@ The `IterationResult` object SHALL contain:
 
 - **WHEN** `reportResult(ExitKind.Crash)` is called
 - **THEN** the result has `solution: true` and the solution count increases by one
+
+#### Scenario: CmpLog metadata updated on reportResult
+
+- **WHEN** instrumented code calls `traceCmp` with string operands during a fuzz iteration
+- **AND** `reportResult(ExitKind.Ok)` is called
+- **THEN** the fuzzer state contains `CmpValuesMetadata` with the recorded comparison entries
 
 ### Requirement: Fuzzer statistics
 
