@@ -15,6 +15,7 @@
     "test": "echo 'TODO: add tests'"
   },
   "dependencies": {
+    "@swc/core": "^1.15.17",
     "vitiate-napi": "workspace:*",
     "vitiate-instrument": "workspace:*"
   }

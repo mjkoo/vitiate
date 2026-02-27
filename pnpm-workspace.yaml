@@ -3,3 +3,6 @@ packages:
   - vitiate-napi
   - vitiate-napi/npm/*
   - vitiate-instrument
+
+onlyBuiltDependencies:
+  - "@swc/core"
