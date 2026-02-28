@@ -55,6 +55,6 @@ export function printCrash(error: Error, artifactPath: string): void {
 export function printSummary(state: ReporterState, stats: FuzzerStats): void {
   const elapsed = ((Date.now() - state.startTime) / 1000).toFixed(1);
   process.stderr.write(
-    `\nfuzz: done — execs: ${stats.totalExecs}, corpus: ${stats.corpusSize}, edges: ${stats.coverageEdges}, elapsed: ${elapsed}s\n`,
+    `\nfuzz: done - execs: ${stats.totalExecs}, corpus: ${stats.corpusSize}, edges: ${stats.coverageEdges}, elapsed: ${elapsed}s\n`,
   );
 }

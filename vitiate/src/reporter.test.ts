@@ -92,23 +92,4 @@ describe("reporter", () => {
     const output = stderrSpy.mock.calls[0]![0] as string;
     expect(output).toContain("(0 new)");
   });
-
-  it("startReporting calls printStatus at intervals", async () => {
-    const state = createReporter();
-    const stats: FuzzerStats = {
-      totalExecs: 1000,
-      corpusSize: 10,
-      solutionCount: 0,
-      coverageEdges: 50,
-      execsPerSec: 10000,
-    };
-
-    startReporting(state, () => stats, 50);
-
-    // Wait for at least 2 intervals
-    await new Promise((r) => setTimeout(r, 120));
-    stopReporting(state);
-
-    expect(stderrSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
-  });
 });

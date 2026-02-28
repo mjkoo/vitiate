@@ -26,17 +26,17 @@ return the correct boolean result matching JavaScript semantics for the given op
 
 Supported operators: `===`, `!==`, `==`, `!=`, `<`, `>`, `<=`, `>=`.
 
-#### Scenario: Strict equality — same type, same value
+#### Scenario: Strict equality - same type, same value
 
 - **WHEN** `traceCmp(42, 42, 0, "===")` is called
 - **THEN** the return value is `true`
 
-#### Scenario: Strict equality — different types
+#### Scenario: Strict equality - different types
 
 - **WHEN** `traceCmp(42, "42", 0, "===")` is called
 - **THEN** the return value is `false`
 
-#### Scenario: Abstract equality — type coercion
+#### Scenario: Abstract equality - type coercion
 
 - **WHEN** `traceCmp(42, "42", 0, "==")` is called
 - **THEN** the return value is `true`
@@ -65,7 +65,7 @@ Supported operators: `===`, `!==`, `==`, `!=`, `<`, `>`, `<=`, `>=`.
 
 In this iteration, `traceCmp` SHALL NOT feed operand values to LibAFL. It SHALL only
 evaluate the comparison and return the result. The function signature is designed for future
-CmpLog integration — when that lands, the internals change but the signature stays the same.
+CmpLog integration - when that lands, the internals change but the signature stays the same.
 
 #### Scenario: No side effects beyond comparison
 

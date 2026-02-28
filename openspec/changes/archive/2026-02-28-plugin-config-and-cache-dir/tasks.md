@@ -4,7 +4,7 @@
 - [x] 1.2 Add optional `fuzz?: FuzzDefaults` field to `VitiatePluginOptions`
 - [x] 1.3 Export `FuzzDefaults` from `index.ts`
 
-## 2. Plugin Config Hook — Inject Defaults
+## 2. Plugin Config Hook - Inject Defaults
 
 - [x] 2.1 Extend `vitiatePlugin()` in `plugin.ts` to accept and destructure `options.fuzz`
 - [x] 2.2 In the `config()` hook, resolve the Vite project root from the incoming config's `root` (default `process.cwd()`) and set `VITIATE_PROJECT_ROOT` if not already set

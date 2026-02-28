@@ -29,8 +29,8 @@
     "test:instrumented": "vitest run --config test/vitest.instrumented.config.ts"
   },
   "dependencies": {
-    "@optique/core": "github:mjkoo/optique#libfuzzer-style-options&path:packages/core",
-    "@optique/run": "github:mjkoo/optique#libfuzzer-style-options&path:packages/run",
+    "@optique/core": "1.0.0-dev.438+923a6492",
+    "@optique/run": "1.0.0-dev.438+923a6492",
     "@swc/core": "^1.15.17",
     "vitiate-napi": "workspace:*",
     "vitiate-instrument": "workspace:*"

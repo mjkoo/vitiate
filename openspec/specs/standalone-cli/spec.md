@@ -28,7 +28,7 @@ The CLI SHALL:
 The CLI SHALL accept libFuzzer-style flags (hyphen prefix, `=` separator):
 
 - `-max_len=N`: Maximum input length in bytes. Passed to `FuzzerConfig.maxInputLen`.
-- `-timeout=N`: Per-execution timeout in seconds. Converted to milliseconds for `FuzzOptions.timeout`.
+- `-timeout=N`: Per-execution timeout in seconds. Converted to milliseconds for `FuzzOptions.timeoutMs`. Applies to both synchronous and asynchronous fuzz targets.
 - `-runs=N`: Exit after N executions. Passed to `FuzzOptions.runs`.
 - `-seed=N`: RNG seed. Passed to `FuzzerConfig.seed`.
 - `-fork=N`: Accepted but ignored (not MVP). Print a warning if N > 1.
@@ -43,13 +43,20 @@ The CLI SHALL accept libFuzzer-style flags (hyphen prefix, `=` separator):
 #### Scenario: Multiple flags
 
 - **WHEN** `npx vitiate ./test.ts -timeout=10 -runs=100000 -seed=42` is executed
-- **THEN** the fuzzer is configured with timeout 10s, 100000 max runs, and seed 42
+- **THEN** the fuzzer is configured with timeout 10000ms, 100000 max runs, and seed 42
+- **AND** the timeout applies to both synchronous and asynchronous targets
 
 #### Scenario: Unsupported flag warns
 
 - **WHEN** `npx vitiate ./test.ts -fork=4` is executed
 - **THEN** a warning is printed that `-fork` is not yet supported
 - **AND** fuzzing proceeds with default settings
+
+#### Scenario: Timeout enforced on synchronous target
+
+- **WHEN** `npx vitiate ./test.ts -timeout=5` is executed against a synchronous fuzz target
+- **THEN** the watchdog is armed with 5000ms before each target execution
+- **AND** a synchronous hang is interrupted after 5 seconds
 
 ### Requirement: Corpus directory positional arguments
 

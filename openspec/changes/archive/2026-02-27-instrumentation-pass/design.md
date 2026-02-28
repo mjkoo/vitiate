@@ -3,7 +3,7 @@
 Vitiate's SWC WASM plugin (`vitiate-instrument`) is a stub that compiles to `wasm32-wasip1`
 and performs an identity transform. The fuzzing engine is complete and reads coverage from a
 shared `Uint8Array` buffer, but nothing writes to that buffer. This change implements the
-two instrumentation passes — edge coverage counters and comparison tracing — that bridge
+two instrumentation passes - edge coverage counters and comparison tracing - that bridge
 the gap between the engine and real JavaScript targets.
 
 The plugin runs inside SWC's transform pipeline. It receives the parsed AST, mutates it to
@@ -47,19 +47,19 @@ When a slot reaches 255, the next increment wraps to 0.
 - _Saturating counters (`+= (val < 255)`)_: Prevents wrap-around but adds a comparison and
   conditional on every branch edge in the hot loop. For targets with tight inner loops (e.g.,
   parsers iterating over input bytes), this comparison executes millions of times per second.
-- _Masked counters (`(val + 1) & 255`)_: Redundant — `Uint8Array` already wraps at 256.
+- _Masked counters (`(val + 1) & 255`)_: Redundant - `Uint8Array` already wraps at 256.
   The mask is a no-op that makes the generated code larger and harder to read for no benefit.
 
 **Rationale:** Wrapping is the AFL/libFuzzer convention. Both use wrapping u8 counters and
 have for decades. LibAFL's `MaxMapFeedback` tracks the historical maximum value per slot, so
-a counter that wraps from 255->0 doesn't lose information — the max was already recorded as
+a counter that wraps from 255->0 doesn't lose information - the max was already recorded as
 255 on a prior iteration. The bare `++` generates the smallest, fastest instrumentation code.
 
 ### 2. Edge IDs from file path + source span hash
 
 **Choice:** Each edge ID is `hash(file_path, span.lo, span.hi) % coverage_map_size`.
 
-**What is a source span?** SWC represents every AST node's location as a `Span` — a pair of
+**What is a source span?** SWC represents every AST node's location as a `Span` - a pair of
 byte offsets `(lo, hi)` into the original source text. `lo` is the byte offset where the
 node starts, `hi` is where it ends. For example, in `if (x > 0) { ... }`, the `IfStmt`
 node's span covers from the `i` in `if` to the closing `}`. The consequent block has its own
@@ -70,7 +70,7 @@ distinct span nested within.
 - _Deterministic:_ Spans come from the parsed source text. Same file -> same AST -> same
   byte offsets, regardless of compilation order or incremental builds.
 - _Unique per-edge within a file:_ Distinct branch points occupy different character ranges,
-  so their `(lo, hi)` pairs differ. Hash collisions are possible but acceptable — AFL itself
+  so their `(lo, hi)` pairs differ. Hash collisions are possible but acceptable - AFL itself
   assigns random 16-bit edge IDs and tolerates collisions at similar rates.
 - _Unique across files:_ The file path component prevents cross-file collisions.
 - _Corpus stable:_ A corpus entry that triggered new coverage remains valid across rebuilds.
@@ -99,14 +99,14 @@ instrumented module. Instrumented code references the local `__vitiate_cov` vari
 
 - _Direct global access on every hit (`globalThis.__vitiate_cov[ID]++`)_: V8 must look up
   `globalThis`, then do a property lookup for `__vitiate_cov`, on every branch. This is
-  measurably slower than a local variable reference — V8 can't inline or cache a
+  measurably slower than a local variable reference - V8 can't inline or cache a
   `globalThis` property access as effectively as a module-scoped `var`.
 - _Import from a module (`import { cov } from 'vitiate/runtime'`)_: Would require the
   instrumentation to inject import statements, which interact with module resolution,
   circular dependencies, and Vite's transform pipeline in complex ways. A `globalThis`
   read at module init is simpler and works regardless of module system.
 
-**Rationale:** The local variable is read on every branch edge — it must be fast. A single
+**Rationale:** The local variable is read on every branch edge - it must be fast. A single
 `globalThis` lookup at module load time is negligible. The buffer identity never changes
 (the engine zeroes it in-place), so the cached reference is always valid.
 
@@ -143,7 +143,7 @@ dispatches on it to perform the comparison using napi's value comparison APIs.
 
 - _Emit the comparison inline and only report operands_: e.g.,
   `(__vitiate_report_cmp(a, b, id), a === b)`. This avoids the overhead of a napi call for
-  the comparison itself but requires two expressions in the comma operator — the report call
+  the comparison itself but requires two expressions in the comma operator - the report call
   (side-effect only) and the original comparison. The reporting call still crosses the napi
   boundary. Net result: same number of napi calls, more complex generated code.
 - _Numeric op enum instead of string_: Avoids string comparison in the hot loop. But napi
@@ -163,7 +163,7 @@ signature stays the same.
 
 - **Edge ID collisions** -> With 65536 slots and potentially thousands of edges per file,
   collisions are inevitable for large codebases. This is the same tradeoff AFL makes and is
-  well-studied — collision rates below ~5% have negligible impact on fuzzing effectiveness.
+  well-studied - collision rates below ~5% have negligible impact on fuzzing effectiveness.
   The coverage map size is configurable if a project needs a larger ID space.
 
 - **`traceCmp` overhead** -> Every comparison in instrumented code crosses the napi boundary.

@@ -7,8 +7,7 @@ export interface FuzzOptions {
   maxLen?: number;
   /**
    * Per-execution timeout in milliseconds.
-   * Only applies to async fuzz targets; synchronous targets cannot be
-   * preempted from the JS event loop.
+   * Enforced by the native watchdog thread for both sync and async targets.
    */
   timeoutMs?: number;
   /** Total fuzzing time limit in milliseconds. */

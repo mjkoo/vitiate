@@ -1,5 +1,5 @@
 /**
- * fuzz() test registrar — like Vitest's bench() but for fuzz testing.
+ * fuzz() test registrar - like Vitest's bench() but for fuzz testing.
  */
 import { test } from "vitest";
 import { getCurrentTest } from "vitest/suite";
@@ -44,7 +44,7 @@ export function shouldEnterFuzzLoop(testName: string): boolean {
   try {
     return new RegExp(pattern).test(testName);
   } catch {
-    // Invalid regex — treat as literal substring match
+    // Invalid regex - treat as literal substring match
     return testName.includes(pattern);
   }
 }

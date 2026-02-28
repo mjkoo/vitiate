@@ -1,5 +1,5 @@
 /**
- * Vitest setup file — auto-initializes globals on import.
+ * Vitest setup file - auto-initializes globals on import.
  */
 export { initGlobals } from "./globals.js";
 import { initGlobals } from "./globals.js";

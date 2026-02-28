@@ -49,7 +49,7 @@ through NAPI.
 
 - _Keep separate crate (PRD design)_: Adds a crate boundary and dependency edge for a
   facade that is ~200 lines of code with exactly one consumer. The PRD's rationale
-  ("testable without Node.js") is satisfied by `cargo test` within `vitiate-napi` —
+  ("testable without Node.js") is satisfied by `cargo test` within `vitiate-napi` -
   the `#[napi]` attribute doesn't prevent pure-Rust unit tests.
 - _Put everything in a single file_: The engine has enough distinct concerns (coverage
   map management, LibAFL type wiring, NAPI bindings) that module separation aids
@@ -70,11 +70,11 @@ evaluate feedback, then zero the buffer in place. No per-iteration copy.
 
 - _Copy per iteration_: Copy the 65KB map into an `OwnedMapObserver` each iteration.
   Safe (no `unsafe`) but introduces two memops per iteration (copy + zero). At 50K
-  iter/sec this is ~3.2 GB/s — likely dwarfed by V8 execution time, but it's a
+  iter/sec this is ~3.2 GB/s - likely dwarfed by V8 execution time, but it's a
   pessimization with no architectural benefit. The copy buys nothing that the pointer
   stash doesn't already provide.
 - _SharedArrayBuffer_: Cross-thread-safe shared memory. This is orthogonal to the
-  copy-vs-pointer question — `SharedArrayBuffer` solves multi-worker memory sharing,
+  copy-vs-pointer question - `SharedArrayBuffer` solves multi-worker memory sharing,
   not per-iteration overhead. Multi-worker support requires solving harder problems
   first (corpus synchronization, scheduler coordination, feedback state merging) that
   are independent of coverage map transport. `SharedArrayBuffer` can be adopted when
@@ -116,7 +116,7 @@ Higher-level wrappers assume Rust owns the loop.
   coverage and execution time. The best long-term choice, but requires `CalibrationStage`
   (re-executes each new corpus entry multiple times to measure stability and timing) and
   `StdPowerMutationalStage` (replaces `StdMutationalStage`). These stages assume they own
-  the execution loop — calibration needs to invoke the target internally, which conflicts
+  the execution loop - calibration needs to invoke the target internally, which conflicts
   with our externally-driven architecture where JS calls `getNextInput()`/`reportResult()`.
   Integrating calibration requires either asking JS to re-run the target during
   `reportResult()` (changes the API contract) or running a shadow executor on the Rust
@@ -127,7 +127,7 @@ Higher-level wrappers assume Rust owns the loop.
   than PowerQueue in theory but same integration challenge.
 - _Entropic (libFuzzer-style)_: Not available in LibAFL. Entropic (Böhme et al., FSE 2020) was implemented directly in libFuzzer and never ported to the AFL family.
 - _RandScheduler_: Pure random selection. No calibration needed but no prioritization
-  either — strictly worse than probability sampling.
+  either - strictly worse than probability sampling.
 
 **Rationale:** `ProbabilitySamplingScheduler` provides non-deterministic scheduling with
 per-entry probability metadata, without requiring calibration stages. It's a meaningful
@@ -142,7 +142,7 @@ follow-up change once the basic loop is proven.
 small set of diverse default inputs to the corpus:
 
 ```
-""                    (empty — zero-length edge case)
+""                    (empty - zero-length edge case)
 "\n"                  (minimal valid ASCII, libFuzzer's default)
 "0"                   (numeric boundary value)
 "\x00\x00\x00\x00"   (binary/null-byte handling)
@@ -154,7 +154,7 @@ small set of diverse default inputs to the corpus:
 
 - _Single empty input_: Functional, but Herrera et al. (ISSTA 2021, 33 CPU-years of
   fuzzing across multiple fuzzers) found that a single empty seed is the worst-performing
-  strategy — higher exec/s but significantly fewer bugs and less coverage than even a
+  strategy - higher exec/s but significantly fewer bugs and less coverage than even a
   small diverse set. libFuzzer itself uses `\n`, not empty.
 - _Single non-empty input_: Better than empty, but still leaves the mutator to discover
   all structural tokens (braces, brackets, quotes) through random byte mutation, which is
@@ -197,14 +197,14 @@ in `lib.rs` are thin wrappers that delegate to `engine.rs`.
 - **Observer without executor** → We bypass LibAFL's executor pipeline entirely (JS runs
   the target). `MaxMapFeedback::is_interesting()` reads from the observer via the
   `MapObserver` trait and doesn't care how the map was populated. Verified by reading
-  the feedback implementation — it only calls `observer.get()` and compares against
+  the feedback implementation - it only calls `observer.get()` and compares against
   stored maxima.
 
 - **Coverage map zeroing ownership** → Rust zeros the JS Buffer in place via the stashed
   pointer at the end of `reportResult()`. Between calls the map is clean. If JS code runs
   between `reportResult()` returning and the next `getNextInput()` call (e.g., logging
   that touches instrumented code), those stray writes will be included in the next
-  iteration's coverage. This is acceptable — it matches libFuzzer's behavior with
+  iteration's coverage. This is acceptable - it matches libFuzzer's behavior with
   persistent mode harnesses.
 
 - **Pointer stash safety** → The `napi::Ref<Buffer>` prevents GC but the raw pointer
@@ -219,5 +219,5 @@ in `lib.rs` are thin wrappers that delegate to `engine.rs`.
   which biases early exploration toward structured-input code paths. This is a good
   default for JS targets (which overwhelmingly process strings/JSON), but targets
   expecting purely binary protocols won't benefit from the JSON seeds. The cost is
-  negligible — a few extra corpus entries that the scheduler will deprioritize if they
+  negligible - a few extra corpus entries that the scheduler will deprioritize if they
   don't produce interesting coverage.

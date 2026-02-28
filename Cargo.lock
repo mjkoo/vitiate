@@ -3023,8 +3023,10 @@ dependencies = [
 name = "vitiate_napi"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "libafl",
  "libafl_bolts",
+ "libc",
  "napi",
  "napi-build",
  "napi-derive",

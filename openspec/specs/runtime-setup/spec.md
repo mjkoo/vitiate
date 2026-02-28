@@ -2,7 +2,7 @@
 
 ### Requirement: Coverage map initialization
 
-The runtime setup module SHALL initialize `globalThis.__vitiate_cov` before any test code executes. The buffer identity SHALL remain stable for the entire process lifetime — instrumented modules cache a module-level reference and the identity MUST NOT change.
+The runtime setup module SHALL initialize `globalThis.__vitiate_cov` before any test code executes. The buffer identity SHALL remain stable for the entire process lifetime - instrumented modules cache a module-level reference and the identity MUST NOT change.
 
 In regression mode (default): `__vitiate_cov` SHALL be a plain `Uint8Array(65536)` that absorbs counter writes without any consumer reading the data.
 

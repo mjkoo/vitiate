@@ -1,6 +1,6 @@
 ## Why
 
-Vitiate's core value proposition — coverage-guided JavaScript fuzzing — requires a Rust
+Vitiate's core value proposition - coverage-guided JavaScript fuzzing - requires a Rust
 engine that mutates inputs, evaluates coverage feedback, and manages a corpus of
 interesting test cases. Nothing else in the system (SWC instrumentation, Vitest plugin,
 CLI) can function without this engine. It is the first component that must exist.
@@ -33,13 +33,13 @@ composable primitives.
 
 - `coverage-map`: Rust-allocated coverage map exposed as zero-copy Node.js Buffer for
   JS instrumentation to write to and Rust feedback to read from.
-- `fuzzing-engine`: Core fuzzing lifecycle — corpus management, input mutation, coverage
-  feedback evaluation, crash detection — exposed as a NAPI class with a step-by-step API
+- `fuzzing-engine`: Core fuzzing lifecycle - corpus management, input mutation, coverage
+  feedback evaluation, crash detection - exposed as a NAPI class with a step-by-step API
   that JavaScript drives.
 
 ### Modified Capabilities
 
-_None — no existing specs._
+_None - no existing specs._
 
 ## Impact
 

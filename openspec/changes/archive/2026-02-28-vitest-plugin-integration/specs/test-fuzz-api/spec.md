@@ -2,7 +2,7 @@
 
 ### Requirement: fuzz test registrar function
 
-The system SHALL export a `fuzz(name, target, options?)` function that registers a fuzz test with Vitest. The function SHALL follow the same pattern as Vitest's `bench()` — a top-level test registrar that appears in test output and integrates with Vitest's runner.
+The system SHALL export a `fuzz(name, target, options?)` function that registers a fuzz test with Vitest. The function SHALL follow the same pattern as Vitest's `bench()` - a top-level test registrar that appears in test output and integrates with Vitest's runner.
 
 Signature:
 
@@ -30,7 +30,7 @@ The `FuzzOptions` SHALL support:
 
 ### Requirement: Regression mode behavior
 
-In regression mode (no `VITIATE_FUZZ`), the `fuzz()` function SHALL load the corpus for the test and run each entry as a sub-test via Vitest. Each corpus entry produces a separate assertion — if the target throws for any entry, the test fails.
+In regression mode (no `VITIATE_FUZZ`), the `fuzz()` function SHALL load the corpus for the test and run each entry as a sub-test via Vitest. Each corpus entry produces a separate assertion - if the target throws for any entry, the test fails.
 
 If no corpus directory exists or the directory is empty, the test SHALL run the target once with an empty `Buffer` as a smoke test.
 
@@ -57,7 +57,7 @@ If no corpus directory exists or the directory is empty, the test SHALL run the 
 
 In fuzzing mode (`VITIATE_FUZZ` is set), the `fuzz()` function SHALL enter the LibAFL-driven mutation loop. It SHALL create a `Fuzzer` instance, load seeds, and run the fuzz loop until a termination condition is met.
 
-If `VITIATE_FUZZ` contains a non-`1` value, it SHALL be treated as a regex filter — only fuzz tests whose name matches the pattern SHALL enter the fuzz loop. Non-matching tests SHALL fall back to regression behavior.
+If `VITIATE_FUZZ` contains a non-`1` value, it SHALL be treated as a regex filter - only fuzz tests whose name matches the pattern SHALL enter the fuzz loop. Non-matching tests SHALL fall back to regression behavior.
 
 #### Scenario: Enter fuzz loop
 

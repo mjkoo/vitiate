@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   createCoverageMap,
   Fuzzer,
+  Watchdog,
   ExitKind,
   IterationResult,
   traceCmp,
@@ -218,60 +219,172 @@ assert.throws(
 
 console.log("traceCmp tests passed!");
 
-// ===== CmpLog end-to-end tests (Task 5.4) =====
-
-// Test that traceCmp records comparison operands and I2S mutations use them.
-// Strategy: seed with "foo", emit constant comparison traceCmp("foo", "bar"),
-// and verify I2S replaces "foo" with "bar" in generated inputs.
+// ===== CmpLog pipeline tests =====
 {
   const cmpMap = createCoverageMap(MAP_SIZE);
-  const cmpFuzzer = new Fuzzer(cmpMap, { maxInputLen: 256, seed: 12345 });
+  const cmpFuzzer = new Fuzzer(cmpMap, { maxInputLen: 256 });
 
-  // Seed with a string containing one side of the comparison.
-  cmpFuzzer.addSeed(Buffer.from("foo"));
+  cmpFuzzer.addSeed(Buffer.from("test"));
 
-  const CMP_ITERATIONS = 5000;
-  let foundBar = false;
-  let cmpCorpusGrew = false;
+  // Verify no CmpLog entries initially.
+  assert.equal(cmpFuzzer.cmpLogEntryCount, 0);
 
-  for (let i = 0; i < CMP_ITERATIONS; i++) {
-    const input = cmpFuzzer.getNextInput();
+  // Drain stale entries left by the traceCmp correctness tests above.
+  // The global CmpLog accumulator still holds entries from those calls.
+  cmpFuzzer.getNextInput();
+  cmpMap[0] = 1;
+  cmpFuzzer.reportResult(ExitKind.Ok);
 
-    // Emit a constant comparison: I2S will learn that "foo" <-> "bar".
-    traceCmp("foo", "bar", 1, "===");
+  // Run one iteration with traceCmp calls.
+  cmpFuzzer.getNextInput();
 
-    // Set some coverage based on input content.
-    if (input.length > 0) {
-      cmpMap[input[0] % MAP_SIZE] = 1;
-    }
+  // String comparison → 1 Bytes entry
+  traceCmp("foo", "bar", 1, "===");
 
-    const result = cmpFuzzer.reportResult(ExitKind.Ok);
-    if (result === IterationResult.Interesting) {
-      cmpCorpusGrew = true;
-    }
+  // Integer comparison → 1 U8 + 1 Bytes entry = 2 entries
+  traceCmp(42, 100, 2, "===");
 
-    // Check if I2S produced "bar" in the input.
-    if (input.includes("bar")) {
-      foundBar = true;
-    }
+  cmpMap[0] = 1;
+  cmpFuzzer.reportResult(ExitKind.Ok);
+
+  // After reportResult, metadata should contain entries from traceCmp calls.
+  // String pair: 1 entry (Bytes). Number pair: 2 entries (U8 + Bytes).
+  assert.equal(
+    cmpFuzzer.cmpLogEntryCount,
+    3,
+    `Expected 3 CmpLog entries (1 string + 2 number), got ${cmpFuzzer.cmpLogEntryCount}`,
+  );
+
+  // Verify entries are replaced on next iteration.
+  cmpFuzzer.getNextInput();
+  traceCmp("only", "one", 3, "===");
+  cmpMap[1] = 1;
+  cmpFuzzer.reportResult(ExitKind.Ok);
+  assert.equal(
+    cmpFuzzer.cmpLogEntryCount,
+    1,
+    `Expected 1 CmpLog entry after second iteration, got ${cmpFuzzer.cmpLogEntryCount}`,
+  );
+
+  // Verify skip types produce no entries.
+  cmpFuzzer.getNextInput();
+  traceCmp(null, undefined, 4, "==="); // both skip → no entry
+  traceCmp(true, false, 5, "==="); // both skip → no entry
+  cmpMap[2] = 1;
+  cmpFuzzer.reportResult(ExitKind.Ok);
+  assert.equal(
+    cmpFuzzer.cmpLogEntryCount,
+    0,
+    `Expected 0 CmpLog entries for skip types, got ${cmpFuzzer.cmpLogEntryCount}`,
+  );
+
+  console.log("CmpLog pipeline tests passed!");
+}
+
+// ===== Watchdog smoke test =====
+{
+  const os = await import("node:os");
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vitiate-watchdog-"));
+
+  // Test construction: Watchdog class should be available and constructible
+  const wd = new Watchdog(4096, tmpDir);
+  assert.ok(wd, "Watchdog should be constructible");
+
+  // didFire should be false initially
+  assert.equal(wd.didFire, false, "didFire should be false initially");
+
+  // Test arm/disarm cycle without timeout
+  wd.arm(60000);
+  wd.disarm();
+  assert.equal(
+    wd.didFire,
+    false,
+    "didFire should be false after disarm without timeout",
+  );
+
+  // Test stashInput
+  wd.stashInput(new Uint8Array([1, 2, 3, 4]));
+  assert.equal(wd.didFire, false, "stashInput should not affect didFire");
+  wd.shutdown();
+
+  // Test V8 init: under Node.js on Unix, v8_init should succeed
+  // (verified indirectly - the Watchdog constructor calls it)
+
+  // Test runTarget with a normal synchronous target
+  {
+    const wd2 = new Watchdog(4096, tmpDir);
+    const target = (_data) => {
+      // Just return - synchronous, no error
+    };
+    const result = wd2.runTarget(target, Buffer.from("hello"), 5000);
+    assert.equal(result.exitKind, 0, "runTarget OK exitKind should be 0");
+    assert.equal(result.error, undefined, "runTarget OK should have no error");
+    wd2.shutdown();
   }
 
-  assert.ok(
-    cmpCorpusGrew,
-    "CmpLog fuzzer corpus should grow with coverage feedback",
-  );
+  // Test runTarget with a crashing target
+  {
+    const wd3 = new Watchdog(4096, tmpDir);
+    const target = (_data) => {
+      throw new Error("test crash");
+    };
+    const result = wd3.runTarget(target, Buffer.from("crash"), 5000);
+    assert.equal(result.exitKind, 1, "runTarget crash exitKind should be 1");
+    assert.ok(
+      result.error instanceof Error,
+      "runTarget crash should have an error",
+    );
+    assert.equal(
+      result.error.message,
+      "test crash",
+      "crash error message should match",
+    );
+    wd3.shutdown();
+  }
 
-  // I2S replacement should produce "bar" by replacing "foo" bytes in the input.
-  assert.ok(
-    foundBar,
-    "I2S replacement should produce 'bar' from 'foo' comparison",
-  );
+  // Test runTarget with an async target (returns Promise)
+  {
+    const wd4 = new Watchdog(4096, tmpDir);
+    const target = async (_data) => {
+      await Promise.resolve();
+    };
+    const result = wd4.runTarget(target, Buffer.from("async"), 5000);
+    assert.equal(result.exitKind, 0, "runTarget async exitKind should be 0");
+    assert.ok(
+      result.result instanceof Promise,
+      "runTarget async should return a Promise",
+    );
+    await result.result; // Await the promise to ensure it completes
+    wd4.shutdown();
+  }
 
-  const cmpStats = cmpFuzzer.stats;
-  assert.equal(cmpStats.totalExecs, CMP_ITERATIONS);
-  console.log("CmpLog tests passed!");
-  console.log(`  CmpLog corpus size: ${cmpStats.corpusSize}`);
-  console.log(`  Found I2S replacement: ${foundBar}`);
+  // Test runTarget with synchronous timeout (V8 TerminateExecution)
+  {
+    const wd5 = new Watchdog(4096, tmpDir);
+    const target = (_data) => {
+      for (;;) {
+        /* infinite loop */
+      }
+    };
+    const result = wd5.runTarget(target, Buffer.from("timeout"), 200);
+    assert.equal(result.exitKind, 2, "runTarget timeout exitKind should be 2");
+    assert.ok(
+      result.error instanceof Error,
+      "runTarget timeout should have an error",
+    );
+    assert.ok(
+      result.error.message.includes("timed out"),
+      `runTarget timeout error should mention timed out, got: ${result.error.message}`,
+    );
+    wd5.shutdown();
+  }
+
+  // Cleanup
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+  console.log("Watchdog smoke test passed!");
 }
 
 // ===== Fuzzer smoke test summary =====

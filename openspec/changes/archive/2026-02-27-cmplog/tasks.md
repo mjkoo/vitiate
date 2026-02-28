@@ -16,7 +16,7 @@
 
 ## 4. Fuzzer Engine Integration
 
-- [x] 4.1 Add `I2SRandReplace` to the Fuzzer's mutation pipeline in `engine.rs` — apply it as a secondary mutation step after havoc in `get_next_input()`
+- [x] 4.1 Add `I2SRandReplace` to the Fuzzer's mutation pipeline in `engine.rs` - apply it as a secondary mutation step after havoc in `get_next_input()`
 - [x] 4.2 Update `Fuzzer::new()` to call `cmplog::enable()` and initialize `CmpValuesMetadata` on the state
 - [x] 4.3 Implement `Drop` for `Fuzzer` that calls `cmplog::disable()`
 - [x] 4.4 Update `Fuzzer::report_result()` to drain the cmplog accumulator and insert/replace `CmpValuesMetadata` on the state, after coverage feedback evaluation and before returning
@@ -26,7 +26,7 @@
 
 - [x] 5.1 Write Rust unit test: Fuzzer construction enables cmplog, drop disables it
 - [x] 5.2 Write Rust unit test: simulated comparison entries are drained into CmpValuesMetadata during reportResult
-- [x] 5.3 Write Rust unit test: I2SRandReplace fires when CmpValuesMetadata contains matching bytes — seed with "foo", add CmpValues::Bytes("foo","bar"), verify "bar" appears in output after multiple getNextInput calls
+- [x] 5.3 Write Rust unit test: I2SRandReplace fires when CmpValuesMetadata contains matching bytes - seed with "foo", add CmpValues::Bytes("foo","bar"), verify "bar" appears in output after multiple getNextInput calls
 - [x] 5.4 Update `vitiate-napi/test/smoke.mjs` to test CmpLog end-to-end: create Fuzzer, run iterations where traceCmp is called with known operands, verify corpus grows and I2S mutations produce expected byte patterns
 - [x] 5.5 Verify existing tests still pass (`cargo test --workspace` and `pnpm test`)
 

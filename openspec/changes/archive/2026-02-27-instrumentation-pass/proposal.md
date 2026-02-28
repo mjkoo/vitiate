@@ -1,17 +1,17 @@
 ## Why
 
-The fuzzing engine (`vitiate-napi`) is complete and tested — it can mutate inputs, evaluate
+The fuzzing engine (`vitiate-napi`) is complete and tested - it can mutate inputs, evaluate
 coverage feedback, detect crashes, and manage a corpus. But there is no coverage feedback to
 evaluate. The engine reads a coverage map that is always zero because nothing writes to it.
 
 The missing piece is compile-time instrumentation: an SWC WASM plugin that transforms
 JavaScript source code to insert coverage counters and comparison tracing hooks at every
-branch point. Without this, the fuzzer is blind — it mutates inputs randomly with no
+branch point. Without this, the fuzzer is blind - it mutates inputs randomly with no
 guidance from the target's control flow. This is the component that turns random mutation
 into coverage-guided fuzzing.
 
 Additionally, the napi bridge has no function for comparison tracing. The instrumentation
-will emit `__vitiate_trace_cmp` calls, so the runtime needs something to call — even if
+will emit `__vitiate_trace_cmp` calls, so the runtime needs something to call - even if
 the actual value-profile feedback loop isn't wired up to LibAFL yet.
 
 ## What Changes
@@ -23,7 +23,7 @@ the actual value-profile feedback loop isn't wired up to LibAFL yet.
   JSON.
 - **Add `traceCmp` to the napi bridge** (`vitiate-napi`). A new `trace.rs` module exports a
   passthrough comparison function that performs the comparison and returns the boolean result.
-  It does not feed operands to LibAFL in this iteration — full CmpLog integration is a
+  It does not feed operands to LibAFL in this iteration - full CmpLog integration is a
   separate change.
 - **Add comprehensive SWC fixture tests** for every instrumented construct (if/else, ternary,
   switch, loops, logical operators, catch, functions, comparisons, nested constructs).
@@ -43,7 +43,7 @@ the actual value-profile feedback loop isn't wired up to LibAFL yet.
 
 ### Modified Capabilities
 
-_None — existing `coverage-map` and `fuzzing-engine` specs are unaffected._
+_None - existing `coverage-map` and `fuzzing-engine` specs are unaffected._
 
 ## Impact
 

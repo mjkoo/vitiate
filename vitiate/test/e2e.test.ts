@@ -24,8 +24,8 @@ describe("e2e: regression mode with seeded corpus", () => {
     const seeds = loadSeedCorpus(E2E_DIR, "parse-planted-bug");
     expect(seeds.length).toBeGreaterThanOrEqual(3);
 
-    // Run the target with each seed — none should crash
-    // (seeds are "GET", "SET", "" — none trigger "GET!")
+    // Run the target with each seed - none should crash
+    // (seeds are "GET", "SET", "" - none trigger "GET!")
     for (const seed of seeds) {
       expect(() => parseCommand(seed)).not.toThrow();
     }
@@ -123,7 +123,7 @@ describe("e2e: fuzzing mode discovers planted bug", () => {
     const seeds = loadSeedCorpus(tmpDir, "parse-planted-bug");
     expect(seeds.length).toBe(1); // Just the crash artifact
 
-    // Replaying the crash artifact should fail — this is regression mode behavior
+    // Replaying the crash artifact should fail - this is regression mode behavior
     const crashEntry = seeds[0]!;
     expect(() => parseCommand(crashEntry)).toThrow("parser crash");
   });

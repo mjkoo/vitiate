@@ -5,11 +5,11 @@ Vitiate's configuration is currently split across four mechanisms:
 1. **Environment variables**: `VITIATE_FUZZ` (mode), `VITIATE_FUZZ_OPTIONS` (JSON-encoded options), `VITIATE_CACHE_DIR` (cache path), `VITIATE_CORPUS_DIRS` (extra corpus dirs).
 2. **CLI flags**: The standalone CLI (`cli.ts`) parses libFuzzer-style flags and injects them as env vars.
 3. **Per-test options**: `fuzz(name, target, { maxLen: 4096 })` in test files.
-4. **Plugin options**: `vitiatePlugin({ instrument: { ... } })` — currently only accepts instrumentation patterns.
+4. **Plugin options**: `vitiatePlugin({ instrument: { ... } })` - currently only accepts instrumentation patterns.
 
 The CLI already bridges flags → env vars (`cli.ts:68-76`). The fuzz loop merges per-test options with env-var-based CLI options (`fuzz.ts:58`). The missing link is a declarative way to set project-wide defaults in the Vitest config file.
 
-The cache directory (`getCacheDir()` in `corpus.ts`) resolves `.vitiate-corpus` via `path.resolve()`, which is relative to `process.cwd()`. This is fragile — the same project produces different cache paths depending on the working directory.
+The cache directory (`getCacheDir()` in `corpus.ts`) resolves `.vitiate-corpus` via `path.resolve()`, which is relative to `process.cwd()`. This is fragile - the same project produces different cache paths depending on the working directory.
 
 ## Goals / Non-Goals
 
@@ -23,13 +23,13 @@ The cache directory (`getCacheDir()` in `corpus.ts`) resolves `.vitiate-corpus` 
 
 - Standalone config file (`.vitiaterc`, `vitiate.config.js`). The Vitest config is sufficient.
 - Changing the env-var-based protocol between the CLI and the fuzz loop. The CLI continues to set env vars; plugin config is an alternative source for the same env vars.
-- Modifying the standalone CLI — it already has its own flag parsing and env var injection.
+- Modifying the standalone CLI - it already has its own flag parsing and env var injection.
 
 ## Decisions
 
 ### 1. Plugin config injects env vars via `config()` hook
 
-The plugin's `config()` hook already runs before any test code. We extend it to read `options.fuzz` and set the corresponding `process.env` values — the same ones the CLI sets. This means the fuzz loop, corpus module, and test registrar require zero changes to their option-reading code.
+The plugin's `config()` hook already runs before any test code. We extend it to read `options.fuzz` and set the corresponding `process.env` values - the same ones the CLI sets. This means the fuzz loop, corpus module, and test registrar require zero changes to their option-reading code.
 
 **Why env vars as the transport?** The plugin (`plugin.ts`) runs in the Vite config phase. The fuzz loop (`loop.ts`) and corpus module (`corpus.ts`) run inside Vitest workers. Workers inherit `process.env` from the parent, so env vars are the simplest cross-process communication channel. Vitest also has a `provide`/`inject` mechanism, but env vars are already the established pattern and avoid a dependency on Vitest internals.
 
@@ -47,8 +47,8 @@ The `config()` hook receives Vite's resolved `root` (the project root, typically
 
 `getCacheDir()` resolution order:
 
-1. `VITIATE_CACHE_DIR` env var — used as-is (absolute) or resolved relative to project root.
-2. `VITIATE_PROJECT_ROOT` env var + `.vitiate-corpus` — set by the plugin.
+1. `VITIATE_CACHE_DIR` env var - used as-is (absolute) or resolved relative to project root.
+2. `VITIATE_PROJECT_ROOT` env var + `.vitiate-corpus` - set by the plugin.
 3. Fall back to `path.resolve(".vitiate-corpus")` (cwd-relative, same as today).
 
 This means: when running via the Vitest plugin (normal case), the cache is always project-root-relative. When running outside of the plugin (unlikely), the old cwd behavior is preserved.

@@ -55,7 +55,7 @@ according to the following rules:
 - **Non-integer number operands:** Both operands are converted to their decimal string
   representation and stored as `CmpValues::Bytes`.
 - **All other types (boolean, null, undefined, object, symbol, BigInt):** The comparison
-  is skipped — no entry is recorded.
+  is skipped - no entry is recorded.
 
 The `v1_is_const` field SHALL be set to `false` for all integer `CmpValues` entries, since
 the system cannot statically determine which operand originates from the input.

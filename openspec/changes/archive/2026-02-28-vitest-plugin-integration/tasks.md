@@ -32,7 +32,7 @@
 
 ## 5. Fuzz loop
 
-- [x] 5.1 Implement `src/loop.ts`: `runFuzzLoop(target, options, callbacks)` — core iteration cycle with Fuzzer creation, seed loading, mutation loop, termination conditions
+- [x] 5.1 Implement `src/loop.ts`: `runFuzzLoop(target, options, callbacks)` - core iteration cycle with Fuzzer creation, seed loading, mutation loop, termination conditions
 - [x] 5.2 Implement crash detection: catch target exceptions, report as ExitKind.Crash, capture error and input
 - [x] 5.3 Implement async target support: await target if it returns a Promise
 - [x] 5.4 Implement periodic event loop yield via setImmediate every N iterations

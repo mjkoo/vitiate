@@ -122,21 +122,29 @@ describe("fuzz loop", () => {
     expect(result.crashArtifactPath).toBeDefined();
   });
 
-  it("times out an async target that exceeds timeoutMs", async () => {
+  it("times out a synchronous target that blocks the event loop", async () => {
     await setupFuzzingMode();
-    const target = async (_data: Buffer): Promise<void> => {
-      await new Promise((resolve) => setTimeout(resolve, 5000));
+    const target = (_data: Buffer): void => {
+      // Infinite synchronous loop - only interruptible via V8 TerminateExecution
+      for (;;) {
+        /* intentionally empty */
+      }
     };
 
-    const result = await runFuzzLoop(target, tmpDir, "timeout-test", {
+    const result = await runFuzzLoop(target, tmpDir, "sync-timeout", {
       runs: 1,
-      timeoutMs: 50,
+      timeoutMs: 200,
     });
 
     expect(result.crashed).toBe(true);
     expect(result.error).toBeInstanceOf(Error);
     expect(result.error!.message).toContain("timed out");
   });
+
+  // NOTE: Async timeout (busy microtask loop) is enforced by the _exit
+  // fallback at 5× timeout - V8 TerminateExecution cascades through all JS
+  // frames and cannot be caught, so the process terminates. This is tested
+  // as an integration test rather than in-process.
 
   it("does not time out a fast async target", async () => {
     await setupFuzzingMode();
@@ -155,7 +163,7 @@ describe("fuzz loop", () => {
     expect(callCount).toBe(10);
   });
 
-  it("does not leak timers or produce unhandled rejections for fast async targets with timeout", async () => {
+  it("does not produce unhandled rejections for fast async targets with timeout", async () => {
     await setupFuzzingMode();
     const rejections: unknown[] = [];
     const onRejection = (reason: unknown): void => {
@@ -175,8 +183,9 @@ describe("fuzz loop", () => {
         timeoutMs: 5000,
       });
 
-      // Let any straggler timer callbacks fire
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // Flush pending event-loop callbacks (setImmediate fires on the next
+      // event-loop turn without relying on wall-clock timing).
+      await new Promise((resolve) => setImmediate(resolve));
 
       expect(result.crashed).toBe(false);
       expect(callCount).toBe(50);
@@ -184,6 +193,25 @@ describe("fuzz loop", () => {
     } finally {
       process.removeListener("unhandledRejection", onRejection);
     }
+  });
+
+  it("does not misclassify a normal crash as a timeout", async () => {
+    await setupFuzzingMode();
+    const target = (data: Buffer): void => {
+      // Crash on any non-empty input - this is a regular throw, not a timeout
+      if (data.length > 0 && data[0] === 0x42) {
+        throw new Error("regular crash, not a timeout");
+      }
+    };
+
+    const result = await runFuzzLoop(target, tmpDir, "not-timeout", {
+      runs: 1_000_000,
+      timeoutMs: 5000, // Long timeout - should never fire
+    });
+
+    expect(result.crashed).toBe(true);
+    expect(result.error).toBeInstanceOf(Error);
+    expect(result.error!.message).toBe("regular crash, not a timeout");
   });
 
   it("throws when coverage map is not initialized", async () => {

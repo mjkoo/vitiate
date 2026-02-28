@@ -271,7 +271,7 @@ impl VisitMut for TransformVisitor {
         }
     }
 
-    // Tasks 5.1, 6.2: Binary expression — logical operators get edge counters
+    // Tasks 5.1, 6.2: Binary expression - logical operators get edge counters
     // Comparison replacement is handled in visit_mut_expr
     fn visit_mut_bin_expr(&mut self, n: &mut BinExpr) {
         n.visit_mut_children_with(self);
@@ -287,7 +287,7 @@ impl VisitMut for TransformVisitor {
         // Comparison operators are handled in visit_mut_expr
     }
 
-    // Task 6.1: Comparison tracing — replace comparison BinExpr with trace_cmp call
+    // Task 6.1: Comparison tracing - replace comparison BinExpr with trace_cmp call
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
 
@@ -322,7 +322,7 @@ impl VisitMut for TransformVisitor {
         }
 
         if let Some(ref mut alt) = n.alt {
-            // Don't wrap else-if in a block — it stays as IfStmt
+            // Don't wrap else-if in a block - it stays as IfStmt
             if !matches!(**alt, Stmt::If(_)) {
                 Self::ensure_block(alt);
             }
@@ -528,9 +528,9 @@ console.log("hello");"#
 var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;"#
     );
 
-    // ===== 3. Edge Coverage — Statements =====
+    // ===== 3. Edge Coverage - Statements =====
 
-    // Task 3.4: if/else — both branches get counters (exact output)
+    // Task 3.4: if/else - both branches get counters (exact output)
     #[test]
     fn if_else_both_branches() {
         let out = transform_no_trace_cmp(r#"if (c) { a(); } else { b(); }"#);
@@ -550,7 +550,7 @@ var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;"#
         );
     }
 
-    // Task 3.5: if without else — consequent gets counter, no alternate synthesized
+    // Task 3.5: if without else - consequent gets counter, no alternate synthesized
     #[test]
     fn if_no_else() {
         let out = transform_no_trace_cmp(r#"if (c) { a(); }"#);
@@ -558,7 +558,7 @@ var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;"#
         assert!(!out.contains("else"), "should not synthesize else: {out}");
     }
 
-    // Task 3.6: if without braces — consequent wrapped in block
+    // Task 3.6: if without braces - consequent wrapped in block
     #[test]
     fn if_no_braces() {
         let out = transform_no_trace_cmp(r#"if (c) a();"#);
@@ -570,7 +570,7 @@ var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;"#
         );
     }
 
-    // Task 3.8: ternary — both arms wrapped in comma expressions
+    // Task 3.8: ternary - both arms wrapped in comma expressions
     #[test]
     fn ternary_both_arms() {
         let out = transform_no_trace_cmp(r#"var x = c ? a : b;"#);
@@ -616,7 +616,7 @@ var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;"#
         );
     }
 
-    // ===== 4. Edge Coverage — Loops =====
+    // ===== 4. Edge Coverage - Loops =====
 
     // Task 4.6: for loop body gets counter
     #[test]
@@ -625,7 +625,7 @@ var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;"#
         assert!(out.contains("__vitiate_cov["), "missing counter: {out}");
     }
 
-    // Task 4.7: while loop without braces — body wrapped in block
+    // Task 4.7: while loop without braces - body wrapped in block
     #[test]
     fn while_no_braces() {
         let out = transform_no_trace_cmp(r#"while (c) a();"#);
@@ -640,9 +640,9 @@ var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;"#
         assert!(out.contains("__vitiate_cov["), "missing counter: {out}");
     }
 
-    // ===== 5. Edge Coverage — Logical Operators & Functions =====
+    // ===== 5. Edge Coverage - Logical Operators & Functions =====
 
-    // Task 5.2: logical AND — rhs wrapped
+    // Task 5.2: logical AND - rhs wrapped
     #[test]
     fn logical_and_rhs() {
         let out = transform_no_trace_cmp(r#"var x = a && b;"#);
@@ -651,7 +651,7 @@ var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;"#
         assert!(out.contains(","), "expected comma expression: {out}");
     }
 
-    // Task 5.3: nullish coalescing — rhs wrapped
+    // Task 5.3: nullish coalescing - rhs wrapped
     #[test]
     fn nullish_coalescing_rhs() {
         let out = transform_no_trace_cmp(r#"var x = a ?? b;"#);
@@ -669,7 +669,7 @@ var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;"#
         );
     }
 
-    // Task 5.6: try/catch — catch body gets counter
+    // Task 5.6: try/catch - catch body gets counter
     #[test]
     fn try_catch_counter() {
         let out = transform_no_trace_cmp(r#"try { a(); } catch (e) { b(); }"#);
@@ -679,7 +679,7 @@ var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;"#
         );
     }
 
-    // Task 5.8: function declaration — body gets counter
+    // Task 5.8: function declaration - body gets counter
     #[test]
     fn function_decl_counter() {
         let out = transform_no_trace_cmp(r#"function foo() { a(); }"#);
@@ -689,7 +689,7 @@ var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;"#
         );
     }
 
-    // Task 5.9: arrow function with block body — body gets counter
+    // Task 5.9: arrow function with block body - body gets counter
     #[test]
     fn arrow_block_body_counter() {
         let out = transform_no_trace_cmp(r#"const f = () => { a(); };"#);
@@ -699,7 +699,7 @@ var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;"#
         );
     }
 
-    // Task 5.10: arrow function with expression body — NOT modified
+    // Task 5.10: arrow function with expression body - NOT modified
     #[test]
     fn arrow_expr_body_not_modified() {
         let out = transform_no_trace_cmp(r#"const f = () => a;"#);
@@ -738,7 +738,7 @@ var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;"#
         assert!(out.contains(r#""<""#), "missing < operator string: {out}");
     }
 
-    // Task 6.5: comparison inside logical — no double-instrumentation
+    // Task 6.5: comparison inside logical - no double-instrumentation
     #[test]
     fn comparison_inside_logical() {
         let out = transform_default(r#"var x = a === b && c > d;"#);
@@ -768,7 +768,7 @@ var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;"#
         );
     }
 
-    // Task 6.7: trace_cmp disabled via config — comparisons untouched
+    // Task 6.7: trace_cmp disabled via config - comparisons untouched
     #[test]
     fn trace_cmp_disabled() {
         let out = transform_no_trace_cmp(r#"var x = a === b;"#);
@@ -781,7 +781,7 @@ var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;"#
 
     // ===== 7. Integration Tests =====
 
-    // Task 7.1: nested constructs — if inside for inside function
+    // Task 7.1: nested constructs - if inside for inside function
     #[test]
     fn nested_constructs() {
         let out = transform_no_trace_cmp(
@@ -795,7 +795,7 @@ var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;"#
         );
     }
 
-    // Task 7.2: full example — function with if/else, comparison tracing, and preamble
+    // Task 7.2: full example - function with if/else, comparison tracing, and preamble
     #[test]
     fn full_example() {
         let out = transform_default(
@@ -905,7 +905,7 @@ var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;"#
         );
     }
 
-    // Else-if chain — each branch gets a counter
+    // Else-if chain - each branch gets a counter
     #[test]
     fn else_if_chain() {
         let out = transform_no_trace_cmp(r#"if (a) { x(); } else if (b) { y(); } else { z(); }"#);

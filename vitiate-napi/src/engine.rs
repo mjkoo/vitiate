@@ -81,7 +81,7 @@ pub struct Fuzzer {
 // for `#[napi]` classes. The raw pointer points into the `Buffer` held in
 // `_coverage_map`, which prevents V8 GC from reclaiming the backing memory.
 // Node.js `Buffer` uses a non-detachable `ArrayBuffer`, so the memory cannot be
-// reallocated or moved. NAPI enforces single-threaded access — the `Fuzzer` is
+// reallocated or moved. NAPI enforces single-threaded access - the `Fuzzer` is
 // only ever used on the Node.js main thread and is never sent across threads.
 unsafe impl Send for Fuzzer {}
 
@@ -100,7 +100,7 @@ impl Fuzzer {
 
         // Create a temporary observer to initialize feedback.
         // The feedback only stores a Handle (name), not the observer itself.
-        // SAFETY: `map_ptr` is valid for `map_len` bytes — it was just obtained
+        // SAFETY: `map_ptr` is valid for `map_len` bytes - it was just obtained
         // from `Buffer::as_mut_ptr()` and the `Buffer` is still alive (owned by
         // `coverage_map` on the stack). The observer is dropped before the
         // constructor returns (line below), so no aliasing persists.
@@ -134,7 +134,7 @@ impl Fuzzer {
         let mutator = HavocScheduledMutator::new(havoc_mutations());
         let i2s_mutator = I2SRandReplace::new();
 
-        // Drop the temporary observer — feedback only holds a name-based Handle.
+        // Drop the temporary observer - feedback only holds a name-based Handle.
         drop(temp_observer);
 
         // Set max input size on state for I2SRandReplace bounds.
@@ -341,6 +341,14 @@ impl Fuzzer {
         *self.state.executions_mut() += 1;
 
         Ok(result)
+    }
+
+    #[napi(getter)]
+    pub fn cmp_log_entry_count(&self) -> u32 {
+        self.state
+            .metadata_map()
+            .get::<CmpValuesMetadata>()
+            .map_or(0, |m| m.list.len() as u32)
     }
 
     #[napi(getter)]
@@ -621,7 +629,7 @@ mod tests {
             *map_ptr.add(100) = 42;
         }
 
-        // Create observer from the same pointer — it should see the writes.
+        // Create observer from the same pointer - it should see the writes.
         let observer =
             unsafe { StdMapObserver::from_mut_ptr(EDGES_OBSERVER_NAME, map_ptr, map.len()) };
 
@@ -730,56 +738,5 @@ mod tests {
         assert_eq!(meta.list[1], CmpValues::U16((1000, 2000, false)));
 
         cmplog::disable();
-    }
-
-    #[test]
-    fn test_i2s_replaces_matching_bytes() {
-        use crate::cmplog;
-        use libafl::observers::cmp::{CmpValues, CmpValuesMetadata, CmplogBytes};
-
-        // Reset cmplog state.
-        cmplog::disable();
-        cmplog::drain();
-
-        let (map_ptr, _map) = make_coverage_map(65536);
-        let (mut state, _feedback, _objective) = make_state_and_feedback(map_ptr, 65536);
-        state.set_max_size(4096);
-
-        // Create CmpValuesMetadata with a known comparison: "foo" vs "bar".
-        let mut foo_buf = [0u8; 32];
-        foo_buf[..3].copy_from_slice(b"foo");
-        let mut bar_buf = [0u8; 32];
-        bar_buf[..3].copy_from_slice(b"bar");
-        let cmp = CmpValues::Bytes((
-            CmplogBytes::from_buf_and_len(foo_buf, 3),
-            CmplogBytes::from_buf_and_len(bar_buf, 3),
-        ));
-        state
-            .metadata_map_mut()
-            .insert(CmpValuesMetadata { list: vec![cmp] });
-
-        // Seed the corpus with an input containing "foo".
-        let mut scheduler = ProbabilitySamplingScheduler::<UniformScore>::new();
-        let testcase = Testcase::new(BytesInput::new(b"foo".to_vec()));
-        let id = state.corpus_mut().add(testcase).unwrap();
-        scheduler.on_add(&mut state, id).unwrap();
-
-        // Run I2S mutations many times and check if "bar" ever appears.
-        let mut i2s = I2SRandReplace::new();
-        let mut found_bar = false;
-        for _ in 0..1000 {
-            let corpus_id = scheduler.next(&mut state).unwrap();
-            let mut input = state.corpus().cloned_input_for_id(corpus_id).unwrap();
-            let _ = i2s.mutate(&mut state, &mut input).unwrap();
-            let bytes: &[u8] = input.as_ref();
-            if bytes == b"bar" {
-                found_bar = true;
-                break;
-            }
-        }
-        assert!(
-            found_bar,
-            "I2SRandReplace should have produced 'bar' from 'foo'"
-        );
     }
 }

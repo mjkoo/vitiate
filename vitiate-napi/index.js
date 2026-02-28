@@ -577,6 +577,7 @@ if (!nativeBinding) {
 
 module.exports = nativeBinding
 module.exports.Fuzzer = nativeBinding.Fuzzer
+module.exports.Watchdog = nativeBinding.Watchdog
 module.exports.createCoverageMap = nativeBinding.createCoverageMap
 module.exports.ExitKind = nativeBinding.ExitKind
 module.exports.IterationResult = nativeBinding.IterationResult

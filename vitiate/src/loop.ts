@@ -1,7 +1,8 @@
 /**
  * Core fuzzing loop: drives the LibAFL engine.
  */
-import { Fuzzer, ExitKind, IterationResult } from "vitiate-napi";
+import path from "node:path";
+import { Fuzzer, Watchdog, ExitKind, IterationResult } from "vitiate-napi";
 import type { FuzzerConfig } from "vitiate-napi";
 import type { FuzzOptions } from "./config.js";
 import {
@@ -11,6 +12,7 @@ import {
   getCacheDir,
   writeCorpusEntry,
   writeCrashArtifact,
+  sanitizeTestName,
 } from "./corpus.js";
 import {
   createReporter,
@@ -21,20 +23,6 @@ import {
 } from "./reporter.js";
 
 const YIELD_INTERVAL = 1000;
-
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  let timerId: ReturnType<typeof setTimeout>;
-  const timeout = new Promise<never>((_, reject) => {
-    timerId = setTimeout(
-      () => reject(new Error(`fuzz target timed out after ${ms}ms`)),
-      ms,
-    );
-  });
-  return Promise.race([promise, timeout]).finally(() => {
-    clearTimeout(timerId);
-    promise.catch(() => {}); // suppress unhandled rejection from losing promise
-  });
-}
 
 export interface FuzzLoopResult {
   crashed: boolean;
@@ -87,10 +75,21 @@ export async function runFuzzLoop(
     fuzzer.addSeed(seed);
   }
 
+  // Only create the watchdog when a timeout is configured. Creating a Watchdog
+  // spawns a thread, resolves V8 symbols via dlsym, and allocates an input
+  // stash - unnecessary overhead when no timeout enforcement is needed.
+  const timeoutMs = options.timeoutMs;
+  const watchdog: Watchdog | null =
+    timeoutMs !== undefined && timeoutMs > 0
+      ? new Watchdog(
+          fuzzerConfig.maxInputLen ?? 4096,
+          path.join(testDir, "testdata", "fuzz", sanitizeTestName(testName)),
+        )
+      : null;
+
   const reporter = createReporter();
   startReporting(reporter, () => fuzzer.stats);
 
-  const timeoutMs = options.timeoutMs;
   const startTime = Date.now();
   const maxTime = options.maxTotalTimeMs ?? Infinity;
   const maxRuns = options.runs ?? Infinity;
@@ -114,20 +113,74 @@ export async function runFuzzLoop(
 
       let exitKind = ExitKind.Ok;
       let caughtError: Error | undefined;
-      try {
-        const maybePromise = target(input);
-        if (maybePromise instanceof Promise) {
-          if (timeoutMs !== undefined && timeoutMs > 0) {
-            await withTimeout(maybePromise, timeoutMs);
-          } else {
-            await maybePromise;
+
+      if (timeoutMs !== undefined && timeoutMs > 0) {
+        if (!watchdog) {
+          throw new Error(
+            "unreachable: watchdog is null with timeout configured",
+          );
+        }
+        const wd = watchdog;
+
+        // Why a watchdog thread instead of setTimeout/Promise.race:
+        // The fuzz target may block the event loop (infinite loop, CPU-bound
+        // code), which prevents setTimeout callbacks from firing. The watchdog
+        // thread is immune to event loop starvation and can call
+        // V8::TerminateExecution from outside the JS context.
+
+        // runTarget: arms watchdog, calls target at the NAPI C level, disarms.
+        // V8 TerminateExecution bypasses JavaScript try/catch, so runTarget
+        // intercepts at the C level and calls CancelTerminateExecution before
+        // returning to JavaScript.
+        const targetResult = wd.runTarget(target, input, timeoutMs);
+
+        if (targetResult.exitKind === 2) {
+          // Sync timeout: V8 termination was intercepted at NAPI level
+          exitKind = ExitKind.Timeout;
+          caughtError =
+            targetResult.error instanceof Error
+              ? targetResult.error
+              : new Error("fuzz target timed out");
+        } else if (targetResult.exitKind === 1) {
+          // Sync crash
+          exitKind = ExitKind.Crash;
+          caughtError =
+            targetResult.error instanceof Error
+              ? targetResult.error
+              : new Error(String(targetResult.error));
+        } else if (targetResult.result instanceof Promise) {
+          // Async target returned a Promise - re-arm and await.
+          // The input was stashed by runTarget() at the start of this iteration
+          // and remains valid for the entire iteration including this async
+          // continuation, so re-arming without re-stashing is correct.
+          // If the async code hangs, V8 TerminateExecution cascades through
+          // all JS frames and the _exit fallback terminates the process.
+          wd.arm(timeoutMs);
+          try {
+            await targetResult.result;
+          } catch (e) {
+            if (wd.didFire) {
+              exitKind = ExitKind.Timeout;
+              caughtError = new Error("fuzz target timed out");
+            } else {
+              exitKind = ExitKind.Crash;
+              caughtError = e instanceof Error ? e : new Error(String(e));
+            }
+          } finally {
+            wd.disarm();
           }
         }
-      } catch (e) {
-        caughtError = e instanceof Error ? e : new Error(String(e));
-        exitKind = caughtError.message.includes("fuzz target timed out")
-          ? ExitKind.Timeout
-          : ExitKind.Crash;
+      } else {
+        // No timeout - call target directly
+        try {
+          const maybePromise = target(input);
+          if (maybePromise instanceof Promise) {
+            await maybePromise;
+          }
+        } catch (e) {
+          caughtError = e instanceof Error ? e : new Error(String(e));
+          exitKind = ExitKind.Crash;
+        }
       }
 
       const iterResult = fuzzer.reportResult(exitKind);
@@ -162,6 +215,7 @@ export async function runFuzzLoop(
   } finally {
     stopReporting(reporter);
     printSummary(reporter, fuzzer.stats);
+    watchdog?.shutdown();
     process.removeListener("SIGINT", sigintHandler);
   }
 

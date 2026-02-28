@@ -2,7 +2,7 @@
 
 Fuzzing configuration is scattered across four environment variables (`VITIATE_FUZZ`, `VITIATE_FUZZ_OPTIONS`, `VITIATE_CACHE_DIR`, `VITIATE_CORPUS_DIRS`), CLI flags, and per-test `FuzzOptions` arguments. There is no way to set project-wide fuzz defaults declaratively. Additionally, the cache directory resolves relative to `process.cwd()` rather than the project root, causing fragmented corpora when Vitest is invoked from different working directories.
 
-Since vitiate is a Vitest plugin, the Vitest/Vite config file is the natural place for project-wide defaults — users already have one. This change adds a `fuzz` section to the plugin options and anchors the cache directory to the Vite project root.
+Since vitiate is a Vitest plugin, the Vitest/Vite config file is the natural place for project-wide defaults - users already have one. This change adds a `fuzz` section to the plugin options and anchors the cache directory to the Vite project root.
 
 ## What Changes
 
@@ -15,7 +15,7 @@ Since vitiate is a Vitest plugin, the Vitest/Vite config file is the natural pla
 
 ### New Capabilities
 
-_None — this change extends existing capabilities rather than introducing new ones._
+_None - this change extends existing capabilities rather than introducing new ones._
 
 ### Modified Capabilities
 
@@ -25,6 +25,6 @@ _None — this change extends existing capabilities rather than introducing new 
 ## Impact
 
 - **Files modified**: `vitiate/src/config.ts`, `vitiate/src/plugin.ts`, `vitiate/src/corpus.ts`, and their corresponding test files.
-- **API**: `VitiatePluginOptions` gains an optional `fuzz` field. Fully backward compatible — existing code that passes no `fuzz` option behaves identically.
-- **Behavior change**: The default cache directory location may change for users who run Vitest from a directory other than the project root. This is intentional — it fixes corpus fragmentation. Users with `VITIATE_CACHE_DIR` set are unaffected.
+- **API**: `VitiatePluginOptions` gains an optional `fuzz` field. Fully backward compatible - existing code that passes no `fuzz` option behaves identically.
+- **Behavior change**: The default cache directory location may change for users who run Vitest from a directory other than the project root. This is intentional - it fixes corpus fragmentation. Users with `VITIATE_CACHE_DIR` set are unaffected.
 - **Dependencies**: No new dependencies. The Vite `config.root` is already available in the plugin's `config()` hook.

@@ -5,7 +5,57 @@ export declare class Fuzzer {
   addSeed(input: Buffer): void
   getNextInput(): Buffer
   reportResult(exitKind: ExitKind): IterationResult
+  get cmpLogEntryCount(): number
   get stats(): FuzzerStats
+}
+
+/** NAPI-exposed Watchdog class. */
+export declare class Watchdog {
+  /**
+   * Create a new Watchdog. Spawns the background thread and caches the V8 isolate.
+   *
+   * - `max_input_len`: Maximum input size for the pre-stash buffer.
+   * - `artifact_dir`: Directory to write timeout artifacts.
+   */
+  constructor(maxInputLen: number, artifactDir: string)
+  /**
+   * Arm the watchdog with a timeout in milliseconds.
+   * Wakes the watchdog thread to start timing.
+   */
+  arm(timeoutMs: number): void
+  /**
+   * Disarm the watchdog. Clears the deadline and cancels any pending
+   * V8 termination if the watchdog fired.
+   */
+  disarm(): void
+  /**
+   * Stash the current input for capture before `_exit`.
+   * Call this before each fuzz iteration.
+   */
+  stashInput(input: Uint8Array): void
+  /** Returns `true` if the watchdog fired since the last `disarm()`. */
+  get didFire(): boolean
+  /**
+   * Deterministically shut down the watchdog thread.
+   *
+   * Signals the background thread to exit, wakes it via condvar, and joins
+   * it. Safe to call multiple times — subsequent calls are no-ops.
+   * Also called automatically by `Drop`, but calling explicitly allows JS
+   * callers to release the thread without waiting for GC.
+   */
+  shutdown(): void
+  /**
+   * Run the target function with watchdog protection.
+   *
+   * Arms the watchdog, calls the target, and handles V8 termination at the
+   * NAPI C level (where `CancelTerminateExecution` can be called before
+   * returning to JavaScript). Returns `{ exitKind, error?, result? }`.
+   *
+   * If the target returns a Promise, it is returned in `result` for the JS
+   * caller to await. Async timeout handling relies on the `_exit` fallback
+   * or on TerminateExecution firing during active JS in the continuation.
+   */
+runTarget(target: (data: Buffer) => void | Promise<void>, input: Buffer, timeoutMs: number): { exitKind: number; error?: Error; result?: unknown }
 }
 
 export declare function createCoverageMap(size: number): Buffer

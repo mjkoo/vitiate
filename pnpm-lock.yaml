@@ -48,11 +48,11 @@ importers:
   vitiate:
     dependencies:
       '@optique/core':
-        specifier: github:mjkoo/optique#libfuzzer-style-options&path:packages/core
-        version: https://codeload.github.com/mjkoo/optique/tar.gz/d3db08635ddef066433c605e9ec5725d8ef66011#path:packages/core
+        specifier: 1.0.0-dev.438+923a6492
+        version: 1.0.0-dev.438
       '@optique/run':
-        specifier: github:mjkoo/optique#libfuzzer-style-options&path:packages/run
-        version: https://codeload.github.com/mjkoo/optique/tar.gz/d3db08635ddef066433c605e9ec5725d8ef66011#path:packages/run
+        specifier: 1.0.0-dev.438+923a6492
+        version: 1.0.0-dev.438
       '@swc/core':
         specifier: ^1.15.17
         version: 1.15.17
@@ -1095,14 +1095,17 @@ packages:
   '@octokit/types@16.0.0':
     resolution: {integrity: sha512-sKq+9r1Mm4efXW1FCk7hFSeJo4QKreL/tTbR0rz/qx/r1Oa2VV83LTA/H/MuCOX7uCIJmQVRKBcbmWoySjAnSg==}
 
-  '@optique/core@https://codeload.github.com/mjkoo/optique/tar.gz/d3db08635ddef066433c605e9ec5725d8ef66011#path:packages/core':
-    resolution: {path: packages/core, tarball: https://codeload.github.com/mjkoo/optique/tar.gz/d3db08635ddef066433c605e9ec5725d8ef66011}
+  '@optique/core@1.0.0-dev.438':
+    resolution: {integrity: sha512-1pB14tKTG5D0qi0gGP+PAElHAWBFe/vTli5dJ0mAfdcCOMW16GPfIjYr/PI1xUM1bHdxL6IsOJIp5KQi5ZxiTQ==}
+    engines: {bun: '>=1.2.0', deno: '>=2.3.0', node: '>=20.0.0'}
+
+  '@optique/core@https://codeload.github.com/mjkoo/optique/tar.gz/7b15c8487e8dc6ba4c03008311522eb272550ff0#path:packages/core':
+    resolution: {path: packages/core, tarball: https://codeload.github.com/mjkoo/optique/tar.gz/7b15c8487e8dc6ba4c03008311522eb272550ff0}
     version: 1.0.0
     engines: {bun: '>=1.2.0', deno: '>=2.3.0', node: '>=20.0.0'}
 
-  '@optique/run@https://codeload.github.com/mjkoo/optique/tar.gz/d3db08635ddef066433c605e9ec5725d8ef66011#path:packages/run':
-    resolution: {path: packages/run, tarball: https://codeload.github.com/mjkoo/optique/tar.gz/d3db08635ddef066433c605e9ec5725d8ef66011}
-    version: 1.0.0
+  '@optique/run@1.0.0-dev.438':
+    resolution: {integrity: sha512-Z80O2uvOeRc2lFaXO5Rd/+idC0W81Z5KjMoHrSQTimYiMlBbPhfd9hydLb7Ao1dxRowXjV1/ltlJHspK5G77xQ==}
     engines: {bun: '>=1.2.0', deno: '>=2.3.0', node: '>=20.0.0'}
 
   '@rollup/rollup-android-arm-eabi@4.59.0':
@@ -3192,11 +3195,13 @@ snapshots:
     dependencies:
       '@octokit/openapi-types': 27.0.0
 
-  '@optique/core@https://codeload.github.com/mjkoo/optique/tar.gz/d3db08635ddef066433c605e9ec5725d8ef66011#path:packages/core': {}
+  '@optique/core@1.0.0-dev.438': {}
 
-  '@optique/run@https://codeload.github.com/mjkoo/optique/tar.gz/d3db08635ddef066433c605e9ec5725d8ef66011#path:packages/run':
+  '@optique/core@https://codeload.github.com/mjkoo/optique/tar.gz/7b15c8487e8dc6ba4c03008311522eb272550ff0#path:packages/core': {}
+
+  '@optique/run@1.0.0-dev.438':
     dependencies:
-      '@optique/core': https://codeload.github.com/mjkoo/optique/tar.gz/d3db08635ddef066433c605e9ec5725d8ef66011#path:packages/core
+      '@optique/core': https://codeload.github.com/mjkoo/optique/tar.gz/7b15c8487e8dc6ba4c03008311522eb272550ff0#path:packages/core
 
   '@rollup/rollup-android-arm-eabi@4.59.0':
     optional: true
