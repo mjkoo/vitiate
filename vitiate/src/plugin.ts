@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createFilter, type Plugin } from "vite";
-import type { VitiatePluginOptions } from "./config.js";
+import type { VitiatePluginOptions, FuzzOptions } from "./config.js";
 import { resolveInstrumentOptions, COVERAGE_MAP_SIZE } from "./config.js";
 
 const require = createRequire(import.meta.url);
@@ -36,6 +36,7 @@ function resolveSetupPath(): string {
 
 export function vitiatePlugin(options?: VitiatePluginOptions): Plugin {
   const { include, exclude } = resolveInstrumentOptions(options?.instrument);
+  const fuzz = options?.fuzz;
   const filter = createFilter(include, exclude);
   const wasmPath = resolveWasmPath();
   const setupPath = resolveSetupPath();
@@ -44,7 +45,42 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin {
     name: "vitiate",
     enforce: "post",
 
-    config() {
+    config(config) {
+      // Resolve the Vite project root
+      const projectRoot = path.resolve(config.root ?? process.cwd());
+      if (!process.env["VITIATE_PROJECT_ROOT"]) {
+        process.env["VITIATE_PROJECT_ROOT"] = projectRoot;
+      }
+
+      // If fuzz.cacheDir is provided, resolve it relative to the effective project root
+      if (fuzz?.cacheDir && !process.env["VITIATE_CACHE_DIR"]) {
+        const effectiveRoot = process.env["VITIATE_PROJECT_ROOT"]!;
+        process.env["VITIATE_CACHE_DIR"] = path.resolve(
+          effectiveRoot,
+          fuzz.cacheDir,
+        );
+      }
+
+      // Serialize FuzzOptions fields (excluding cacheDir) as VITIATE_FUZZ_OPTIONS
+      if (fuzz && !process.env["VITIATE_FUZZ_OPTIONS"]) {
+        const { cacheDir: _, ...fuzzOptions } = fuzz;
+        const opts: FuzzOptions = {};
+        for (const key of [
+          "maxLen",
+          "timeoutMs",
+          "maxTotalTimeMs",
+          "runs",
+          "seed",
+        ] as const) {
+          if (fuzzOptions[key] !== undefined) {
+            opts[key] = fuzzOptions[key];
+          }
+        }
+        if (Object.keys(opts).length > 0) {
+          process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify(opts);
+        }
+      }
+
       return {
         test: {
           setupFiles: [setupPath],

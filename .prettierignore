@@ -7,6 +7,7 @@ pnpm-lock.yaml
 Cargo.lock
 .turbo/
 .claude/
+openspec/
 vitiate-napi/npm/
 vitiate-napi/index.js
 vitiate-napi/index.d.ts

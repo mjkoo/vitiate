@@ -19,6 +19,11 @@ export interface FuzzOptions {
   seed?: number;
 }
 
+export interface FuzzDefaults extends FuzzOptions {
+  /** Cache directory path, resolved relative to project root. */
+  cacheDir?: string;
+}
+
 export interface InstrumentOptions {
   /** Glob patterns for files to instrument. */
   include?: string[];
@@ -28,6 +33,7 @@ export interface InstrumentOptions {
 
 export interface VitiatePluginOptions {
   instrument?: InstrumentOptions;
+  fuzz?: FuzzDefaults;
 }
 
 const DEFAULT_INCLUDE = ["**/*.{js,ts,jsx,tsx,mjs,cjs,mts,cts}"];

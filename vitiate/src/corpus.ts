@@ -55,7 +55,19 @@ export function loadCachedCorpus(cacheDir: string, testName: string): Buffer[] {
 }
 
 export function getCacheDir(): string {
-  return path.resolve(process.env["VITIATE_CACHE_DIR"] ?? ".vitiate-corpus");
+  const cacheDir = process.env["VITIATE_CACHE_DIR"];
+  const projectRoot = process.env["VITIATE_PROJECT_ROOT"];
+
+  if (cacheDir) {
+    // If absolute, use as-is; if relative, resolve against project root or cwd
+    if (path.isAbsolute(cacheDir)) {
+      return cacheDir;
+    }
+    return path.resolve(projectRoot ?? process.cwd(), cacheDir);
+  }
+
+  // Default: .vitiate-corpus relative to project root (if set) or cwd
+  return path.resolve(projectRoot ?? process.cwd(), ".vitiate-corpus");
 }
 
 export function loadCorpusFromDirs(dirs: string[]): Buffer[] {

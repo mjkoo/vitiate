@@ -214,6 +214,7 @@ describe("corpus", () => {
 
   describe("getCacheDir", () => {
     const originalCacheDir = process.env["VITIATE_CACHE_DIR"];
+    const originalProjectRoot = process.env["VITIATE_PROJECT_ROOT"];
 
     afterEach(() => {
       if (originalCacheDir === undefined) {
@@ -221,24 +222,52 @@ describe("corpus", () => {
       } else {
         process.env["VITIATE_CACHE_DIR"] = originalCacheDir;
       }
+      if (originalProjectRoot === undefined) {
+        delete process.env["VITIATE_PROJECT_ROOT"];
+      } else {
+        process.env["VITIATE_PROJECT_ROOT"] = originalProjectRoot;
+      }
     });
 
-    it("returns an absolute path when using the default", () => {
+    it("uses project root for default .vitiate-corpus when VITIATE_PROJECT_ROOT is set", () => {
       delete process.env["VITIATE_CACHE_DIR"];
+      process.env["VITIATE_PROJECT_ROOT"] = "/home/user/project";
       const dir = getCacheDir();
-      expect(path.isAbsolute(dir)).toBe(true);
+      expect(dir).toBe("/home/user/project/.vitiate-corpus");
     });
 
-    it("returns an absolute path when env var is relative", () => {
-      process.env["VITIATE_CACHE_DIR"] = "relative/path";
+    it("resolves relative VITIATE_CACHE_DIR against project root", () => {
+      process.env["VITIATE_CACHE_DIR"] = ".my-corpus";
+      process.env["VITIATE_PROJECT_ROOT"] = "/home/user/project";
       const dir = getCacheDir();
-      expect(path.isAbsolute(dir)).toBe(true);
+      expect(dir).toBe("/home/user/project/.my-corpus");
     });
 
-    it("returns the env var path when it is absolute", () => {
+    it("returns absolute VITIATE_CACHE_DIR as-is", () => {
       process.env["VITIATE_CACHE_DIR"] = "/absolute/path";
+      process.env["VITIATE_PROJECT_ROOT"] = "/home/user/project";
       const dir = getCacheDir();
       expect(dir).toBe("/absolute/path");
+    });
+
+    it("falls back to cwd when no project root is set", () => {
+      delete process.env["VITIATE_CACHE_DIR"];
+      delete process.env["VITIATE_PROJECT_ROOT"];
+      const dir = getCacheDir();
+      expect(dir).toBe(path.resolve(process.cwd(), ".vitiate-corpus"));
+    });
+
+    it("resolves relative VITIATE_CACHE_DIR against cwd when no project root", () => {
+      process.env["VITIATE_CACHE_DIR"] = "relative/path";
+      delete process.env["VITIATE_PROJECT_ROOT"];
+      const dir = getCacheDir();
+      expect(dir).toBe(path.resolve(process.cwd(), "relative/path"));
+    });
+
+    it("returns an absolute path in all cases", () => {
+      delete process.env["VITIATE_CACHE_DIR"];
+      delete process.env["VITIATE_PROJECT_ROOT"];
+      expect(path.isAbsolute(getCacheDir())).toBe(true);
     });
   });
 
