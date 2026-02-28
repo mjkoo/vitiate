@@ -1,0 +1,190 @@
+import { describe, it, expect, afterEach } from "vitest";
+import {
+  isFuzzingMode,
+  getFuzzPattern,
+  getCliOptions,
+  resolveInstrumentOptions,
+  COVERAGE_MAP_SIZE,
+} from "./config.js";
+
+describe("config", () => {
+  const originalEnv = process.env["VITIATE_FUZZ"];
+
+  afterEach(() => {
+    if (originalEnv === undefined) {
+      delete process.env["VITIATE_FUZZ"];
+    } else {
+      process.env["VITIATE_FUZZ"] = originalEnv;
+    }
+  });
+
+  describe("isFuzzingMode", () => {
+    it("returns false when VITIATE_FUZZ is not set", () => {
+      delete process.env["VITIATE_FUZZ"];
+      expect(isFuzzingMode()).toBe(false);
+    });
+
+    it("returns false when VITIATE_FUZZ is empty", () => {
+      process.env["VITIATE_FUZZ"] = "";
+      expect(isFuzzingMode()).toBe(false);
+    });
+
+    it("returns false when VITIATE_FUZZ is 0", () => {
+      process.env["VITIATE_FUZZ"] = "0";
+      expect(isFuzzingMode()).toBe(false);
+    });
+
+    it("returns false when VITIATE_FUZZ is false", () => {
+      process.env["VITIATE_FUZZ"] = "false";
+      expect(isFuzzingMode()).toBe(false);
+    });
+
+    it("returns true when VITIATE_FUZZ is 1", () => {
+      process.env["VITIATE_FUZZ"] = "1";
+      expect(isFuzzingMode()).toBe(true);
+    });
+
+    it("returns true when VITIATE_FUZZ is a pattern", () => {
+      process.env["VITIATE_FUZZ"] = "parser";
+      expect(isFuzzingMode()).toBe(true);
+    });
+  });
+
+  describe("getFuzzPattern", () => {
+    it("returns null when VITIATE_FUZZ is not set", () => {
+      delete process.env["VITIATE_FUZZ"];
+      expect(getFuzzPattern()).toBeNull();
+    });
+
+    it("returns null when VITIATE_FUZZ is 1", () => {
+      process.env["VITIATE_FUZZ"] = "1";
+      expect(getFuzzPattern()).toBeNull();
+    });
+
+    it("returns pattern when VITIATE_FUZZ is a string", () => {
+      process.env["VITIATE_FUZZ"] = "parser";
+      expect(getFuzzPattern()).toBe("parser");
+    });
+  });
+
+  describe("getCliOptions", () => {
+    const originalOpts = process.env["VITIATE_FUZZ_OPTIONS"];
+
+    afterEach(() => {
+      if (originalOpts === undefined) {
+        delete process.env["VITIATE_FUZZ_OPTIONS"];
+      } else {
+        process.env["VITIATE_FUZZ_OPTIONS"] = originalOpts;
+      }
+    });
+
+    it("returns empty object when env var is not set", () => {
+      delete process.env["VITIATE_FUZZ_OPTIONS"];
+      expect(getCliOptions()).toEqual({});
+    });
+
+    it("returns empty object when env var is empty", () => {
+      process.env["VITIATE_FUZZ_OPTIONS"] = "";
+      expect(getCliOptions()).toEqual({});
+    });
+
+    it("parses valid JSON options", () => {
+      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        runs: 1000,
+        maxLen: 4096,
+        seed: 42,
+      });
+      const opts = getCliOptions();
+      expect(opts.runs).toBe(1000);
+      expect(opts.maxLen).toBe(4096);
+      expect(opts.seed).toBe(42);
+    });
+
+    it("drops non-numeric fields and warns on stderr", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+          runs: "not-a-number",
+          maxLen: 4096,
+        });
+        const opts = getCliOptions();
+        expect(opts).toEqual({ maxLen: 4096 });
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toContain("ignoring non-numeric");
+        expect(chunks[0]).toContain("runs");
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+
+    it("drops negative numbers for non-seed fields and warns on stderr", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+          runs: -1,
+        });
+        const opts = getCliOptions();
+        expect(opts).toEqual({});
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toContain("ignoring non-positive");
+        expect(chunks[0]).toContain("runs");
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+
+    it("returns empty object for invalid JSON and warns on stderr", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_FUZZ_OPTIONS"] = "not-json";
+        expect(getCliOptions()).toEqual({});
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toContain(
+          "vitiate: warning: invalid VITIATE_FUZZ_OPTIONS JSON:",
+        );
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+  });
+
+  describe("resolveInstrumentOptions", () => {
+    it("returns defaults when no options provided", () => {
+      const result = resolveInstrumentOptions();
+      expect(result.include).toEqual(["**/*.{js,ts,jsx,tsx,mjs,cjs,mts,cts}"]);
+      expect(result.exclude).toEqual(["**/node_modules/**"]);
+    });
+
+    it("overrides exclude when provided", () => {
+      const result = resolveInstrumentOptions({ exclude: [] });
+      expect(result.exclude).toEqual([]);
+    });
+
+    it("overrides include when provided", () => {
+      const result = resolveInstrumentOptions({ include: ["src/**/*.ts"] });
+      expect(result.include).toEqual(["src/**/*.ts"]);
+    });
+  });
+
+  it("COVERAGE_MAP_SIZE is 65536", () => {
+    expect(COVERAGE_MAP_SIZE).toBe(65536);
+  });
+});

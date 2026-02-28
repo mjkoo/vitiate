@@ -6,7 +6,7 @@ import tseslint from "typescript-eslint";
 export default tseslint.config(
   {
     ignores: [
-      "dist/",
+      "**/dist/",
       "target/",
       "*.node",
       "node_modules/",
@@ -14,6 +14,7 @@ export default tseslint.config(
       "vitiate-napi/npm/",
       "vitiate-napi/index.js",
       "vitiate-napi/index.d.ts",
+      "**/*.config.ts",
     ],
   },
   js.configs.recommended,
@@ -30,6 +31,10 @@ export default tseslint.config(
     },
     rules: {
       "@typescript-eslint/no-explicit-any": "error",
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
+      ],
     },
   },
   {

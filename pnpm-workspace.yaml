@@ -4,5 +4,11 @@ packages:
   - vitiate-napi/npm/*
   - vitiate-instrument
 
+overrides:
+  "@optique/run>@optique/core": "github:mjkoo/optique#libfuzzer-style-options&path:packages/core"
+
 onlyBuiltDependencies:
+  - "@optique/core"
+  - "@optique/run"
   - "@swc/core"
+  - esbuild
