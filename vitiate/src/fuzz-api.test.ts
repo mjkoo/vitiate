@@ -1,8 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
+import { existsSync } from "node:fs";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
-import { fuzz, shouldEnterFuzzLoop } from "./fuzz.js";
+import {
+  fuzz,
+  shouldEnterFuzzLoop,
+  resolveVitestCli,
+  buildTestNamePatternFromNames,
+} from "./fuzz.js";
 
 describe("fuzz API", () => {
   it("fuzz is a function", () => {
@@ -141,4 +147,131 @@ describe("fuzz modifiers", () => {
   });
 
   fuzz.todo("this-is-a-todo");
+});
+
+describe("supervisor mode detection", () => {
+  const originalFuzz = process.env["VITIATE_FUZZ"];
+  const originalSupervisor = process.env["VITIATE_SUPERVISOR"];
+
+  afterEach(() => {
+    if (originalFuzz === undefined) {
+      delete process.env["VITIATE_FUZZ"];
+    } else {
+      process.env["VITIATE_FUZZ"] = originalFuzz;
+    }
+    if (originalSupervisor === undefined) {
+      delete process.env["VITIATE_SUPERVISOR"];
+    } else {
+      process.env["VITIATE_SUPERVISOR"] = originalSupervisor;
+    }
+  });
+
+  it("shouldEnterFuzzLoop is true when VITIATE_FUZZ=1 (regardless of VITIATE_SUPERVISOR)", () => {
+    process.env["VITIATE_FUZZ"] = "1";
+    delete process.env["VITIATE_SUPERVISOR"];
+    expect(shouldEnterFuzzLoop("any-test")).toBe(true);
+
+    process.env["VITIATE_SUPERVISOR"] = "1";
+    expect(shouldEnterFuzzLoop("any-test")).toBe(true);
+  });
+
+  it("parent mode condition: VITIATE_FUZZ=1 and VITIATE_SUPERVISOR not set", () => {
+    process.env["VITIATE_FUZZ"] = "1";
+    delete process.env["VITIATE_SUPERVISOR"];
+
+    // shouldEnterFuzzLoop returns true, VITIATE_SUPERVISOR is absent → parent mode
+    expect(shouldEnterFuzzLoop("test")).toBe(true);
+    expect(process.env["VITIATE_SUPERVISOR"]).toBeUndefined();
+  });
+
+  it("child mode condition: VITIATE_FUZZ=1 and VITIATE_SUPERVISOR=1", () => {
+    process.env["VITIATE_FUZZ"] = "1";
+    process.env["VITIATE_SUPERVISOR"] = "1";
+
+    // shouldEnterFuzzLoop returns true, VITIATE_SUPERVISOR is present → child mode
+    expect(shouldEnterFuzzLoop("test")).toBe(true);
+    expect(process.env["VITIATE_SUPERVISOR"]).toBe("1");
+  });
+});
+
+describe("resolveVitestCli", () => {
+  it("resolves to a path that exists and ends with vitest.mjs", () => {
+    const cliPath = resolveVitestCli();
+    expect(cliPath).toMatch(/vitest\.mjs$/);
+    expect(existsSync(cliPath)).toBe(true);
+  });
+});
+
+describe("buildTestNamePatternFromNames", () => {
+  it("matches a top-level test (file + test name)", () => {
+    const pattern = new RegExp(
+      buildTestNamePatternFromNames("src/test.ts", ["my-test"]),
+    );
+    expect(pattern.test("src/test.ts my-test")).toBe(true);
+    expect(pattern.test("src/test.ts my-test extra")).toBe(false);
+    expect(pattern.test("other/test.ts my-test")).toBe(false);
+  });
+
+  it("matches a test inside a describe block", () => {
+    const pattern = new RegExp(
+      buildTestNamePatternFromNames("src/test.ts", ["fuzz", "parse-json"]),
+    );
+    expect(pattern.test("src/test.ts fuzz parse-json")).toBe(true);
+    expect(pattern.test("src/test.ts parse-json")).toBe(false);
+  });
+
+  it("matches a deeply nested test", () => {
+    const pattern = new RegExp(
+      buildTestNamePatternFromNames("src/test.ts", [
+        "outer",
+        "inner",
+        "deep-test",
+      ]),
+    );
+    expect(pattern.test("src/test.ts outer inner deep-test")).toBe(true);
+    expect(pattern.test("src/test.ts inner deep-test")).toBe(false);
+  });
+
+  it("rejects a test at a different hierarchy level", () => {
+    // Pattern for "file suite test" should not match "file test" (no suite)
+    const withSuite = new RegExp(
+      buildTestNamePatternFromNames("src/test.ts", ["suite", "test"]),
+    );
+    expect(withSuite.test("src/test.ts test")).toBe(false);
+
+    // Pattern for "file test" should not match "file suite test"
+    const withoutSuite = new RegExp(
+      buildTestNamePatternFromNames("src/test.ts", ["test"]),
+    );
+    expect(withoutSuite.test("src/test.ts suite test")).toBe(false);
+  });
+
+  it("rejects a different file name", () => {
+    const pattern = new RegExp(
+      buildTestNamePatternFromNames("src/a.test.ts", ["my-test"]),
+    );
+    expect(pattern.test("src/b.test.ts my-test")).toBe(false);
+  });
+
+  it("escapes regex metacharacters in names", () => {
+    const pattern = new RegExp(
+      buildTestNamePatternFromNames("src/file.test.ts", [
+        "parse (JSON)",
+        "handle [brackets]",
+        "file.name*glob+plus",
+      ]),
+    );
+    // Exact match with metacharacters
+    expect(
+      pattern.test(
+        "src/file.test.ts parse (JSON) handle [brackets] file.name*glob+plus",
+      ),
+    ).toBe(true);
+    // Metacharacters should not act as regex operators
+    expect(
+      pattern.test(
+        "src/file.test.ts parse JSON handle brackets fileXnameYglobZplus",
+      ),
+    ).toBe(false);
+  });
 });

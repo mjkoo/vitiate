@@ -1,23 +1,34 @@
 /**
  * fuzz() test registrar - like Vitest's bench() but for fuzz testing.
  */
+import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
+import path from "node:path";
 import { test } from "vitest";
 import { getCurrentTest } from "vitest/suite";
+import escapeStringRegexp from "escape-string-regexp";
+import { ShmemHandle } from "vitiate-napi";
 import type { FuzzOptions } from "./config.js";
-import { isFuzzingMode, getFuzzPattern, getCliOptions } from "./config.js";
-
-let cachedCliOptions: FuzzOptions | undefined;
-function getCachedCliOptions(): FuzzOptions {
-  return (cachedCliOptions ??= getCliOptions());
-}
+import {
+  isFuzzingMode,
+  getFuzzPattern,
+  getCliOptions,
+  DEFAULT_MAX_INPUT_LEN,
+} from "./config.js";
 import {
   loadSeedCorpus,
   loadCachedCorpus,
   loadCorpusFromDirs,
   getCacheDir,
+  getFuzzTestDataDir,
 } from "./corpus.js";
 import { runFuzzLoop } from "./loop.js";
-import path from "node:path";
+import { runSupervisor, type SupervisorResult } from "./supervisor.js";
+
+let cachedCliOptions: FuzzOptions | undefined;
+function getCachedCliOptions(): FuzzOptions {
+  return (cachedCliOptions ??= getCliOptions());
+}
 
 function getCorpusDirs(): string[] | undefined {
   const raw = process.env["VITIATE_CORPUS_DIRS"];
@@ -37,6 +48,64 @@ function getTestDir(): string {
   return process.cwd();
 }
 
+function getTestFilePath(): string {
+  const current = getCurrentTest();
+  const filepath = current?.file?.filepath;
+  if (!filepath) {
+    throw new Error(
+      "vitiate: could not determine test file path. Ensure fuzz() is called inside a test callback.",
+    );
+  }
+  return filepath;
+}
+
+/** Resolve the vitest CLI entry point from the current module context. */
+export function resolveVitestCli(): string {
+  const require = createRequire(import.meta.url);
+  return require.resolve("vitest/vitest.mjs");
+}
+
+/**
+ * Build a --test-name-pattern regex string from a file name and hierarchy of
+ * suite/test names. Vitest's internal `getTaskFullName` produces
+ * `"<relativePath> <suite1> <suite2> <testName>"` with space separators;
+ * this function constructs a pattern that exactly matches that string.
+ */
+export function buildTestNamePatternFromNames(
+  fileName: string,
+  hierarchyNames: string[],
+): string {
+  const full = [fileName, ...hierarchyNames].join(" ");
+  return `^${escapeStringRegexp(full)}$`;
+}
+
+/**
+ * Build the --test-name-pattern for the currently executing test by walking
+ * up the suite chain from `getCurrentTest()`.
+ */
+function buildTestNamePattern(): string {
+  const current = getCurrentTest();
+  if (!current) {
+    throw new Error(
+      "vitiate: could not determine test context. " +
+        "Ensure fuzz() is called inside a test callback.",
+    );
+  }
+
+  // Collect describe/test names, walking up the suite chain.
+  // Stop before the File node (where suite.suite is undefined).
+  const names: string[] = [current.name];
+  let suite = current.suite;
+  while (suite?.suite) {
+    names.unshift(suite.name);
+    suite = suite.suite;
+  }
+
+  // file.name is the relative path from vitest root (e.g. "src/test.ts")
+  const fileName = current.file.name;
+  return buildTestNamePatternFromNames(fileName, names);
+}
+
 export function shouldEnterFuzzLoop(testName: string): boolean {
   if (!isFuzzingMode()) return false;
   const pattern = getFuzzPattern();
@@ -49,6 +118,32 @@ export function shouldEnterFuzzLoop(testName: string): boolean {
   }
 }
 
+/**
+ * Translate a SupervisorResult into Vitest test semantics.
+ * Throws on crash (test fails), returns normally on success (test passes).
+ */
+function translateSupervisorResult(
+  result: SupervisorResult,
+  testDir: string,
+  testName: string,
+): void {
+  if (!result.crashed) return;
+
+  const artifactDir = getFuzzTestDataDir(testDir, testName);
+
+  if (result.crashArtifactPath) {
+    throw new Error(`Crash found, artifact: ${result.crashArtifactPath}`);
+  } else if (result.signal) {
+    throw new Error(
+      `Crash found (signal ${result.signal}), check ${artifactDir}`,
+    );
+  } else {
+    throw new Error(
+      `Crash found (exit code ${result.exitCode}), check ${artifactDir}`,
+    );
+  }
+}
+
 function registerFuzzTest(
   register: typeof test | typeof test.only,
   name: string,
@@ -57,27 +152,71 @@ function registerFuzzTest(
 ): void {
   const mergedOptions = { ...options, ...getCachedCliOptions() };
   if (shouldEnterFuzzLoop(name)) {
-    // Fuzzing mode: enter the mutation loop
-    register(
-      name,
-      async () => {
-        const testDir = getTestDir();
-        const result = await runFuzzLoop(
-          target,
-          testDir,
-          name,
-          mergedOptions,
-          getCorpusDirs(),
-        );
-        if (result.crashed) {
-          throw (
-            result.error ??
-            new Error(`Crash found, artifact: ${result.crashArtifactPath}`)
+    if (process.env["VITIATE_SUPERVISOR"]) {
+      // Child mode: supervised — enter the fuzz loop directly
+      register(
+        name,
+        async () => {
+          const testDir = getTestDir();
+          const result = await runFuzzLoop(
+            target,
+            testDir,
+            name,
+            mergedOptions,
+            getCorpusDirs(),
           );
-        }
-      },
-      2_147_483_647, // disable vitest timeout; fuzz loop manages its own termination
-    );
+          if (result.crashed) {
+            throw (
+              result.error ??
+              new Error(`Crash found, artifact: ${result.crashArtifactPath}`)
+            );
+          }
+        },
+        2_147_483_647, // disable vitest timeout; fuzz loop manages its own termination
+      );
+    } else {
+      // Parent mode: become a supervisor for this fuzz test
+      register(
+        name,
+        async () => {
+          const testDir = getTestDir();
+          const testFilePath = getTestFilePath();
+          const maxInputLen = mergedOptions.maxLen ?? DEFAULT_MAX_INPUT_LEN;
+          const shmem = ShmemHandle.allocate(maxInputLen);
+
+          const vitestCli = resolveVitestCli();
+          const testNamePattern = buildTestNamePattern();
+
+          const result = await runSupervisor({
+            shmem,
+            testDir,
+            testName: name,
+            spawnChild: () =>
+              spawn(
+                process.execPath,
+                [
+                  vitestCli,
+                  "run",
+                  testFilePath,
+                  "--test-name-pattern",
+                  testNamePattern,
+                ],
+                {
+                  env: {
+                    ...process.env,
+                    VITIATE_SUPERVISOR: "1",
+                    VITIATE_FUZZ: "1",
+                  },
+                  stdio: ["ignore", "inherit", "inherit"],
+                },
+              ),
+          });
+
+          translateSupervisorResult(result, testDir, name);
+        },
+        2_147_483_647, // disable vitest timeout; supervisor manages its own lifecycle
+      );
+    }
   } else {
     // Regression mode: replay corpus entries
     register(name, async () => {

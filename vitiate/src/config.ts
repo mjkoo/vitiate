@@ -122,3 +122,6 @@ export function getCliOptions(): FuzzOptions {
 }
 
 export const COVERAGE_MAP_SIZE = 65536;
+
+/** Default max input length in bytes for shmem allocation. */
+export const DEFAULT_MAX_INPUT_LEN = 4096;

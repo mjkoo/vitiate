@@ -27,13 +27,12 @@ export function sanitizeTestName(name: string): string {
   return sanitized;
 }
 
+export function getFuzzTestDataDir(testDir: string, testName: string): string {
+  return path.join(testDir, "testdata", "fuzz", sanitizeTestName(testName));
+}
+
 export function loadSeedCorpus(testDir: string, testName: string): Buffer[] {
-  const dir = path.join(
-    testDir,
-    "testdata",
-    "fuzz",
-    sanitizeTestName(testName),
-  );
+  const dir = getFuzzTestDataDir(testDir, testName);
   if (!existsSync(dir)) {
     return [];
   }
@@ -102,12 +101,7 @@ export function writeCrashArtifact(
   testName: string,
   data: Buffer,
 ): string {
-  const dir = path.join(
-    testDir,
-    "testdata",
-    "fuzz",
-    sanitizeTestName(testName),
-  );
+  const dir = getFuzzTestDataDir(testDir, testName);
   mkdirSync(dir, { recursive: true });
   const hash = contentHash(data);
   const fileName = `crash-${hash}`;
