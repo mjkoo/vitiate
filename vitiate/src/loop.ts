@@ -28,6 +28,7 @@ import {
   printCrash,
   printSummary,
 } from "./reporter.js";
+import { minimize } from "./minimize.js";
 
 const YIELD_INTERVAL = 1000;
 
@@ -116,8 +117,8 @@ export async function runFuzzLoop(
   startReporting(reporter, () => fuzzer.stats);
 
   const startTime = Date.now();
-  const maxTime = options.maxTotalTimeMs ?? Infinity;
-  const maxRuns = options.runs ?? Infinity;
+  const maxTime = options.maxTotalTimeMs || Infinity;
+  const maxRuns = options.runs || Infinity;
   let iteration = 0;
   let result: FuzzLoopResult = { crashed: false, totalExecs: 0 };
 
@@ -217,12 +218,27 @@ export async function runFuzzLoop(
       iteration++;
 
       if (iterResult === IterationResult.Solution) {
-        const artifactPath = writeCrashArtifact(testDir, testName, input);
+        let crashData: Buffer = input;
+
+        // Minimize crash inputs for JS exceptions (ExitKind.Crash) only.
+        // Skip minimization for timeouts — timing-dependent behavior may not
+        // reproduce with shorter inputs.
+        if (exitKind === ExitKind.Crash) {
+          crashData = await minimizeCrashInput(
+            input,
+            target,
+            watchdog,
+            timeoutMs,
+            options,
+          );
+        }
+
+        const artifactPath = writeCrashArtifact(testDir, testName, crashData);
         printCrash(caughtError ?? new Error("unknown crash"), artifactPath);
         result = {
           crashed: true,
           error: caughtError,
-          crashInput: input,
+          crashInput: crashData,
           crashArtifactPath: artifactPath,
           totalExecs: fuzzer.stats.totalExecs,
         };
@@ -250,4 +266,59 @@ export async function runFuzzLoop(
   }
 
   return result;
+}
+
+/**
+ * Minimize a crashing input using the fuzz loop's execution infrastructure.
+ *
+ * Creates a testCandidate wrapper around Watchdog.runTarget() (or direct
+ * target invocation when no watchdog is configured) and delegates to the
+ * minimization engine.
+ */
+async function minimizeCrashInput(
+  input: Buffer,
+  target: (data: Buffer) => void | Promise<void>,
+  watchdog: Watchdog | null,
+  timeoutMs: number | undefined,
+  options: FuzzOptions,
+): Promise<Buffer> {
+  const testCandidate = async (candidate: Buffer): Promise<boolean> => {
+    if (watchdog && timeoutMs !== undefined && timeoutMs > 0) {
+      const targetResult = watchdog.runTarget(target, candidate, timeoutMs);
+      if (targetResult.exitKind === 1) {
+        // Sync crash — candidate reproduces
+        return true;
+      }
+      if (targetResult.result instanceof Promise) {
+        // Async target — await and check for rejection
+        try {
+          watchdog.arm(timeoutMs);
+          await targetResult.result;
+          watchdog.disarm();
+          return false; // Resolved normally — no crash
+        } catch {
+          const crashed = !watchdog.didFire;
+          watchdog.disarm();
+          return crashed; // Rejection = crash, but timeout = not a crash
+        }
+      }
+      return false; // exitKind 0 (Ok) or 2 (Timeout) — not a crash
+    }
+
+    // No watchdog — call target directly
+    try {
+      const maybePromise = target(candidate);
+      if (maybePromise instanceof Promise) {
+        await maybePromise;
+      }
+      return false; // No crash
+    } catch {
+      return true; // Exception = crash
+    }
+  };
+
+  return minimize(input, testCandidate, {
+    maxIterations: options.minimizeBudget,
+    timeLimitMs: options.minimizeTimeLimitMs,
+  });
 }

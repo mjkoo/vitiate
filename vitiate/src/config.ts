@@ -16,6 +16,10 @@ export interface FuzzOptions {
   runs?: number;
   /** RNG seed for reproducible fuzzing. */
   seed?: number;
+  /** Maximum target re-executions during crash minimization. Default: 10,000. */
+  minimizeBudget?: number;
+  /** Wall-clock time limit in ms for crash minimization. Default: 5,000. */
+  minimizeTimeLimitMs?: number;
 }
 
 export interface FuzzDefaults extends FuzzOptions {
@@ -74,17 +78,19 @@ function validateFuzzOptions(obj: Record<string, unknown>): FuzzOptions {
     "maxTotalTimeMs",
     "runs",
     "seed",
+    "minimizeBudget",
+    "minimizeTimeLimitMs",
   ];
   for (const key of keys) {
     if (key in obj) {
       const val = obj[key];
       if (typeof val === "number" && Number.isFinite(val)) {
-        // seed can be any integer; other fields must be positive
-        if (key === "seed" || val > 0) {
+        // seed can be any integer; other fields must be non-negative
+        if (key === "seed" || val >= 0) {
           valid[key] = val;
         } else {
           process.stderr.write(
-            `vitiate: warning: ignoring non-positive VITIATE_FUZZ_OPTIONS.${key}: ${val}\n`,
+            `vitiate: warning: ignoring negative VITIATE_FUZZ_OPTIONS.${key}: ${val}\n`,
           );
         }
       } else if (val !== undefined && val !== null) {

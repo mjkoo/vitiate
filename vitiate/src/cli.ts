@@ -40,11 +40,54 @@ export const cliParser = object({
   runs: optional(option("-runs", integer({ min: 0 }))),
   seed: optional(option("-seed", integer())),
   maxTotalTime: optional(option("-max_total_time", integer({ min: 0 }))),
+  // Minimization config
+  minimizeBudget: optional(option("-minimize_budget", integer({ min: 0 }))),
+  minimizeTimeLimit: optional(
+    option("-minimize_time_limit", integer({ min: 0 })),
+  ),
+  // libFuzzer-compatible flags: accepted for OSS-Fuzz compatibility
+  fork: optional(option("-fork", integer({ min: 0 }))),
+  jobs: optional(option("-jobs", integer({ min: 0 }))),
+  merge: optional(option("-merge", integer({ min: 0 }))),
 });
 
+function warnUnsupportedFlags(parsed: InferValue<typeof cliParser>): void {
+  if (parsed.fork !== undefined && parsed.fork !== 1) {
+    if (parsed.fork === 0) {
+      process.stderr.write(
+        `vitiate: warning: -fork=0 (non-fork mode) is not supported; vitiate always uses fork mode (equivalent to -fork=1)\n`,
+      );
+    } else {
+      process.stderr.write(
+        `vitiate: warning: -fork=${parsed.fork} is not yet supported; running with single worker (equivalent to -fork=1)\n`,
+      );
+    }
+  }
+  if (parsed.jobs !== undefined && parsed.jobs > 1) {
+    process.stderr.write(
+      `vitiate: warning: -jobs=${parsed.jobs} is not yet supported; running with single job (equivalent to -jobs=1)\n`,
+    );
+  }
+  if (parsed.merge !== undefined && parsed.merge === 1) {
+    process.stderr.write(
+      `vitiate: warning: -merge=1 is not yet supported; corpus merge mode is ignored\n`,
+    );
+  }
+}
+
 function toCliArgs(parsed: InferValue<typeof cliParser>): CliArgs {
-  const { testFile, corpusDirs, maxLen, timeout, runs, seed, maxTotalTime } =
-    parsed;
+  warnUnsupportedFlags(parsed);
+  const {
+    testFile,
+    corpusDirs,
+    maxLen,
+    timeout,
+    runs,
+    seed,
+    maxTotalTime,
+    minimizeBudget,
+    minimizeTimeLimit,
+  } = parsed;
   return {
     testFile,
     corpusDirs: [...corpusDirs],
@@ -54,6 +97,9 @@ function toCliArgs(parsed: InferValue<typeof cliParser>): CliArgs {
       runs,
       seed,
       maxTotalTimeMs: maxTotalTime != null ? maxTotalTime * 1000 : undefined,
+      minimizeBudget,
+      minimizeTimeLimitMs:
+        minimizeTimeLimit != null ? minimizeTimeLimit * 1000 : undefined,
     },
   };
 }

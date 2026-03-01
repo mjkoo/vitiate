@@ -4,6 +4,7 @@ import {
   rmSync,
   existsSync,
   readdirSync,
+  readFileSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
@@ -254,5 +255,77 @@ describe("fuzz loop", () => {
     // The seed from the extra corpus dir should trigger the crash
     expect(result.crashed).toBe(true);
     expect(result.error!.message).toBe("extra corpus seed hit");
+  });
+
+  it("minimizes crash artifact to smaller than the original mutated input", async () => {
+    await setupFuzzingMode();
+
+    // Target crashes on any input containing the byte sequence [0xDE, 0xAD].
+    // The fuzzer will find this with a larger input; minimization should
+    // shrink it to exactly 2 bytes.
+    const target = (data: Buffer): void => {
+      for (let i = 0; i < data.length - 1; i++) {
+        if (data[i] === 0xde && data[i + 1] === 0xad) {
+          throw new Error("found DEAD pattern");
+        }
+      }
+    };
+
+    const result = await runFuzzLoop(target, tmpDir, "minimize-test", {
+      runs: 1_000_000,
+      maxTotalTimeMs: 30_000,
+    });
+
+    expect(result.crashed).toBe(true);
+    expect(result.error!.message).toBe("found DEAD pattern");
+    expect(result.crashArtifactPath).toBeDefined();
+    expect(existsSync(result.crashArtifactPath!)).toBe(true);
+
+    // The minimized artifact should be exactly 2 bytes: [0xDE, 0xAD]
+    const artifactData = readFileSync(result.crashArtifactPath!);
+    expect(artifactData.length).toBe(2);
+    expect(artifactData[0]).toBe(0xde);
+    expect(artifactData[1]).toBe(0xad);
+  });
+  it("runs=0 means unlimited iterations (runs until crash or other limit)", async () => {
+    await setupFuzzingMode();
+    const target = (data: Buffer): void => {
+      if (data.length > 0 && data[0] === 0x42) {
+        throw new Error("found the bug!");
+      }
+    };
+
+    // runs=0 should mean unlimited; maxTotalTimeMs is the safety net
+    const result = await runFuzzLoop(target, tmpDir, "runs-zero", {
+      runs: 0,
+      maxTotalTimeMs: 30_000,
+    });
+
+    // The loop should not exit immediately at iteration 0;
+    // it should keep going and eventually find the crash
+    expect(result.crashed).toBe(true);
+    expect(result.error!.message).toBe("found the bug!");
+    expect(result.totalExecs).toBeGreaterThan(0);
+  });
+
+  it("maxTotalTimeMs=0 means unlimited total time (runs until crash or runs limit)", async () => {
+    await setupFuzzingMode();
+    const target = (data: Buffer): void => {
+      if (data.length > 0 && data[0] === 0x42) {
+        throw new Error("found the bug!");
+      }
+    };
+
+    // maxTotalTimeMs=0 should mean unlimited; runs is the safety net
+    const result = await runFuzzLoop(target, tmpDir, "time-zero", {
+      maxTotalTimeMs: 0,
+      runs: 1_000_000,
+    });
+
+    // The loop should not exit immediately at time 0;
+    // it should keep going and eventually find the crash
+    expect(result.crashed).toBe(true);
+    expect(result.error!.message).toBe("found the bug!");
+    expect(result.totalExecs).toBeGreaterThan(0);
   });
 }, 30000);

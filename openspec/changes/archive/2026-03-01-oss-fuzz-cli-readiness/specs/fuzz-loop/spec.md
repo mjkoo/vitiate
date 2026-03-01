@@ -1,4 +1,4 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
 ### Requirement: Core fuzzing iteration cycle
 
@@ -20,8 +20,6 @@ The loop SHALL terminate when any of these conditions is met:
 - The time limit (`fuzzTime`) is reached.
 - The iteration limit (`runs`) is reached.
 - The process receives SIGINT.
-
-For `runs` and the time limit, a value of 0 means unlimited (equivalent to no limit being set). The loop runs until a crash is found or SIGINT is received.
 
 #### Scenario: Input stashed under CLI supervisor
 
@@ -102,59 +100,3 @@ For `runs` and the time limit, a value of 0 means unlimited (equivalent to no li
 - **AND** the parent supervisor reads the last stashed input from shmem
 - **AND** the parent writes the raw crash artifact without minimization
 - **AND** the fuzz loop iteration cycle is not involved in crash handling (the parent handles it)
-
-### Requirement: Seed loading
-
-Before the fuzz loop begins, the system SHALL load all available seed inputs and add them to the fuzzer via `addSeed()`:
-
-1. Read all files from the seed corpus directory (`testdata/fuzz/{testName}/`).
-2. Read all files from the cached corpus directory (`.vitiate-corpus/{testName}/`).
-3. Add each file's contents as a seed via `fuzzer.addSeed()`.
-
-If no seeds are available, the fuzzer's auto-seed mechanism provides default starting inputs.
-
-#### Scenario: Seeds from corpus directories
-
-- **WHEN** the seed corpus contains 3 files and the cached corpus contains 5 files
-- **THEN** 8 seeds are added to the fuzzer before the loop begins
-
-#### Scenario: No seeds available
-
-- **WHEN** neither corpus directory exists
-- **THEN** the fuzzer auto-seeds with its default set and the loop begins normally
-
-### Requirement: Async target support
-
-The fuzz loop SHALL support async target functions. If the target returns a Promise, the loop SHALL await it before disarming the watchdog and calling `reportResult()`. The watchdog enforces timeouts for both sync and async targets uniformly — there SHALL be no separate async-specific timeout mechanism.
-
-#### Scenario: Async target completes normally
-
-- **WHEN** the target returns a Promise that resolves within the timeout
-- **THEN** the watchdog is disarmed
-- **AND** `reportResult(ExitKind.Ok)` is called after resolution
-
-#### Scenario: Async target rejects
-
-- **WHEN** the target returns a Promise that rejects
-- **THEN** the watchdog is disarmed
-- **AND** `reportResult(ExitKind.Crash)` is called with the rejection reason captured
-
-### Requirement: Periodic event loop yield
-
-The fuzz loop SHALL yield to the event loop periodically to prevent starvation. The yield SHALL occur every N iterations (default 1000) using `setImmediate` wrapped in a Promise.
-
-#### Scenario: Event loop not starved
-
-- **WHEN** the fuzz loop runs for 10000 iterations
-- **THEN** `setImmediate` is called at least 9 times (every 1000 iterations)
-- **AND** other pending microtasks and I/O callbacks have an opportunity to execute
-
-### Requirement: Interesting input persistence
-
-When `reportResult()` returns `Interesting`, the system SHALL write the input to the cached corpus directory so it persists across fuzzing sessions.
-
-#### Scenario: Interesting input saved
-
-- **WHEN** `reportResult()` returns `Interesting`
-- **THEN** the input buffer is written to `.vitiate-corpus/{testName}/{hash}`
-- **AND** subsequent fuzzing sessions can load it as a seed

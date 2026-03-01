@@ -138,8 +138,30 @@ describe("config", () => {
         const opts = getCliOptions();
         expect(opts).toEqual({});
         expect(chunks.length).toBe(1);
-        expect(chunks[0]).toContain("ignoring non-positive");
+        expect(chunks[0]).toContain("ignoring negative");
         expect(chunks[0]).toContain("runs");
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+
+    it("preserves zero values for fields where zero means unlimited", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+          timeoutMs: 0,
+          minimizeTimeLimitMs: 0,
+        });
+        const opts = getCliOptions();
+        expect(opts.timeoutMs).toBe(0);
+        expect(opts.minimizeTimeLimitMs).toBe(0);
+        expect(chunks.length).toBe(0);
       } finally {
         process.stderr.write = originalWrite;
       }
