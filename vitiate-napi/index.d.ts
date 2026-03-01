@@ -9,15 +9,63 @@ export declare class Fuzzer {
   get stats(): FuzzerStats
 }
 
+/**
+ * NAPI-exposed handle to a shared memory stash.
+ *
+ * Wraps a cross-process shared memory region used to exchange the
+ * current fuzz input between the supervisor parent and the fuzzing child.
+ */
+export declare class ShmemHandle {
+  /**
+   * Allocate a new shmem region (parent side).
+   *
+   * Writes the magic field and exports the shmem identifier to the
+   * `VITIATE_SHMEM` environment variable for the child to attach.
+   */
+  static allocate(maxInputLen: number): ShmemHandle
+  /**
+   * Attach to an existing shmem region (child side).
+   *
+   * Reads the `VITIATE_SHMEM` environment variable, attaches to the
+   * region, and validates the magic field.
+   */
+  static attach(): ShmemHandle
+  /**
+   * Stash the current input to the shmem region.
+   *
+   * Call this before each fuzz iteration so the parent (or watchdog)
+   * can recover the crashing/timing-out input.
+   */
+  stashInput(input: Uint8Array): void
+  /**
+   * Read the stashed input from the shmem region.
+   *
+   * Used by the parent after the child dies to recover the crashing input.
+   */
+  readStashedInput(): Buffer
+  /**
+   * Reset the generation counter to zero.
+   *
+   * Called by the parent supervisor after reading a crash artifact and
+   * before respawning the child. Prevents the new child from seeing
+   * stale data from the dead child.
+   */
+  resetGeneration(): void
+}
+
 /** NAPI-exposed Watchdog class. */
 export declare class Watchdog {
   /**
    * Create a new Watchdog. Spawns the background thread and caches the V8 isolate.
    *
-   * - `max_input_len`: Maximum input size for the pre-stash buffer.
    * - `artifact_dir`: Directory to write timeout artifacts.
+   * - `shmem`: Optional shared memory handle for input capture before `_exit`.
+   *   When running under the supervisor, pass the shmem handle so the watchdog
+   *   can read the current input from shmem before calling `_exit`. When running
+   *   without the supervisor (Vitest integration), pass `null` — the `_exit`
+   *   fallback still fires but without writing a timeout artifact.
    */
-  constructor(maxInputLen: number, artifactDir: string)
+  constructor(artifactDir: string, shmem?: ShmemHandle | undefined | null)
   /**
    * Arm the watchdog with a timeout in milliseconds.
    * Wakes the watchdog thread to start timing.
@@ -28,11 +76,6 @@ export declare class Watchdog {
    * V8 termination if the watchdog fired.
    */
   disarm(): void
-  /**
-   * Stash the current input for capture before `_exit`.
-   * Call this before each fuzz iteration.
-   */
-  stashInput(input: Uint8Array): void
   /** Returns `true` if the watchdog fired since the last `disarm()`. */
   get didFire(): boolean
   /**
@@ -54,6 +97,9 @@ export declare class Watchdog {
    * If the target returns a Promise, it is returned in `result` for the JS
    * caller to await. Async timeout handling relies on the `_exit` fallback
    * or on TerminateExecution firing during active JS in the continuation.
+   *
+   * Note: Input stashing is the caller's responsibility. The fuzz loop must
+   * call `shmemHandle.stashInput(input)` before calling `runTarget()`.
    */
 runTarget(target: (data: Buffer) => void | Promise<void>, input: Buffer, timeoutMs: number): { exitKind: number; error?: Error; result?: unknown }
 }
@@ -78,6 +124,23 @@ export interface FuzzerStats {
   coverageEdges: number
   execsPerSec: number
 }
+
+/**
+ * Install the platform-specific exception/crash handler.
+ *
+ * - **Windows**: Calls `AddVectoredExceptionHandler` to intercept
+ *   `EXCEPTION_ACCESS_VIOLATION`, `EXCEPTION_ILLEGAL_INSTRUCTION`,
+ *   `EXCEPTION_STACK_OVERFLOW`, and `EXCEPTION_INT_DIVIDE_BY_ZERO`.
+ *   The handler writes crash metadata to shmem and a crash artifact to disk,
+ *   then returns `EXCEPTION_CONTINUE_SEARCH` to propagate the exception.
+ *
+ * - **Unix**: No-op. The parent supervisor detects crashes via the child's
+ *   exit signal (SIGSEGV, SIGBUS, SIGABRT, etc.) using Node's `child.on('exit')`
+ *   signal property.
+ *
+ * Safe to call multiple times — subsequent calls are no-ops.
+ */
+export declare function installExceptionHandler(shmem: ShmemHandle): void
 
 /**
  * Result of evaluating a single fuzzing iteration.

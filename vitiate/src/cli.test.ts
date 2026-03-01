@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { parseArgs } from "./cli.js";
+import { spawn } from "node:child_process";
+import { parseArgs, waitForChild, WATCHDOG_EXIT_CODE } from "./cli.js";
 import { getCliOptions } from "./config.js";
 
 function argv(...args: string[]): string[] {
@@ -84,5 +85,78 @@ describe("CLI env var forwarding", () => {
   it("getCliOptions returns empty object when env var is not set", () => {
     delete process.env["VITIATE_FUZZ_OPTIONS"];
     expect(getCliOptions()).toEqual({});
+  });
+});
+
+describe("waitForChild", () => {
+  it("resolves with exit code 0 on normal exit", async () => {
+    const child = spawn(process.execPath, ["-e", "process.exit(0)"], {
+      stdio: "ignore",
+    });
+    const result = await waitForChild(child);
+    expect(result.code).toBe(0);
+    expect(result.signal).toBeNull();
+  });
+
+  it("resolves with exit code 1 on JS crash exit", async () => {
+    const child = spawn(process.execPath, ["-e", "process.exit(1)"], {
+      stdio: "ignore",
+    });
+    const result = await waitForChild(child);
+    expect(result.code).toBe(1);
+    expect(result.signal).toBeNull();
+  });
+
+  it("resolves with watchdog exit code 77", async () => {
+    const child = spawn(
+      process.execPath,
+      ["-e", `process.exit(${WATCHDOG_EXIT_CODE})`],
+      { stdio: "ignore" },
+    );
+    const result = await waitForChild(child);
+    expect(result.code).toBe(WATCHDOG_EXIT_CODE);
+    expect(result.signal).toBeNull();
+  });
+
+  it("resolves with signal on SIGKILL", async () => {
+    const child = spawn(
+      process.execPath,
+      ["-e", "process.kill(process.pid, 'SIGKILL')"],
+      { stdio: "ignore" },
+    );
+    const result = await waitForChild(child);
+    expect(result.code).toBeNull();
+    expect(result.signal).toBe("SIGKILL");
+  });
+
+  it("resolves with signal on SIGSEGV", async () => {
+    const child = spawn(
+      process.execPath,
+      ["-e", "process.kill(process.pid, 'SIGSEGV')"],
+      { stdio: "ignore" },
+    );
+    const result = await waitForChild(child);
+    expect(result.code).toBeNull();
+    expect(result.signal).toBe("SIGSEGV");
+  });
+
+  it("resolves with signal on SIGABRT", async () => {
+    const child = spawn(
+      process.execPath,
+      ["-e", "process.kill(process.pid, 'SIGABRT')"],
+      { stdio: "ignore" },
+    );
+    const result = await waitForChild(child);
+    expect(result.code).toBeNull();
+    expect(result.signal).toBe("SIGABRT");
+  });
+});
+
+describe("waitForChild error handling", () => {
+  it("rejects when child fails to spawn", async () => {
+    const child = spawn("/nonexistent/binary/that/does/not/exist", [], {
+      stdio: "ignore",
+    });
+    await expect(waitForChild(child)).rejects.toThrow();
   });
 });

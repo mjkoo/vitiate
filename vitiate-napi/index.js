@@ -577,9 +577,11 @@ if (!nativeBinding) {
 
 module.exports = nativeBinding
 module.exports.Fuzzer = nativeBinding.Fuzzer
+module.exports.ShmemHandle = nativeBinding.ShmemHandle
 module.exports.Watchdog = nativeBinding.Watchdog
 module.exports.createCoverageMap = nativeBinding.createCoverageMap
 module.exports.ExitKind = nativeBinding.ExitKind
+module.exports.installExceptionHandler = nativeBinding.installExceptionHandler
 module.exports.IterationResult = nativeBinding.IterationResult
 module.exports.traceCmp = nativeBinding.traceCmp
 module.exports.version = nativeBinding.version

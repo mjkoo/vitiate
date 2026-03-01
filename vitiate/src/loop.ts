@@ -2,7 +2,14 @@
  * Core fuzzing loop: drives the LibAFL engine.
  */
 import path from "node:path";
-import { Fuzzer, Watchdog, ExitKind, IterationResult } from "vitiate-napi";
+import {
+  Fuzzer,
+  Watchdog,
+  ShmemHandle,
+  ExitKind,
+  IterationResult,
+  installExceptionHandler,
+} from "vitiate-napi";
 import type { FuzzerConfig } from "vitiate-napi";
 import type { FuzzOptions } from "./config.js";
 import {
@@ -75,15 +82,29 @@ export async function runFuzzLoop(
     fuzzer.addSeed(seed);
   }
 
+  // In supervisor (child) mode, attach to the parent's shared memory region
+  // for cross-process input stashing. The shmem allows the parent to read the
+  // crashing input after the child dies, and the watchdog to read it before
+  // calling _exit for timeout artifacts.
+  const shmemHandle: ShmemHandle | null = process.env["VITIATE_SUPERVISOR"]
+    ? ShmemHandle.attach()
+    : null;
+
+  // Install platform-specific crash handler (Windows SEH; no-op on Unix).
+  if (shmemHandle) {
+    installExceptionHandler(shmemHandle);
+  }
+
   // Only create the watchdog when a timeout is configured. Creating a Watchdog
-  // spawns a thread, resolves V8 symbols via dlsym, and allocates an input
-  // stash - unnecessary overhead when no timeout enforcement is needed.
+  // spawns a thread, resolves V8 symbols via dlsym — unnecessary overhead when
+  // no timeout enforcement is needed. Pass the shmem handle so the watchdog can
+  // read from shmem on its _exit path.
   const timeoutMs = options.timeoutMs;
   const watchdog: Watchdog | null =
     timeoutMs !== undefined && timeoutMs > 0
       ? new Watchdog(
-          fuzzerConfig.maxInputLen ?? 4096,
           path.join(testDir, "testdata", "fuzz", sanitizeTestName(testName)),
+          shmemHandle,
         )
       : null;
 
@@ -110,6 +131,11 @@ export async function runFuzzLoop(
 
       const rawInput = fuzzer.getNextInput();
       const input = Buffer.from(rawInput); // safe copy before engine mutations
+
+      // Stash the current input to shmem before executing the target.
+      // This allows the parent supervisor to read the crashing input after
+      // child death, and the watchdog to read it before _exit.
+      shmemHandle?.stashInput(input);
 
       let exitKind = ExitKind.Ok;
       let caughtError: Error | undefined;
@@ -150,9 +176,9 @@ export async function runFuzzLoop(
               : new Error(String(targetResult.error));
         } else if (targetResult.result instanceof Promise) {
           // Async target returned a Promise - re-arm and await.
-          // The input was stashed by runTarget() at the start of this iteration
-          // and remains valid for the entire iteration including this async
-          // continuation, so re-arming without re-stashing is correct.
+          // The input was stashed to shmem before runTarget() and remains valid
+          // for the entire iteration including this async continuation, so
+          // re-arming without re-stashing is correct.
           // If the async code hangs, V8 TerminateExecution cascades through
           // all JS frames and the _exit fallback terminates the process.
           wd.arm(timeoutMs);

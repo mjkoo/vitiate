@@ -16,8 +16,12 @@ use std::time::{Duration, Instant};
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
-use crate::input_stash::InputStash;
+use crate::shmem_stash::{ShmemHandle, ShmemView};
 use crate::v8_shim;
+
+/// Exit code used by the watchdog's `_exit` fallback for timeouts.
+/// Must be kept in sync with `WATCHDOG_EXIT_CODE` in `vitiate/src/cli.ts`.
+pub(crate) const WATCHDOG_EXIT_CODE: i32 = 77;
 
 /// Internal watchdog state protected by a mutex.
 struct WatchdogState {
@@ -37,8 +41,9 @@ struct WatchdogShared {
     fired: AtomicBool,
     /// The current timeout in milliseconds (set by arm, used by _exit path).
     timeout_ms: AtomicU64,
-    /// Pre-stash buffer for input capture before `_exit`.
-    input_stash: InputStash,
+    /// Shmem view for reading the current input before `_exit`.
+    /// `None` when running without the supervisor (Vitest integration mode).
+    shmem_view: Option<ShmemView>,
     /// Directory to write timeout artifacts.
     artifact_dir: PathBuf,
     /// Whether V8 TerminateExecution is available.
@@ -145,7 +150,13 @@ fn handle_timeout(shared: &WatchdogShared) {
 
 /// Write the current input to disk and call `_exit`.
 fn exit_with_input_capture(shared: &WatchdogShared) {
-    if let Some(input) = shared.input_stash.read() {
+    // Read the current input from the shmem region using the generation-counter
+    // consistency check. If shmem is not available (no supervisor), skip input
+    // capture — the _exit still fires to terminate the hung process.
+    if let Some(ref view) = shared.shmem_view
+        && let Some(input) = view.read_consistent()
+        && !input.is_empty()
+    {
         // Write timeout artifact
         let hash = {
             // Simple FNV-1a hash of the input
@@ -174,7 +185,7 @@ fn exit_with_input_capture(shared: &WatchdogShared) {
     // SAFETY: _exit is safe to call from any thread. It terminates the process
     // immediately without running atexit handlers.
     unsafe {
-        libc::_exit(77);
+        libc::_exit(WATCHDOG_EXIT_CODE);
     }
 }
 
@@ -189,10 +200,14 @@ pub struct Watchdog {
 impl Watchdog {
     /// Create a new Watchdog. Spawns the background thread and caches the V8 isolate.
     ///
-    /// - `max_input_len`: Maximum input size for the pre-stash buffer.
     /// - `artifact_dir`: Directory to write timeout artifacts.
+    /// - `shmem`: Optional shared memory handle for input capture before `_exit`.
+    ///   When running under the supervisor, pass the shmem handle so the watchdog
+    ///   can read the current input from shmem before calling `_exit`. When running
+    ///   without the supervisor (Vitest integration), pass `null` — the `_exit`
+    ///   fallback still fires but without writing a timeout artifact.
     #[napi(constructor)]
-    pub fn new(max_input_len: u32, artifact_dir: String) -> Self {
+    pub fn new(artifact_dir: String, shmem: Option<&ShmemHandle>) -> Self {
         // Cache V8 init result to avoid redundant dlsym resolution on each
         // Watchdog::new(). OnceLock guarantees exactly one initialization.
         static V8_INIT_RESULT: OnceLock<bool> = OnceLock::new();
@@ -205,6 +220,7 @@ impl Watchdog {
         }
 
         let exit_multiplier = if cfg!(unix) { 5 } else { 1 };
+        let shmem_view = shmem.map(|s| s.view());
 
         let shared = Arc::new(WatchdogShared {
             state: Mutex::new(WatchdogState {
@@ -215,7 +231,7 @@ impl Watchdog {
             condvar: Condvar::new(),
             fired: AtomicBool::new(false),
             timeout_ms: AtomicU64::new(0),
-            input_stash: InputStash::new(max_input_len as usize),
+            shmem_view,
             artifact_dir: PathBuf::from(artifact_dir),
             v8_available: v8_ok,
             exit_timeout_multiplier: exit_multiplier,
@@ -284,13 +300,6 @@ impl Watchdog {
         }
     }
 
-    /// Stash the current input for capture before `_exit`.
-    /// Call this before each fuzz iteration.
-    #[napi]
-    pub fn stash_input(&self, input: &[u8]) {
-        self.shared.input_stash.stash(input);
-    }
-
     /// Returns `true` if the watchdog fired since the last `disarm()`.
     #[napi(getter)]
     pub fn did_fire(&self) -> bool {
@@ -325,6 +334,9 @@ impl Watchdog {
     /// If the target returns a Promise, it is returned in `result` for the JS
     /// caller to await. Async timeout handling relies on the `_exit` fallback
     /// or on TerminateExecution firing during active JS in the continuation.
+    ///
+    /// Note: Input stashing is the caller's responsibility. The fuzz loop must
+    /// call `shmemHandle.stashInput(input)` before calling `runTarget()`.
     #[napi(ts_return_type = "{ exitKind: number; error?: Error; result?: unknown }")]
     pub fn run_target(
         &mut self,
@@ -333,8 +345,8 @@ impl Watchdog {
         input: Buffer,
         timeout_ms: f64,
     ) -> Result<Object<'_>> {
-        // Stash input and arm watchdog (Rust state management stays here)
-        self.shared.input_stash.stash(&input);
+        // Arm watchdog. Input stashing is done by the fuzz loop via shmem
+        // before calling run_target.
         self.arm(timeout_ms);
 
         let raw_env = env.raw();
@@ -419,9 +431,23 @@ impl Drop for Watchdog {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shmem_stash;
 
-    fn make_shared(v8_available: bool) -> Arc<WatchdogShared> {
-        Arc::new(WatchdogShared {
+    /// Create a test ShmemView backed by a heap-allocated buffer.
+    fn make_test_shmem_view(max_input_len: usize) -> (Vec<u8>, ShmemView) {
+        let total = shmem_stash::shmem_size(max_input_len);
+        let mut buf = vec![0u8; total];
+        let base = buf.as_mut_ptr();
+        unsafe {
+            (base as *mut u32).write(shmem_stash::MAGIC);
+        }
+        let view = ShmemView::new_for_test(base, max_input_len);
+        (buf, view)
+    }
+
+    fn make_shared(v8_available: bool) -> (Vec<u8>, Arc<WatchdogShared>) {
+        let (buf, view) = make_test_shmem_view(1024);
+        let shared = Arc::new(WatchdogShared {
             state: Mutex::new(WatchdogState {
                 deadline: None,
                 armed: false,
@@ -430,16 +456,17 @@ mod tests {
             condvar: Condvar::new(),
             fired: AtomicBool::new(false),
             timeout_ms: AtomicU64::new(0),
-            input_stash: InputStash::new(1024),
+            shmem_view: Some(view),
             artifact_dir: PathBuf::from("/tmp/vitiate-test"),
             v8_available,
             exit_timeout_multiplier: 5,
-        })
+        });
+        (buf, shared)
     }
 
     #[test]
     fn arm_and_disarm_without_firing() {
-        let shared = make_shared(false);
+        let (_buf, shared) = make_shared(false);
         let thread_shared = Arc::clone(&shared);
         let handle = thread::spawn(move || watchdog_thread(thread_shared));
 
@@ -475,7 +502,7 @@ mod tests {
 
     #[test]
     fn shutdown_while_idle() {
-        let shared = make_shared(false);
+        let (_buf, shared) = make_shared(false);
         let thread_shared = Arc::clone(&shared);
         let handle = thread::spawn(move || watchdog_thread(thread_shared));
 
@@ -490,7 +517,7 @@ mod tests {
 
     #[test]
     fn shutdown_while_armed() {
-        let shared = make_shared(false);
+        let (_buf, shared) = make_shared(false);
         let thread_shared = Arc::clone(&shared);
         let handle = thread::spawn(move || watchdog_thread(thread_shared));
 
@@ -514,10 +541,11 @@ mod tests {
     }
 
     #[test]
-    fn input_stash_integration() {
-        let shared = make_shared(false);
-        shared.input_stash.stash(b"test input");
-        let data = shared.input_stash.read().expect("should read");
+    fn shmem_stash_integration() {
+        let (_buf, shared) = make_shared(false);
+        let view = shared.shmem_view.as_ref().expect("should have shmem");
+        view.stash_input(b"test input");
+        let data = view.read_consistent().expect("should read");
         assert_eq!(data, b"test input");
     }
 }

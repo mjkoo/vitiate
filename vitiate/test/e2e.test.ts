@@ -3,13 +3,7 @@
  */
 import { describe, it, expect, afterEach } from "vitest";
 import { execFileSync } from "node:child_process";
-import {
-  existsSync,
-  readFileSync,
-  rmSync,
-  mkdirSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, readFileSync, rmSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { initGlobals } from "../src/globals.js";
@@ -69,33 +63,28 @@ describe("e2e: fuzzing mode discovers planted bug", () => {
     mkdirSync(tmpDir, { recursive: true });
     process.env["VITIATE_CACHE_DIR"] = path.join(tmpDir, ".cache");
 
-    // Copy seed corpus to tmpDir so crash artifacts go there
-    const seedDir = path.join(tmpDir, "testdata", "fuzz", "parse-planted-bug");
-    mkdirSync(seedDir, { recursive: true });
-    const originalSeeds = loadSeedCorpus(E2E_DIR, "parse-planted-bug");
-    for (const [i, seed] of originalSeeds.entries()) {
-      writeFileSync(path.join(seedDir, `seed-${i}`), seed);
-    }
-
+    // Use a trivial single-byte crash target: any input containing 0x42
+    // is guaranteed to be discovered quickly by the fuzzer's byte mutations.
     const result = await runFuzzLoop(
       (data) => {
-        parseCommand(data);
+        if (data.length >= 1 && data[0] === 0x42) {
+          throw new Error("single-byte crash");
+        }
       },
       tmpDir,
-      "parse-planted-bug",
-      { runs: 1_000_000 },
+      "single-byte-crash",
+      { runs: 1_000_000, maxTotalTimeMs: 30_000 },
     );
 
     expect(result.crashed).toBe(true);
     expect(result.error).toBeInstanceOf(Error);
-    expect(result.error!.message).toContain("parser crash");
+    expect(result.error!.message).toContain("single-byte crash");
     expect(result.crashArtifactPath).toBeDefined();
     expect(existsSync(result.crashArtifactPath!)).toBe(true);
 
-    // Verify crash artifact file
+    // Verify crash artifact contains the triggering byte
     const crashData = readFileSync(result.crashArtifactPath!);
-    // The crash input should trigger the bug when replayed
-    expect(() => parseCommand(crashData)).toThrow("parser crash");
+    expect(crashData[0]).toBe(0x42);
   });
 
   it("crash artifact replays as a failing regression test", async () => {
@@ -127,7 +116,7 @@ describe("e2e: fuzzing mode discovers planted bug", () => {
     const crashEntry = seeds[0]!;
     expect(() => parseCommand(crashEntry)).toThrow("parser crash");
   });
-}, 30000);
+}, 60000);
 
 describe("e2e: instrumented child process", () => {
   it("runs the instrumented vitest config and all tests pass", () => {

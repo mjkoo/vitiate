@@ -1,7 +1,8 @@
 mod cmplog;
 mod coverage;
 mod engine;
-mod input_stash;
+mod exception_handler;
+mod shmem_stash;
 mod trace;
 mod types;
 mod v8_shim;
