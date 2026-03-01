@@ -1,0 +1,147 @@
+## ADDED Requirements
+
+### Requirement: Parent process lifecycle
+
+The system SHALL provide a parent process supervisor that manages the fuzzing child process lifecycle. On CLI invocation, the parent SHALL:
+
+1. Allocate a cross-process shared memory region via the shared-memory-stash capability.
+2. Spawn itself as a child process via `child_process.spawn()` with the shmem identifier passed via the `VITIATE_SUPERVISOR` environment variable.
+3. Pipe the child's stdout and stderr to its own stdout and stderr.
+4. Enter a platform-specific wait loop (`waitpid` on Unix, `WaitForSingleObject` on Windows).
+5. Interpret the child's exit status to determine the outcome (see exit code protocol requirement).
+
+The parent SHALL add zero overhead to the fuzz loop hot path. It SHALL consume no CPU while the child runs (blocking wait).
+
+#### Scenario: Normal campaign completion
+
+- **WHEN** the child process exits with code 0
+- **THEN** the parent exits with code 0
+- **AND** no crash artifact is written by the parent
+
+#### Scenario: Child finds JS crash
+
+- **WHEN** the child process exits with code 1 (JS crash found)
+- **THEN** the parent exits with code 1
+- **AND** the crash artifact was already written by the child
+
+#### Scenario: Child watchdog timeout
+
+- **WHEN** the child process exits with code 77 (watchdog `_exit`)
+- **THEN** the parent attempts backup recovery of the stashed input from shmem (the watchdog may have already written an artifact)
+- **AND** the parent resets the shmem generation counter
+- **AND** the parent respawns the child to continue the campaign (subject to respawn limit)
+
+### Requirement: Native crash detection
+
+On Unix, the parent SHALL detect native crashes by checking `WIFSIGNALED(status)` after `waitpid` returns. The signal number SHALL be read from `WTERMSIG(status)`. No signal handlers SHALL be installed in the child process on Unix.
+
+On Windows, the parent SHALL detect crashes by checking the child's exit code against known `NTSTATUS` exception codes (e.g., `0xC0000005` for access violation). The child SHALL install a vectored exception handler via `AddVectoredExceptionHandler` that writes crash metadata to shmem before the process terminates.
+
+#### Scenario: Native crash on Unix
+
+- **WHEN** the child process is killed by a signal (SIGSEGV, SIGBUS, SIGABRT, SIGILL, or SIGFPE)
+- **THEN** the parent detects the signal death via `WIFSIGNALED(status)`
+- **AND** the parent reads the signal number from `WTERMSIG(status)`
+- **AND** the parent reads the crashing input from the shmem stash
+- **AND** the parent writes a crash artifact to `testdata/fuzz/{testName}/crash-{hash}`
+- **AND** the crash artifact metadata includes the signal number
+
+#### Scenario: Native crash on Windows
+
+- **WHEN** the child process crashes with a Windows exception (e.g., `EXCEPTION_ACCESS_VIOLATION`)
+- **THEN** the child's vectored exception handler writes crash metadata to shmem
+- **AND** the parent detects the abnormal exit code
+- **AND** the parent reads the crashing input from the shmem stash
+- **AND** the parent writes a crash artifact to `testdata/fuzz/{testName}/crash-{hash}`
+
+#### Scenario: V8 Wasm trap not misidentified as crash
+
+- **WHEN** V8 handles a Wasm out-of-bounds access via its own SIGSEGV/SIGBUS handler
+- **THEN** the child process does not die (V8 converts the signal to a catchable exception)
+- **AND** the parent's `waitpid` does not return
+- **AND** no crash artifact is written by the parent
+- **AND** zero false positive crash artifacts are produced
+
+### Requirement: Child respawn after crash or timeout
+
+After detecting a native crash or watchdog timeout, writing the crash/timeout artifact, and logging the event, the parent SHALL respawn the child process to continue the fuzzing campaign. The respawned child SHALL:
+
+1. Attach to the same shmem region.
+2. Reload the corpus (including any newly-written crash artifacts).
+3. Resume fuzzing from the beginning of the corpus.
+
+The parent SHALL continue the spawn/wait/respawn loop until the child exits normally (code 0 or 1), the parent receives SIGINT, or the respawn limit (`MAX_RESPAWNS`) is reached. The respawn limit SHALL use `>=` semantics: after exactly `MAX_RESPAWNS` respawns the parent exits with code 1.
+
+#### Scenario: Campaign continues after crash
+
+- **WHEN** the child crashes with SIGSEGV
+- **THEN** the parent writes the crash artifact
+- **AND** the parent spawns a new child process
+- **AND** the new child loads the corpus including the crash artifact
+- **AND** fuzzing continues
+
+#### Scenario: Multiple crashes in a campaign
+
+- **WHEN** the child crashes, is respawned, and crashes again on a different input
+- **THEN** each crash produces a distinct artifact file (different hash)
+- **AND** the parent respawns after each crash
+
+#### Scenario: Parent receives SIGINT
+
+- **WHEN** the parent receives SIGINT while the child is running
+- **THEN** the parent forwards SIGINT to the child
+- **AND** the parent waits for the child to exit
+- **AND** the parent exits cleanly
+
+### Requirement: Exit code protocol
+
+The parent SHALL interpret the child's exit status according to this protocol:
+
+| Child exit status | Meaning | Parent action |
+|---|---|---|
+| Code 0 | Campaign complete (no crash found, or limits reached) | Exit 0 |
+| Code 1 | JS crash found, artifact written by child | Exit 1 |
+| Code 77 | Watchdog `_exit` (timeout), artifact written by watchdog | Read shmem (backup recovery), reset generation, respawn |
+| Killed by signal (Unix) / exception exit code (Windows) | Native crash | Read shmem, write artifact, reset generation, respawn |
+
+#### Scenario: Exit code 0 forwarded
+
+- **WHEN** the child exits with code 0
+- **THEN** the parent exits with code 0
+
+#### Scenario: Exit code 1 forwarded
+
+- **WHEN** the child exits with code 1
+- **THEN** the parent exits with code 1
+
+#### Scenario: Exit code 77 triggers respawn
+
+- **WHEN** the child exits with code 77
+- **THEN** the parent recognizes this as a watchdog timeout
+- **AND** the parent reads the stashed input from shmem (backup recovery — the watchdog may have already written an artifact)
+- **AND** the parent resets the shmem generation counter
+- **AND** the parent respawns the child (subject to respawn limit)
+
+#### Scenario: Signal death triggers respawn
+
+- **WHEN** the child is killed by SIGSEGV on Unix
+- **THEN** the parent reads shmem, writes the crash artifact, and respawns the child
+
+### Requirement: Crash artifact format
+
+The parent SHALL write crash artifacts in the same format as the fuzz loop's existing crash artifact writing. The artifact file SHALL be written to `testdata/fuzz/{testName}/crash-{hash}` where `{hash}` is computed from the crashing input bytes. The file contents SHALL be the raw input bytes.
+
+The parent SHALL also log the crash to stderr with the signal/exception type and artifact path.
+
+#### Scenario: Crash artifact written by parent
+
+- **WHEN** the parent writes a crash artifact after a native crash
+- **THEN** the artifact file path is `testdata/fuzz/{testName}/crash-{hash}`
+- **AND** the file contains the raw crashing input bytes
+- **AND** the parent logs the signal type and artifact path to stderr
+
+#### Scenario: Crash artifact is idempotent
+
+- **WHEN** the same input causes a crash on respawn
+- **THEN** the parent writes to the same artifact path (same hash)
+- **AND** the file is overwritten with identical contents (no corruption)

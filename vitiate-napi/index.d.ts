@@ -140,7 +140,7 @@ export interface FuzzerStats {
  *
  * Safe to call multiple times — subsequent calls are no-ops.
  */
-export declare function installExceptionHandler(shmem: ShmemHandle): void
+export declare function installExceptionHandler(shmem: ShmemHandle, artifactDir: string): void
 
 /**
  * Result of evaluating a single fuzzing iteration.

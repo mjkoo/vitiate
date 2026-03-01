@@ -118,38 +118,52 @@ describe("waitForChild", () => {
     expect(result.signal).toBeNull();
   });
 
-  it("resolves with signal on SIGKILL", async () => {
-    const child = spawn(
-      process.execPath,
-      ["-e", "process.kill(process.pid, 'SIGKILL')"],
-      { stdio: "ignore" },
-    );
-    const result = await waitForChild(child);
-    expect(result.code).toBeNull();
-    expect(result.signal).toBe("SIGKILL");
-  });
+  // Unix signals (SIGKILL, SIGSEGV, SIGABRT) are not available on Windows.
+  // On Windows, crash detection uses SEH and the supervisor observes abnormal
+  // exit codes rather than signals.
+  it.skipIf(process.platform === "win32")(
+    "resolves with signal on SIGKILL",
+    async () => {
+      const child = spawn(
+        process.execPath,
+        ["-e", "process.kill(process.pid, 'SIGKILL')"],
+        { stdio: "ignore" },
+      );
+      const result = await waitForChild(child);
+      expect(result.code).toBeNull();
+      expect(result.signal).toBe("SIGKILL");
+    },
+  );
 
-  it("resolves with signal on SIGSEGV", async () => {
-    const child = spawn(
-      process.execPath,
-      ["-e", "process.kill(process.pid, 'SIGSEGV')"],
-      { stdio: "ignore" },
-    );
-    const result = await waitForChild(child);
-    expect(result.code).toBeNull();
-    expect(result.signal).toBe("SIGSEGV");
-  });
+  it.skipIf(process.platform === "win32")(
+    "resolves with signal on SIGSEGV",
+    { timeout: 15_000 },
+    async () => {
+      const child = spawn(
+        process.execPath,
+        ["-e", "process.kill(process.pid, 'SIGSEGV')"],
+        { stdio: "ignore" },
+      );
+      const result = await waitForChild(child);
+      expect(result.code).toBeNull();
+      expect(result.signal).toBe("SIGSEGV");
+    },
+  );
 
-  it("resolves with signal on SIGABRT", async () => {
-    const child = spawn(
-      process.execPath,
-      ["-e", "process.kill(process.pid, 'SIGABRT')"],
-      { stdio: "ignore" },
-    );
-    const result = await waitForChild(child);
-    expect(result.code).toBeNull();
-    expect(result.signal).toBe("SIGABRT");
-  });
+  it.skipIf(process.platform === "win32")(
+    "resolves with signal on SIGABRT",
+    { timeout: 15_000 },
+    async () => {
+      const child = spawn(
+        process.execPath,
+        ["-e", "process.kill(process.pid, 'SIGABRT')"],
+        { stdio: "ignore" },
+      );
+      const result = await waitForChild(child);
+      expect(result.code).toBeNull();
+      expect(result.signal).toBe("SIGABRT");
+    },
+  );
 });
 
 describe("waitForChild error handling", () => {

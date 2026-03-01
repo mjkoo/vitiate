@@ -34,31 +34,154 @@ static INSTALL_ONCE: Once = Once::new();
 // the NAPI entry point is not linked, so the function appears unused.
 #[allow(dead_code, unused_variables)]
 #[napi]
-pub fn install_exception_handler(shmem: &ShmemHandle) {
+pub fn install_exception_handler(shmem: &ShmemHandle, artifact_dir: String) {
     INSTALL_ONCE.call_once(|| {
         #[cfg(windows)]
         {
-            install_seh_handler(shmem);
+            install_seh_handler(shmem, artifact_dir);
         }
         // Unix: no-op — parent observes crashes via waitpid/signal
     });
 }
 
-/// Windows SEH implementation (compiled only on Windows).
+// --- Windows SEH implementation ---
+
 #[cfg(windows)]
-fn install_seh_handler(_shmem: &ShmemHandle) {
-    // TODO: Implement Windows SEH crash handler
-    //
-    // Implementation plan:
-    // 1. Store shmem view in a global static for the handler callback
-    // 2. Call AddVectoredExceptionHandler(1, handler_fn) to install as first handler
-    // 3. In handler_fn:
-    //    a. Check exception code against EXCEPTION_ACCESS_VIOLATION,
-    //       EXCEPTION_ILLEGAL_INSTRUCTION, EXCEPTION_STACK_OVERFLOW,
-    //       EXCEPTION_INT_DIVIDE_BY_ZERO
-    //    b. Read crashing input from shmem using read_consistent()
-    //    c. Write crash artifact to artifact_dir
-    //    d. Return EXCEPTION_CONTINUE_SEARCH to propagate
-    //
-    // Requires: windows-sys crate dependency for SEH FFI types
+mod seh {
+    use std::fs;
+    use std::io::Write;
+    use std::path::PathBuf;
+    use std::sync::OnceLock;
+
+    use windows_sys::Win32::Foundation::{
+        EXCEPTION_ACCESS_VIOLATION, EXCEPTION_ILLEGAL_INSTRUCTION, EXCEPTION_INT_DIVIDE_BY_ZERO,
+        EXCEPTION_STACK_OVERFLOW, NTSTATUS,
+    };
+    use windows_sys::Win32::System::Diagnostics::Debug::{
+        AddVectoredExceptionHandler, EXCEPTION_CONTINUE_SEARCH, EXCEPTION_POINTERS,
+    };
+
+    use crate::shmem_stash::{ShmemHandle, ShmemView};
+
+    /// Context stored in a global static for the vectored exception handler
+    /// callback. C function pointers cannot capture state, so we use a
+    /// process-global `OnceLock`.
+    struct ExceptionContext {
+        view: ShmemView,
+        artifact_dir: PathBuf,
+    }
+
+    impl std::fmt::Debug for ExceptionContext {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("ExceptionContext")
+                .field("artifact_dir", &self.artifact_dir)
+                .finish_non_exhaustive()
+        }
+    }
+
+    static EXCEPTION_CONTEXT: OnceLock<ExceptionContext> = OnceLock::new();
+
+    /// Install the Windows vectored exception handler.
+    pub(super) fn install_seh_handler(shmem: &ShmemHandle, artifact_dir: String) {
+        EXCEPTION_CONTEXT
+            .set(ExceptionContext {
+                view: shmem.view(),
+                artifact_dir: PathBuf::from(artifact_dir),
+            })
+            .expect("exception handler context already initialized");
+
+        // Register as the first handler (first=1) so we run before V8's own
+        // vectored exception handler. This lets us capture the crash artifact
+        // before V8 potentially handles (and masks) the exception.
+        //
+        // SAFETY: `handler_callback` has the correct `PVECTORED_EXCEPTION_HANDLER`
+        // signature. The handler returns `EXCEPTION_CONTINUE_SEARCH`, so it
+        // never prevents other handlers from running.
+        unsafe {
+            AddVectoredExceptionHandler(1, Some(handler_callback));
+        }
+    }
+
+    /// Vectored exception handler callback.
+    ///
+    /// Called by the OS when an exception occurs on the faulting thread's stack.
+    /// Unlike Unix signal handlers, SEH handlers run with full CRT available
+    /// (heap allocation, I/O, etc. are all safe).
+    ///
+    /// **Stack overflow edge case:** Windows reserves one guard page (~4 KiB)
+    /// for SEH dispatch after a stack overflow. Our handler's stack footprint
+    /// is small (~200 bytes for SHA-256 state); large allocations (PathBuf,
+    /// String, File) use the heap. If the handler itself overflows, re-entry
+    /// would fail at I/O and return `EXCEPTION_CONTINUE_SEARCH` harmlessly.
+    unsafe extern "system" fn handler_callback(info: *mut EXCEPTION_POINTERS) -> i32 {
+        // SAFETY: The OS guarantees `info` is a valid pointer when calling
+        // the vectored exception handler.
+        let record = unsafe { (*info).ExceptionRecord };
+        if record.is_null() {
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+        let exception_code = unsafe { (*record).ExceptionCode };
+
+        // Only handle exception codes that indicate a crash.
+        // Other exceptions (e.g., V8 guard page probes) are passed through.
+        if !is_crash_exception(exception_code) {
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+
+        // Read the exception context (shmem view + artifact dir).
+        let Some(ctx) = EXCEPTION_CONTEXT.get() else {
+            return EXCEPTION_CONTINUE_SEARCH;
+        };
+
+        // Read the current fuzz input from shmem. read_consistent() uses
+        // the seqlock protocol to detect torn reads. In an SEH handler this
+        // is safe because we're on the faulting thread's stack with full CRT.
+        let Some(input) = ctx.view.read_consistent() else {
+            eprintln!(
+                "vitiate: crash detected (exception {exception_code:#010x}) \
+                 but no input available in shmem"
+            );
+            return EXCEPTION_CONTINUE_SEARCH;
+        };
+
+        if input.is_empty() {
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+
+        let hash = crate::artifact_hash(&input);
+        let filename = format!("crash-{hash}");
+        let path = ctx.artifact_dir.join(filename);
+
+        // Best-effort I/O: we're in an exception handler that will propagate
+        // the exception after returning. Ignoring I/O errors is intentional.
+        let _ = fs::create_dir_all(&ctx.artifact_dir);
+        if let Ok(mut file) = fs::File::create(&path) {
+            let _ = file.write_all(&input);
+            let _ = file.sync_all();
+            eprintln!(
+                "vitiate: crash artifact written to {} (exception {exception_code:#010x})",
+                path.display()
+            );
+        }
+
+        // Let the OS continue searching for exception handlers (V8, Node, etc.).
+        // The parent supervisor will observe the abnormal exit.
+        EXCEPTION_CONTINUE_SEARCH
+    }
+
+    /// Returns true if the exception code represents a crash we should capture.
+    fn is_crash_exception(code: NTSTATUS) -> bool {
+        matches!(
+            code,
+            EXCEPTION_ACCESS_VIOLATION
+                | EXCEPTION_ILLEGAL_INSTRUCTION
+                | EXCEPTION_STACK_OVERFLOW
+                | EXCEPTION_INT_DIVIDE_BY_ZERO
+        )
+    }
+}
+
+#[cfg(windows)]
+fn install_seh_handler(shmem: &ShmemHandle, artifact_dir: String) {
+    seh::install_seh_handler(shmem, artifact_dir);
 }

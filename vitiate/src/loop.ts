@@ -90,9 +90,16 @@ export async function runFuzzLoop(
     ? ShmemHandle.attach()
     : null;
 
+  const artifactDir = path.join(
+    testDir,
+    "testdata",
+    "fuzz",
+    sanitizeTestName(testName),
+  );
+
   // Install platform-specific crash handler (Windows SEH; no-op on Unix).
   if (shmemHandle) {
-    installExceptionHandler(shmemHandle);
+    installExceptionHandler(shmemHandle, artifactDir);
   }
 
   // Only create the watchdog when a timeout is configured. Creating a Watchdog
@@ -102,10 +109,7 @@ export async function runFuzzLoop(
   const timeoutMs = options.timeoutMs;
   const watchdog: Watchdog | null =
     timeoutMs !== undefined && timeoutMs > 0
-      ? new Watchdog(
-          path.join(testDir, "testdata", "fuzz", sanitizeTestName(testName)),
-          shmemHandle,
-        )
+      ? new Watchdog(artifactDir, shmemHandle)
       : null;
 
   const reporter = createReporter();

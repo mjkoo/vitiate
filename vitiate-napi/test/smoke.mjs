@@ -290,7 +290,7 @@ console.log("traceCmp tests passed!");
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vitiate-watchdog-"));
 
   // Test construction: Watchdog class should be available and constructible
-  const wd = new Watchdog(4096, tmpDir);
+  const wd = new Watchdog(tmpDir);
   assert.ok(wd, "Watchdog should be constructible");
 
   // didFire should be false initially
@@ -305,9 +305,6 @@ console.log("traceCmp tests passed!");
     "didFire should be false after disarm without timeout",
   );
 
-  // Test stashInput
-  wd.stashInput(new Uint8Array([1, 2, 3, 4]));
-  assert.equal(wd.didFire, false, "stashInput should not affect didFire");
   wd.shutdown();
 
   // Test V8 init: under Node.js on Unix, v8_init should succeed
@@ -315,7 +312,7 @@ console.log("traceCmp tests passed!");
 
   // Test runTarget with a normal synchronous target
   {
-    const wd2 = new Watchdog(4096, tmpDir);
+    const wd2 = new Watchdog(tmpDir);
     const target = (_data) => {
       // Just return - synchronous, no error
     };
@@ -327,7 +324,7 @@ console.log("traceCmp tests passed!");
 
   // Test runTarget with a crashing target
   {
-    const wd3 = new Watchdog(4096, tmpDir);
+    const wd3 = new Watchdog(tmpDir);
     const target = (_data) => {
       throw new Error("test crash");
     };
@@ -347,7 +344,7 @@ console.log("traceCmp tests passed!");
 
   // Test runTarget with an async target (returns Promise)
   {
-    const wd4 = new Watchdog(4096, tmpDir);
+    const wd4 = new Watchdog(tmpDir);
     const target = async (_data) => {
       await Promise.resolve();
     };
@@ -362,8 +359,11 @@ console.log("traceCmp tests passed!");
   }
 
   // Test runTarget with synchronous timeout (V8 TerminateExecution)
-  {
-    const wd5 = new Watchdog(4096, tmpDir);
+  // On Windows, V8 TerminateExecution is not available — the watchdog's only
+  // recourse is ExitProcess, which kills the process. This test can only run
+  // on Unix where the C++ shim intercepts the termination and returns cleanly.
+  if (process.platform !== "win32") {
+    const wd5 = new Watchdog(tmpDir);
     const target = (_data) => {
       for (;;) {
         /* infinite loop */
@@ -380,6 +380,10 @@ console.log("traceCmp tests passed!");
       `runTarget timeout error should mention timed out, got: ${result.error.message}`,
     );
     wd5.shutdown();
+  } else {
+    console.log(
+      "  (skipped infinite-loop timeout test on Windows — no V8 shim)",
+    );
   }
 
   // Cleanup

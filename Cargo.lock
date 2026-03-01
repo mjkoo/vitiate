@@ -3031,6 +3031,8 @@ dependencies = [
  "napi-build",
  "napi-derive",
  "ryu-js",
+ "sha2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

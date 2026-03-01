@@ -158,16 +158,8 @@ fn exit_with_input_capture(shared: &WatchdogShared) {
         && !input.is_empty()
     {
         // Write timeout artifact
-        let hash = {
-            // Simple FNV-1a hash of the input
-            let mut h: u64 = 0xcbf29ce484222325;
-            for &byte in &input {
-                h ^= u64::from(byte);
-                h = h.wrapping_mul(0x100000001b3);
-            }
-            h
-        };
-        let filename = format!("timeout-{hash:016x}");
+        let hash = crate::artifact_hash(&input);
+        let filename = format!("timeout-{hash}");
         let path = shared.artifact_dir.join(filename);
 
         // Best-effort I/O: we're about to call _exit, so there is no caller to
@@ -182,10 +174,21 @@ fn exit_with_input_capture(shared: &WatchdogShared) {
     }
 
     eprintln!("vitiate: watchdog forcing _exit due to timeout");
-    // SAFETY: _exit is safe to call from any thread. It terminates the process
-    // immediately without running atexit handlers.
+    // Terminate the process immediately without running atexit handlers.
+    //
+    // Unix: libc::_exit bypasses CRT cleanup. SAFETY: _exit is safe to call
+    // from any thread.
+    //
+    // Windows: ExitProcess terminates all threads and skips CRT atexit handlers
+    // when called from a non-main thread (our watchdog thread). SAFETY:
+    // ExitProcess is safe to call from any thread.
+    #[cfg(unix)]
     unsafe {
         libc::_exit(WATCHDOG_EXIT_CODE);
+    }
+    #[cfg(windows)]
+    unsafe {
+        windows_sys::Win32::System::Threading::ExitProcess(WATCHDOG_EXIT_CODE as u32);
     }
 }
 
