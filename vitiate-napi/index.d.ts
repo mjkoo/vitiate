@@ -4,7 +4,17 @@ export declare class Fuzzer {
   constructor(coverageMap: Buffer, config?: FuzzerConfig | undefined | null)
   addSeed(input: Buffer): void
   getNextInput(): Buffer
-  reportResult(exitKind: ExitKind): IterationResult
+  reportResult(exitKind: ExitKind, execTimeNs: number): IterationResult
+  /**
+   * Perform one calibration iteration for the most recently added corpus entry.
+   * Returns `true` if more calibration runs are needed.
+   */
+  calibrateRun(execTimeNs: number): boolean
+  /**
+   * Finalize calibration for the most recently added corpus entry.
+   * Updates per-testcase and global metadata with calibrated values.
+   */
+  calibrateFinish(): void
   get cmpLogEntryCount(): number
   get stats(): FuzzerStats
 }

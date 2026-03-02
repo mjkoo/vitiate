@@ -308,6 +308,32 @@ describe("fuzz loop", () => {
     expect(result.totalExecs).toBeGreaterThan(0);
   });
 
+  it("runs calibration loop after interesting inputs", async () => {
+    await setupFuzzingMode();
+    let callCount = 0;
+    const covMap = globalThis.__vitiate_cov as Buffer;
+    const target = (data: Buffer): void => {
+      callCount++;
+      // Set a unique coverage edge per distinct first byte value.
+      // This guarantees new coverage (interesting) for early iterations with
+      // diverse auto-seeds, triggering the calibration loop.
+      if (data.length > 0) {
+        covMap[data[0]!] = 1;
+      }
+    };
+
+    const result = await runFuzzLoop(target, tmpDir, "cal-loop", {
+      runs: 50,
+    });
+
+    expect(result.crashed).toBe(false);
+    expect(result.totalExecs).toBe(50);
+    // Calibration re-runs the target 3 additional times per interesting input.
+    // With auto-seeds providing diverse first bytes, at least a few interesting
+    // inputs are discovered, so total target calls exceed the iteration count.
+    expect(callCount).toBeGreaterThan(50);
+  });
+
   it("maxTotalTimeMs=0 means unlimited total time (runs until crash or runs limit)", async () => {
     await setupFuzzingMode();
     const target = (data: Buffer): void => {

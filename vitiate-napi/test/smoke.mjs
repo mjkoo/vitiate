@@ -56,7 +56,7 @@ for (let i = 0; i < ITERATIONS; i++) {
     covMap[256 + input[1]] = 1;
   }
 
-  const result = fuzzer.reportResult(ExitKind.Ok);
+  const result = fuzzer.reportResult(ExitKind.Ok, 1000);
   if (result === IterationResult.Interesting) {
     interestingCount++;
   }
@@ -97,7 +97,7 @@ assert.ok(allZero, "Coverage map should be zeroed after reportResult");
 {
   fuzzer.getNextInput(); // called for side effect (sets last_input)
   covMap[0] = 1; // non-zero coverage before report
-  const result = fuzzer.reportResult(ExitKind.Crash);
+  const result = fuzzer.reportResult(ExitKind.Crash, 1000);
   assert.equal(
     result,
     IterationResult.Solution,
@@ -130,7 +130,7 @@ assert.ok(allZero, "Coverage map should be zeroed after reportResult");
 {
   fuzzer.getNextInput(); // called for side effect (sets last_input)
   covMap[1] = 1; // non-zero coverage before report
-  const result = fuzzer.reportResult(ExitKind.Timeout);
+  const result = fuzzer.reportResult(ExitKind.Timeout, 1000);
   assert.equal(
     result,
     IterationResult.Solution,
@@ -233,7 +233,7 @@ console.log("traceCmp tests passed!");
   // The global CmpLog accumulator still holds entries from those calls.
   cmpFuzzer.getNextInput();
   cmpMap[0] = 1;
-  cmpFuzzer.reportResult(ExitKind.Ok);
+  cmpFuzzer.reportResult(ExitKind.Ok, 1000);
 
   // Run one iteration with traceCmp calls.
   cmpFuzzer.getNextInput();
@@ -245,7 +245,7 @@ console.log("traceCmp tests passed!");
   traceCmp(42, 100, 2, "===");
 
   cmpMap[0] = 1;
-  cmpFuzzer.reportResult(ExitKind.Ok);
+  cmpFuzzer.reportResult(ExitKind.Ok, 1000);
 
   // After reportResult, metadata should contain entries from traceCmp calls.
   // String pair: 1 entry (Bytes). Number pair: 2 entries (U8 + Bytes).
@@ -259,7 +259,7 @@ console.log("traceCmp tests passed!");
   cmpFuzzer.getNextInput();
   traceCmp("only", "one", 3, "===");
   cmpMap[1] = 1;
-  cmpFuzzer.reportResult(ExitKind.Ok);
+  cmpFuzzer.reportResult(ExitKind.Ok, 1000);
   assert.equal(
     cmpFuzzer.cmpLogEntryCount,
     1,
@@ -271,7 +271,7 @@ console.log("traceCmp tests passed!");
   traceCmp(null, undefined, 4, "==="); // both skip → no entry
   traceCmp(true, false, 5, "==="); // both skip → no entry
   cmpMap[2] = 1;
-  cmpFuzzer.reportResult(ExitKind.Ok);
+  cmpFuzzer.reportResult(ExitKind.Ok, 1000);
   assert.equal(
     cmpFuzzer.cmpLogEntryCount,
     0,

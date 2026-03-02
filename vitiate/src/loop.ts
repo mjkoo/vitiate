@@ -142,6 +142,7 @@ export async function runFuzzLoop(
       // child death, and the watchdog to read it before _exit.
       shmemHandle?.stashInput(input);
 
+      const startNs = Number(process.hrtime.bigint());
       let exitKind = ExitKind.Ok;
       let caughtError: Error | undefined;
 
@@ -214,7 +215,8 @@ export async function runFuzzLoop(
         }
       }
 
-      const iterResult = fuzzer.reportResult(exitKind);
+      const execTimeNs = Number(process.hrtime.bigint()) - startNs;
+      const iterResult = fuzzer.reportResult(exitKind, execTimeNs);
       iteration++;
 
       if (iterResult === IterationResult.Solution) {
@@ -247,6 +249,55 @@ export async function runFuzzLoop(
 
       if (iterResult === IterationResult.Interesting) {
         writeCorpusEntry(cacheDir, testName, input);
+
+        // Calibration loop: re-run target to average timing and detect unstable edges.
+        // The original fuzz iteration counts as calibration run #1; additional runs start here.
+        let needsMore = true;
+        while (needsMore) {
+          const calibrationStartNs = Number(process.hrtime.bigint());
+          let calibrationBroken = false;
+
+          if (timeoutMs !== undefined && timeoutMs > 0 && watchdog) {
+            const calibrationResult = watchdog.runTarget(
+              target,
+              input,
+              timeoutMs,
+            );
+            if (calibrationResult.exitKind !== 0) {
+              // Sync crash or timeout during calibration — finalize with partial data
+              calibrationBroken = true;
+            } else if (calibrationResult.result instanceof Promise) {
+              // Async target returned a Promise — await with watchdog protection
+              watchdog.arm(timeoutMs);
+              try {
+                await calibrationResult.result;
+              } catch {
+                calibrationBroken = true;
+              } finally {
+                watchdog.disarm();
+              }
+            }
+          } else {
+            // No timeout — call target directly
+            try {
+              const maybePromise = target(input);
+              if (maybePromise instanceof Promise) {
+                await maybePromise;
+              }
+            } catch {
+              calibrationBroken = true;
+            }
+          }
+
+          if (calibrationBroken) {
+            break;
+          }
+
+          const calibrationTimeNs =
+            Number(process.hrtime.bigint()) - calibrationStartNs;
+          needsMore = fuzzer.calibrateRun(calibrationTimeNs);
+        }
+        fuzzer.calibrateFinish();
       }
 
       // Yield to event loop periodically
