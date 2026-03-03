@@ -191,59 +191,44 @@ describe("resolveVitestCli", () => {
 });
 
 describe("buildTestNamePatternFromNames", () => {
-  it("matches a top-level test (file + test name)", () => {
-    const pattern = new RegExp(
-      buildTestNamePatternFromNames("src/test.ts", ["my-test"]),
-    );
-    expect(pattern.test("src/test.ts my-test")).toBe(true);
-    expect(pattern.test("src/test.ts my-test extra")).toBe(false);
-    expect(pattern.test("other/test.ts my-test")).toBe(false);
+  it("matches a top-level test name", () => {
+    const pattern = new RegExp(buildTestNamePatternFromNames(["my-test"]));
+    expect(pattern.test("my-test")).toBe(true);
+    expect(pattern.test("my-test extra")).toBe(false);
+    expect(pattern.test("other my-test")).toBe(false);
   });
 
   it("matches a test inside a describe block", () => {
     const pattern = new RegExp(
-      buildTestNamePatternFromNames("src/test.ts", ["fuzz", "parse-json"]),
+      buildTestNamePatternFromNames(["fuzz", "parse-json"]),
     );
-    expect(pattern.test("src/test.ts fuzz parse-json")).toBe(true);
-    expect(pattern.test("src/test.ts parse-json")).toBe(false);
+    expect(pattern.test("fuzz parse-json")).toBe(true);
+    expect(pattern.test("parse-json")).toBe(false);
   });
 
   it("matches a deeply nested test", () => {
     const pattern = new RegExp(
-      buildTestNamePatternFromNames("src/test.ts", [
-        "outer",
-        "inner",
-        "deep-test",
-      ]),
+      buildTestNamePatternFromNames(["outer", "inner", "deep-test"]),
     );
-    expect(pattern.test("src/test.ts outer inner deep-test")).toBe(true);
-    expect(pattern.test("src/test.ts inner deep-test")).toBe(false);
+    expect(pattern.test("outer inner deep-test")).toBe(true);
+    expect(pattern.test("inner deep-test")).toBe(false);
   });
 
   it("rejects a test at a different hierarchy level", () => {
-    // Pattern for "file suite test" should not match "file test" (no suite)
+    // Pattern for "suite test" should not match "test" (no suite)
     const withSuite = new RegExp(
-      buildTestNamePatternFromNames("src/test.ts", ["suite", "test"]),
+      buildTestNamePatternFromNames(["suite", "test"]),
     );
-    expect(withSuite.test("src/test.ts test")).toBe(false);
+    expect(withSuite.test("test")).toBe(false);
 
-    // Pattern for "file test" should not match "file suite test"
-    const withoutSuite = new RegExp(
-      buildTestNamePatternFromNames("src/test.ts", ["test"]),
-    );
-    expect(withoutSuite.test("src/test.ts suite test")).toBe(false);
-  });
-
-  it("rejects a different file name", () => {
-    const pattern = new RegExp(
-      buildTestNamePatternFromNames("src/a.test.ts", ["my-test"]),
-    );
-    expect(pattern.test("src/b.test.ts my-test")).toBe(false);
+    // Pattern for "test" should not match "suite test"
+    const withoutSuite = new RegExp(buildTestNamePatternFromNames(["test"]));
+    expect(withoutSuite.test("suite test")).toBe(false);
   });
 
   it("escapes regex metacharacters in names", () => {
     const pattern = new RegExp(
-      buildTestNamePatternFromNames("src/file.test.ts", [
+      buildTestNamePatternFromNames([
         "parse (JSON)",
         "handle [brackets]",
         "file.name*glob+plus",
@@ -251,15 +236,11 @@ describe("buildTestNamePatternFromNames", () => {
     );
     // Exact match with metacharacters
     expect(
-      pattern.test(
-        "src/file.test.ts parse (JSON) handle [brackets] file.name*glob+plus",
-      ),
+      pattern.test("parse (JSON) handle [brackets] file.name*glob+plus"),
     ).toBe(true);
     // Metacharacters should not act as regex operators
-    expect(
-      pattern.test(
-        "src/file.test.ts parse JSON handle brackets fileXnameYglobZplus",
-      ),
-    ).toBe(false);
+    expect(pattern.test("parse JSON handle brackets fileXnameYglobZplus")).toBe(
+      false,
+    );
   });
 });

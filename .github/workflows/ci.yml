@@ -74,6 +74,10 @@ jobs:
       - name: JS test
         run: pnpm exec turbo run test
 
+      - name: E2E fuzz pipeline
+        run: pnpm run test:e2e
+        timeout-minutes: 2
+
       - name: ESLint
         run: pnpm exec eslint .
 

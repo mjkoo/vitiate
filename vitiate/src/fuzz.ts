@@ -71,16 +71,17 @@ export function resolveVitestCli(): string {
 }
 
 /**
- * Build a --test-name-pattern regex string from a file name and hierarchy of
- * suite/test names. Vitest's internal `getTaskFullName` produces
- * `"<relativePath> <suite1> <suite2> <testName>"` with space separators;
- * this function constructs a pattern that exactly matches that string.
+ * Build a --test-name-pattern regex string from a hierarchy of suite/test
+ * names. Vitest's internal `getTaskFullName` (used by `interpretTaskModes` for
+ * `--test-name-pattern` matching) produces `"<suite1> <suite2> <testName>"`
+ * with space separators — it does NOT include the file path. The supervisor
+ * already restricts the child vitest to the correct file via a positional
+ * argument, so the pattern only needs to match the test hierarchy.
  */
 export function buildTestNamePatternFromNames(
-  fileName: string,
   hierarchyNames: string[],
 ): string {
-  const full = [fileName, ...hierarchyNames].join(" ");
+  const full = hierarchyNames.join(" ");
   return `^${escapeStringRegexp(full)}$`;
 }
 
@@ -106,9 +107,7 @@ function buildTestNamePattern(): string {
     suite = suite.suite;
   }
 
-  // file.name is the relative path from vitest root (e.g. "src/test.ts")
-  const fileName = current.file.name;
-  return buildTestNamePatternFromNames(fileName, names);
+  return buildTestNamePatternFromNames(names);
 }
 
 /**

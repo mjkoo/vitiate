@@ -3,12 +3,11 @@
  */
 import { describe, it, expect, afterEach } from "vitest";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync, mkdirSync } from "node:fs";
+import { existsSync, rmSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { initGlobals } from "../src/globals.js";
 import { loadSeedCorpus, writeArtifact } from "../src/corpus.js";
-import { runFuzzLoop } from "../src/loop.js";
 import { parseCommand } from "./parser-target.js";
 
 const E2E_DIR = path.dirname(new URL(import.meta.url).pathname);
@@ -49,43 +48,6 @@ describe("e2e: fuzzing mode discovers planted bug", () => {
     if (tmpDir) {
       rmSync(tmpDir, { recursive: true, force: true });
     }
-  });
-
-  it("discovers the crash and writes a crash artifact", async () => {
-    // Set up fuzzing mode
-    process.env["VITIATE_FUZZ"] = "1";
-    await initGlobals();
-
-    tmpDir = path.join(
-      tmpdir(),
-      `vitiate-e2e-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    );
-    mkdirSync(tmpDir, { recursive: true });
-    process.env["VITIATE_CACHE_DIR"] = path.join(tmpDir, ".cache");
-
-    // Use a trivial single-byte crash target: any input containing 0x42
-    // is guaranteed to be discovered quickly by the fuzzer's byte mutations.
-    const result = await runFuzzLoop(
-      (data) => {
-        if (data.length >= 1 && data[0] === 0x42) {
-          throw new Error("single-byte crash");
-        }
-      },
-      tmpDir,
-      "single-byte-crash",
-      "test/e2e.fuzz.ts",
-      { runs: 1_000_000, maxTotalTimeMs: 30_000 },
-    );
-
-    expect(result.crashed).toBe(true);
-    expect(result.error).toBeInstanceOf(Error);
-    expect(result.error!.message).toContain("single-byte crash");
-    expect(result.crashArtifactPath).toBeDefined();
-    expect(existsSync(result.crashArtifactPath!)).toBe(true);
-
-    // Verify crash artifact contains the triggering byte
-    const crashData = readFileSync(result.crashArtifactPath!);
-    expect(crashData[0]).toBe(0x42);
   });
 
   it("crash artifact replays as a failing regression test", async () => {

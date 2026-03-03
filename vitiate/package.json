@@ -30,7 +30,8 @@
     "build": "tsup",
     "check": "tsc --noEmit",
     "test": "vitest run",
-    "test:instrumented": "vitest run --config test/vitest.instrumented.config.ts"
+    "test:instrumented": "vitest run --config test/vitest.instrumented.config.ts",
+    "test:fuzz-pipeline": "vitest run --config test/vitest.fuzz-pipeline.config.ts"
   },
   "dependencies": {
     "@optique/core": "1.0.0-dev.438+923a6492",

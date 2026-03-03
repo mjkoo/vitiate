@@ -162,8 +162,8 @@ export function validateScheme(input: string): string {
   }
   const scheme = input.slice(0, schemeEnd).toLowerCase();
 
-  // BUG: planted crash on "javascript:" scheme
-  if (scheme === "javascript") {
+  // BUG: planted crash on "data:" scheme
+  if (scheme === "data") {
     throw new Error(
       "Internal error: unexpected scheme encountered during validation",
     );

@@ -96,6 +96,10 @@ describe("fuzz loop", () => {
     expect(result.crashArtifactPath!).toContain(path.join("testdata", "fuzz"));
     expect(result.crashArtifactPath!).toContain("crashme");
     expect(path.basename(result.crashArtifactPath!)).toMatch(/^crash-/);
+
+    // Verify crash artifact contains the triggering byte
+    const crashData = readFileSync(result.crashArtifactPath!);
+    expect(crashData[0]).toBe(0x42);
   });
   it("runs an async target and terminates after runs limit", async () => {
     await setupFuzzingMode();

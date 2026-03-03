@@ -13,6 +13,10 @@
     "test": {
       "dependsOn": ["build"],
       "cache": false
+    },
+    "test:fuzz-pipeline": {
+      "dependsOn": ["build"],
+      "cache": false
     }
   }
 }
