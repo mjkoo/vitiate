@@ -68,7 +68,9 @@ In fuzzing mode (`VITIATE_FUZZ` is set), the `fuzz()` function SHALL detect whet
 
 Each `fuzz()` call in a test file SHALL get its own independent supervisor lifecycle — its own shmem allocation, its own child process, its own crash recovery. Multiple fuzz tests in the same file run sequentially, each independently supervised.
 
-If `VITIATE_FUZZ` contains a non-`1` value, it SHALL be treated as a regex filter — only fuzz tests whose name matches the pattern SHALL enter supervised fuzzing mode. Non-matching tests SHALL fall back to regression behavior.
+If `VITIATE_FUZZ_PATTERN` is set, its value SHALL be treated as a regex filter — only fuzz tests whose name matches the pattern SHALL enter supervised fuzzing mode. Non-matching tests SHALL fall back to regression behavior. If `VITIATE_FUZZ_PATTERN` is not set (or empty), all fuzz tests SHALL enter fuzzing mode.
+
+`getFuzzPattern()` SHALL read `process.env["VITIATE_FUZZ_PATTERN"]` and return its value if it is a non-empty string, or `null` otherwise. The function SHALL NOT inspect the value of `VITIATE_FUZZ`.
 
 #### Scenario: Enter fuzz loop (child mode)
 
@@ -95,12 +97,18 @@ If `VITIATE_FUZZ` contains a non-`1` value, it SHALL be treated as a regex filte
 - **AND** then "serialize" spawns its own supervised child, runs to completion, and returns
 - **AND** each has independent shmem, independent crash recovery, and independent artifacts
 
-#### Scenario: Filter by pattern
+#### Scenario: Filter by pattern via VITIATE_FUZZ_PATTERN
 
-- **WHEN** `VITIATE_FUZZ=parse` is set
+- **WHEN** `VITIATE_FUZZ=1` and `VITIATE_FUZZ_PATTERN=parse` are set
 - **AND** two fuzz tests exist: "parse" and "serialize"
 - **THEN** only "parse" enters supervised fuzzing mode
 - **AND** "serialize" runs in regression mode
+
+#### Scenario: No pattern means all tests fuzz
+
+- **WHEN** `VITIATE_FUZZ=1` is set and `VITIATE_FUZZ_PATTERN` is not set
+- **AND** two fuzz tests exist: "parse" and "serialize"
+- **THEN** both "parse" and "serialize" enter supervised fuzzing mode
 
 #### Scenario: Crash found during supervised fuzzing
 
@@ -114,6 +122,21 @@ If `VITIATE_FUZZ` contains a non-`1` value, it SHALL be treated as a regex filte
 - **WHEN** the supervised child exits with code 0 (campaign complete)
 - **THEN** the `fuzz()` callback returns normally
 - **AND** the Vitest test is reported as passed
+
+#### Scenario: getFuzzPattern returns pattern from VITIATE_FUZZ_PATTERN
+
+- **WHEN** `VITIATE_FUZZ_PATTERN=parser` is set in the environment
+- **THEN** `getFuzzPattern()` returns `"parser"`
+
+#### Scenario: getFuzzPattern returns null when no pattern is set
+
+- **WHEN** `VITIATE_FUZZ_PATTERN` is not set in the environment
+- **THEN** `getFuzzPattern()` returns `null`
+
+#### Scenario: getFuzzPattern returns null when pattern is empty
+
+- **WHEN** `VITIATE_FUZZ_PATTERN=""` is set in the environment
+- **THEN** `getFuzzPattern()` returns `null`
 
 ### Requirement: Child process spawning
 

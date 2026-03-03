@@ -69,12 +69,18 @@ describe("fuzz regression mode - replay corpus files", () => {
 
 describe("shouldEnterFuzzLoop", () => {
   const originalFuzz = process.env["VITIATE_FUZZ"];
+  const originalPattern = process.env["VITIATE_FUZZ_PATTERN"];
 
   afterEach(() => {
     if (originalFuzz === undefined) {
       delete process.env["VITIATE_FUZZ"];
     } else {
       process.env["VITIATE_FUZZ"] = originalFuzz;
+    }
+    if (originalPattern === undefined) {
+      delete process.env["VITIATE_FUZZ_PATTERN"];
+    } else {
+      process.env["VITIATE_FUZZ_PATTERN"] = originalPattern;
     }
   });
 
@@ -83,25 +89,29 @@ describe("shouldEnterFuzzLoop", () => {
     expect(shouldEnterFuzzLoop("any-test")).toBe(false);
   });
 
-  it("returns true for all tests when VITIATE_FUZZ=1", () => {
+  it("returns true for all tests when VITIATE_FUZZ=1 and no pattern", () => {
     process.env["VITIATE_FUZZ"] = "1";
+    delete process.env["VITIATE_FUZZ_PATTERN"];
     expect(shouldEnterFuzzLoop("any-test")).toBe(true);
     expect(shouldEnterFuzzLoop("other-test")).toBe(true);
   });
 
   it("matches tests via regex pattern", () => {
-    process.env["VITIATE_FUZZ"] = "parser";
+    process.env["VITIATE_FUZZ"] = "1";
+    process.env["VITIATE_FUZZ_PATTERN"] = "parser";
     expect(shouldEnterFuzzLoop("parser-test")).toBe(true);
     expect(shouldEnterFuzzLoop("my-parser")).toBe(true);
   });
 
   it("does not match non-matching pattern", () => {
-    process.env["VITIATE_FUZZ"] = "parser";
+    process.env["VITIATE_FUZZ"] = "1";
+    process.env["VITIATE_FUZZ_PATTERN"] = "parser";
     expect(shouldEnterFuzzLoop("lexer-test")).toBe(false);
   });
 
   it("falls back to substring match on invalid regex", () => {
-    process.env["VITIATE_FUZZ"] = "[invalid(";
+    process.env["VITIATE_FUZZ"] = "1";
+    process.env["VITIATE_FUZZ_PATTERN"] = "[invalid(";
     expect(shouldEnterFuzzLoop("test-[invalid(-foo")).toBe(true);
     expect(shouldEnterFuzzLoop("other-test")).toBe(false);
   });

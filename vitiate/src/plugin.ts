@@ -34,6 +34,25 @@ function resolveSetupPath(): string {
   throw new Error(`Cannot find setup file: tried ${tsPath} and ${jsPath}`);
 }
 
+/**
+ * Scans argv for `--fuzz` or `--fuzz=<pattern>`, skipping args after `--`.
+ * Returns `{ pattern }` for `--fuzz=<pattern>`, `{}` for bare `--fuzz`,
+ * or `undefined` if no `--fuzz` flag is found.
+ */
+export function parseFuzzFlag(
+  argv: string[],
+): { pattern?: string } | undefined {
+  for (const arg of argv) {
+    if (arg === "--") return undefined;
+    if (arg === "--fuzz") return {};
+    if (arg.startsWith("--fuzz=")) {
+      const value = arg.slice("--fuzz=".length);
+      return value ? { pattern: value } : {};
+    }
+  }
+  return undefined;
+}
+
 export function vitiatePlugin(options?: VitiatePluginOptions): Plugin {
   const { include, exclude } = resolveInstrumentOptions(options?.instrument);
   const fuzz = options?.fuzz;
@@ -46,6 +65,17 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin {
     enforce: "post",
 
     config(config) {
+      // Detect --fuzz flag from argv and set VITIATE_FUZZ if not already set
+      if (!process.env["VITIATE_FUZZ"]) {
+        const fuzzFlag = parseFuzzFlag(process.argv);
+        if (fuzzFlag !== undefined) {
+          process.env["VITIATE_FUZZ"] = "1";
+          if (fuzzFlag.pattern && !process.env["VITIATE_FUZZ_PATTERN"]) {
+            process.env["VITIATE_FUZZ_PATTERN"] = fuzzFlag.pattern;
+          }
+        }
+      }
+
       // Resolve the Vite project root
       const projectRoot = path.resolve(config.root ?? process.cwd());
       if (!process.env["VITIATE_PROJECT_ROOT"]) {

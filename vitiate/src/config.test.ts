@@ -51,18 +51,28 @@ describe("config", () => {
   });
 
   describe("getFuzzPattern", () => {
-    it("returns null when VITIATE_FUZZ is not set", () => {
-      delete process.env["VITIATE_FUZZ"];
+    const originalPattern = process.env["VITIATE_FUZZ_PATTERN"];
+
+    afterEach(() => {
+      if (originalPattern === undefined) {
+        delete process.env["VITIATE_FUZZ_PATTERN"];
+      } else {
+        process.env["VITIATE_FUZZ_PATTERN"] = originalPattern;
+      }
+    });
+
+    it("returns null when VITIATE_FUZZ_PATTERN is not set", () => {
+      delete process.env["VITIATE_FUZZ_PATTERN"];
       expect(getFuzzPattern()).toBeNull();
     });
 
-    it("returns null when VITIATE_FUZZ is 1", () => {
-      process.env["VITIATE_FUZZ"] = "1";
+    it("returns null when VITIATE_FUZZ_PATTERN is empty", () => {
+      process.env["VITIATE_FUZZ_PATTERN"] = "";
       expect(getFuzzPattern()).toBeNull();
     });
 
-    it("returns pattern when VITIATE_FUZZ is a string", () => {
-      process.env["VITIATE_FUZZ"] = "parser";
+    it("returns pattern when VITIATE_FUZZ_PATTERN is set", () => {
+      process.env["VITIATE_FUZZ_PATTERN"] = "parser";
       expect(getFuzzPattern()).toBe("parser");
     });
   });

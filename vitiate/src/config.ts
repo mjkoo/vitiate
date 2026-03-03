@@ -57,16 +57,8 @@ export function isFuzzingMode(): boolean {
 }
 
 export function getFuzzPattern(): string | null {
-  const val = process.env["VITIATE_FUZZ"];
-  if (
-    val === undefined ||
-    val === "" ||
-    val === "0" ||
-    val === "false" ||
-    val === "1"
-  ) {
-    return null;
-  }
+  const val = process.env["VITIATE_FUZZ_PATTERN"];
+  if (val === undefined || val === "") return null;
   return val;
 }
 
