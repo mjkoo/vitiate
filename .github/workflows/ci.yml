@@ -77,6 +77,38 @@ jobs:
       - name: ESLint
         run: pnpm exec eslint .
 
+  build-musl:
+    name: Build (linux-x64-musl)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.89"
+          targets: x86_64-unknown-linux-musl
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.1
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install cargo-zigbuild
+        run: cargo install cargo-zigbuild
+
+      - name: Build musl binary
+        run: cd vitiate-napi && pnpm exec napi build --platform --release --target x86_64-unknown-linux-musl --cross-compile
+
   check-windows:
     name: Check (Windows)
     runs-on: windows-latest

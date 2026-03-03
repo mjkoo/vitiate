@@ -1,12 +1,12 @@
 {
-  "name": "vitiate-napi-darwin-x64",
+  "name": "vitiate-napi-linux-x64-musl",
   "version": "0.1.0",
   "cpu": [
     "x64"
   ],
-  "main": "vitiate-napi.darwin-x64.node",
+  "main": "vitiate-napi.linux-x64-musl.node",
   "files": [
-    "vitiate-napi.darwin-x64.node"
+    "vitiate-napi.linux-x64-musl.node"
   ],
   "description": "Native Node.js addon for vitiate",
   "license": "MIT",
@@ -18,6 +18,9 @@
     "access": "public"
   },
   "os": [
-    "darwin"
+    "linux"
+  ],
+  "libc": [
+    "musl"
   ]
 }

@@ -64,13 +64,13 @@ function warnUnsupportedFlags(parsed: InferValue<typeof cliParser>): void {
       );
     } else {
       process.stderr.write(
-        `vitiate: warning: -fork=${parsed.fork} is not yet supported; running with single worker (equivalent to -fork=1)\n`,
+        `vitiate: warning: -fork=${parsed.fork} is ignored; vitiate runs a single supervised worker (equivalent to -fork=1)\n`,
       );
     }
   }
   if (parsed.jobs !== undefined && parsed.jobs > 1) {
     process.stderr.write(
-      `vitiate: warning: -jobs=${parsed.jobs} is not yet supported; running with single job (equivalent to -jobs=1)\n`,
+      `vitiate: warning: -jobs=${parsed.jobs} is ignored; vitiate runs a single job at a time (equivalent to -jobs=1)\n`,
     );
   }
   if (parsed.merge !== undefined && parsed.merge === 1) {

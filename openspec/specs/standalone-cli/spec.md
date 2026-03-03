@@ -83,8 +83,13 @@ The CLI SHALL accept libFuzzer-style flags (hyphen prefix, `=` separator):
 - `-timeout=N`: Per-execution timeout in seconds. Converted to milliseconds for `FuzzOptions.timeoutMs`. Applies to both synchronous and asynchronous fuzz targets.
 - `-runs=N`: Exit after N executions. Passed to `FuzzOptions.runs`.
 - `-seed=N`: RNG seed. Passed to `FuzzerConfig.seed`.
-- `-fork=N`: Accepted but ignored (not MVP). Print a warning if N > 1.
-- `-jobs=N`: Accepted but ignored (not MVP). Print a warning if N > 1.
+- `-fork=N`: Accepted for OSS-Fuzz compatibility. Vitiate always runs a single
+  supervised worker; this flag is permanently ignored. `-fork=1` is silently
+  accepted (matches the default architecture). `-fork=0` warns that non-fork
+  mode is not available. `-fork=N` (N>1) warns that multi-worker mode is ignored.
+- `-jobs=N`: Accepted for OSS-Fuzz compatibility. Vitiate always runs a single job;
+  this flag is permanently ignored. `-jobs=1` is silently accepted.
+  `-jobs=N` (N>1) prints a warning.
 - `-merge=1`: Accepted but ignored (not MVP). Print a warning.
 
 #### Scenario: max_len flag
@@ -98,11 +103,17 @@ The CLI SHALL accept libFuzzer-style flags (hyphen prefix, `=` separator):
 - **THEN** the fuzzer is configured with timeout 10000ms, 100000 max runs, and seed 42
 - **AND** the timeout applies to both synchronous and asynchronous targets
 
-#### Scenario: Unsupported flag warns
+#### Scenario: Multi-worker fork flag is ignored
 
 - **WHEN** `npx vitiate ./test.ts -fork=4` is executed
-- **THEN** a warning is printed that `-fork` is not yet supported
-- **AND** fuzzing proceeds with default settings
+- **THEN** a warning is printed that `-fork=4` is ignored (vitiate runs a single supervised worker)
+- **AND** fuzzing proceeds with single-worker mode
+
+#### Scenario: Parallel jobs flag is ignored
+
+- **WHEN** `npx vitiate ./test.ts -jobs=4` is executed
+- **THEN** a warning is printed that `-jobs=4` is ignored (vitiate runs a single job)
+- **AND** fuzzing proceeds normally
 
 #### Scenario: Timeout enforced on synchronous target
 

@@ -86,13 +86,13 @@ describe("parseArgs", () => {
       }
     });
 
-    it("parses -fork=4 with warning about unsupported multi-worker mode", () => {
+    it("parses -fork=4 with warning that multi-worker mode is ignored", () => {
       const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
       try {
         const result = parseArgs(argv("./test.ts", "-fork=4"));
         expect(result.testFile).toBe("./test.ts");
         expect(stderrSpy).toHaveBeenCalledWith(
-          expect.stringContaining("-fork"),
+          expect.stringContaining("-fork=4 is ignored"),
         );
       } finally {
         stderrSpy.mockRestore();
@@ -110,12 +110,12 @@ describe("parseArgs", () => {
       }
     });
 
-    it("parses -jobs=4 with warning about unsupported parallel jobs", () => {
+    it("parses -jobs=4 with warning that parallel jobs are ignored", () => {
       const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
       try {
         parseArgs(argv("./test.ts", "-jobs=4"));
         expect(stderrSpy).toHaveBeenCalledWith(
-          expect.stringContaining("-jobs"),
+          expect.stringContaining("-jobs=4 is ignored"),
         );
       } finally {
         stderrSpy.mockRestore();
