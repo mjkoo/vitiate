@@ -1,6 +1,6 @@
 import path from "node:path";
 import { describe, it, expect, afterEach } from "vitest";
-import { vitiatePlugin, parseFuzzFlag } from "./plugin.js";
+import { vitiatePlugin } from "./plugin.js";
 
 function callConfig(
   plugin: ReturnType<typeof vitiatePlugin>,
@@ -63,8 +63,6 @@ describe("plugin", () => {
       "VITIATE_PROJECT_ROOT",
       "VITIATE_CACHE_DIR",
       "VITIATE_FUZZ_OPTIONS",
-      "VITIATE_FUZZ",
-      "VITIATE_FUZZ_PATTERN",
     ];
 
     afterEach(() => {
@@ -168,122 +166,6 @@ describe("plugin", () => {
       callConfig(plugin, {});
       expect(process.env["VITIATE_CACHE_DIR"]).toBeUndefined();
       expect(process.env["VITIATE_FUZZ_OPTIONS"]).toBeUndefined();
-    });
-  });
-
-  describe("parseFuzzFlag", () => {
-    it("returns {} for bare --fuzz flag", () => {
-      expect(parseFuzzFlag(["node", "vitest", "--fuzz"])).toEqual({});
-    });
-
-    it("returns { pattern } for --fuzz=pattern", () => {
-      expect(parseFuzzFlag(["node", "vitest", "--fuzz=mypattern"])).toEqual({
-        pattern: "mypattern",
-      });
-    });
-
-    it("returns undefined when no --fuzz flag is present", () => {
-      expect(parseFuzzFlag(["node", "vitest"])).toBeUndefined();
-    });
-
-    it("ignores --fuzz after -- sentinel", () => {
-      expect(parseFuzzFlag(["node", "vitest", "--", "--fuzz"])).toBeUndefined();
-    });
-
-    it("ignores --fuzz=pattern after -- sentinel", () => {
-      expect(
-        parseFuzzFlag(["node", "vitest", "--", "--fuzz=mypattern"]),
-      ).toBeUndefined();
-    });
-
-    it("returns the first --fuzz value when multiple are present", () => {
-      expect(
-        parseFuzzFlag(["node", "vitest", "--fuzz=first", "--fuzz=second"]),
-      ).toEqual({ pattern: "first" });
-    });
-
-    it("treats --fuzz= (empty value) as bare --fuzz", () => {
-      expect(parseFuzzFlag(["node", "vitest", "--fuzz="])).toEqual({});
-    });
-
-    it("does not match partial prefix like --fuzzbar", () => {
-      expect(parseFuzzFlag(["node", "vitest", "--fuzzbar"])).toBeUndefined();
-    });
-  });
-
-  describe("config hook --fuzz flag integration", () => {
-    const savedEnv: Record<string, string | undefined> = {};
-    const envKeys = [
-      "VITIATE_PROJECT_ROOT",
-      "VITIATE_CACHE_DIR",
-      "VITIATE_FUZZ_OPTIONS",
-      "VITIATE_FUZZ",
-      "VITIATE_FUZZ_PATTERN",
-    ];
-    let savedArgv: string[] = process.argv;
-
-    afterEach(() => {
-      for (const key of envKeys) {
-        if (savedEnv[key] === undefined) {
-          delete process.env[key];
-        } else {
-          process.env[key] = savedEnv[key];
-        }
-      }
-      process.argv = savedArgv;
-    });
-
-    function saveAndClearEnv(): void {
-      for (const key of envKeys) {
-        savedEnv[key] = process.env[key];
-        delete process.env[key];
-      }
-      savedArgv = process.argv;
-    }
-
-    it("sets VITIATE_FUZZ=1 when bare --fuzz is in argv", () => {
-      saveAndClearEnv();
-      process.argv = ["node", "vitest", "--fuzz"];
-      const plugin = vitiatePlugin();
-      callConfig(plugin, {});
-      expect(process.env["VITIATE_FUZZ"]).toBe("1");
-      expect(process.env["VITIATE_FUZZ_PATTERN"]).toBeUndefined();
-    });
-
-    it("sets VITIATE_FUZZ=1 and VITIATE_FUZZ_PATTERN when --fuzz=pattern is in argv", () => {
-      saveAndClearEnv();
-      process.argv = ["node", "vitest", "--fuzz=mypattern"];
-      const plugin = vitiatePlugin();
-      callConfig(plugin, {});
-      expect(process.env["VITIATE_FUZZ"]).toBe("1");
-      expect(process.env["VITIATE_FUZZ_PATTERN"]).toBe("mypattern");
-    });
-
-    it("does not override existing VITIATE_FUZZ env var", () => {
-      saveAndClearEnv();
-      process.env["VITIATE_FUZZ"] = "existing";
-      process.argv = ["node", "vitest", "--fuzz=override"];
-      const plugin = vitiatePlugin();
-      callConfig(plugin, {});
-      expect(process.env["VITIATE_FUZZ"]).toBe("existing");
-    });
-
-    it("does not override existing VITIATE_FUZZ_PATTERN env var", () => {
-      saveAndClearEnv();
-      process.env["VITIATE_FUZZ_PATTERN"] = "existing";
-      process.argv = ["node", "vitest", "--fuzz=override"];
-      const plugin = vitiatePlugin();
-      callConfig(plugin, {});
-      expect(process.env["VITIATE_FUZZ_PATTERN"]).toBe("existing");
-    });
-
-    it("does not set VITIATE_FUZZ when --fuzz is not in argv", () => {
-      saveAndClearEnv();
-      process.argv = ["node", "vitest"];
-      const plugin = vitiatePlugin();
-      callConfig(plugin, {});
-      expect(process.env["VITIATE_FUZZ"]).toBeUndefined();
-      expect(process.env["VITIATE_FUZZ_PATTERN"]).toBeUndefined();
     });
   });
 

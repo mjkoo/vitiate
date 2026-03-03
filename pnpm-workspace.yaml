@@ -3,6 +3,7 @@ packages:
   - vitiate-napi
   - vitiate-napi/npm/*
   - vitiate-instrument
+  - examples/*
 
 onlyBuiltDependencies:
   - "@optique/core"

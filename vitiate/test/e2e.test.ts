@@ -7,7 +7,7 @@ import { existsSync, readFileSync, rmSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { initGlobals } from "../src/globals.js";
-import { loadSeedCorpus, writeCrashArtifact } from "../src/corpus.js";
+import { loadSeedCorpus, writeArtifact } from "../src/corpus.js";
 import { runFuzzLoop } from "../src/loop.js";
 import { parseCommand } from "./parser-target.js";
 
@@ -73,6 +73,7 @@ describe("e2e: fuzzing mode discovers planted bug", () => {
       },
       tmpDir,
       "single-byte-crash",
+      "test/e2e.fuzz.ts",
       { runs: 1_000_000, maxTotalTimeMs: 30_000 },
     );
 
@@ -101,11 +102,7 @@ describe("e2e: fuzzing mode discovers planted bug", () => {
 
     // Write a known crash input as a crash artifact
     const crashInput = Buffer.from("GET!");
-    const artifactPath = writeCrashArtifact(
-      tmpDir,
-      "parse-planted-bug",
-      crashInput,
-    );
+    const artifactPath = writeArtifact(tmpDir, "parse-planted-bug", crashInput);
     expect(existsSync(artifactPath)).toBe(true);
 
     // Now load the seed corpus (which includes the crash artifact)

@@ -10,6 +10,7 @@ import {
   WATCHDOG_EXIT_CODE,
   MAX_RESPAWNS,
 } from "./supervisor.js";
+import { sanitizeTestName } from "./corpus.js";
 
 /**
  * Create a mock ShmemHandle for testing. The supervisor calls:
@@ -125,11 +126,16 @@ describe("runSupervisor", () => {
     expect(spawnCount).toBe(3);
     expect(shmem.resetGenerationCount).toBe(3);
 
-    // Crash artifact should have been written (3 times, same hash = 1 file)
-    const artifactDir = path.join(dir, "testdata", "fuzz", "test-timeout");
+    // Timeout artifact should have been written (3 times, same hash = 1 file)
+    const artifactDir = path.join(
+      dir,
+      "testdata",
+      "fuzz",
+      sanitizeTestName("test-timeout"),
+    );
     const files = readdirSync(artifactDir);
     expect(files.length).toBe(1);
-    expect(files[0]).toMatch(/^crash-/);
+    expect(files[0]).toMatch(/^timeout-/);
   });
 
   it.skipIf(process.platform === "win32")(
@@ -178,7 +184,12 @@ describe("runSupervisor", () => {
     });
 
     // No artifact directory should be created when shmem is empty
-    const artifactDir = path.join(dir, "testdata", "fuzz", "test-empty");
+    const artifactDir = path.join(
+      dir,
+      "testdata",
+      "fuzz",
+      sanitizeTestName("test-empty"),
+    );
     expect(() => readdirSync(artifactDir)).toThrow();
   });
 

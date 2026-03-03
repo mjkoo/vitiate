@@ -8,5 +8,9 @@
     "target": "ESNext",
     "skipLibCheck": true
   },
-  "include": ["vitiate/src/**/*.ts"]
+  "include": [
+    "vitiate/src/**/*.ts",
+    "examples/*/src/**/*.ts",
+    "examples/*/test/**/*.ts"
+  ]
 }

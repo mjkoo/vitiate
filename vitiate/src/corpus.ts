@@ -13,18 +13,19 @@ import {
 import path from "node:path";
 
 function contentHash(data: Buffer): string {
-  return createHash("sha256").update(data).digest("hex").slice(0, 16);
+  return createHash("sha256").update(data).digest("hex");
 }
 
 export function sanitizeTestName(name: string): string {
-  const sanitized = name
+  const hash = createHash("sha256").update(name).digest("hex").slice(0, 8);
+  const slug = name
     .replace(/[^a-zA-Z0-9\-_.]/g, "_")
     .replace(/_+/g, "_")
     .replace(/^_|_$/g, "");
-  if (!sanitized || sanitized === "." || sanitized === "..") {
-    return "unnamed";
+  if (!slug || slug === "." || slug === "..") {
+    return hash;
   }
-  return sanitized;
+  return `${hash}-${slug}`;
 }
 
 export function getFuzzTestDataDir(testDir: string, testName: string): string {
@@ -42,8 +43,12 @@ export function loadSeedCorpus(testDir: string, testName: string): Buffer[] {
     .map((e) => readFileSync(path.join(dir, e.name)));
 }
 
-export function loadCachedCorpus(cacheDir: string, testName: string): Buffer[] {
-  const dir = path.join(cacheDir, sanitizeTestName(testName));
+export function loadCachedCorpus(
+  cacheDir: string,
+  testFilePath: string,
+  testName: string,
+): Buffer[] {
+  const dir = path.join(cacheDir, testFilePath, sanitizeTestName(testName));
   if (!existsSync(dir)) {
     return [];
   }
@@ -85,10 +90,11 @@ export function loadCorpusFromDirs(dirs: string[]): Buffer[] {
 
 export function writeCorpusEntry(
   cacheDir: string,
+  testFilePath: string,
   testName: string,
   data: Buffer,
 ): string {
-  const dir = path.join(cacheDir, sanitizeTestName(testName));
+  const dir = path.join(cacheDir, testFilePath, sanitizeTestName(testName));
   mkdirSync(dir, { recursive: true });
   const hash = contentHash(data);
   const filePath = path.join(dir, hash);
@@ -96,15 +102,18 @@ export function writeCorpusEntry(
   return filePath;
 }
 
-export function writeCrashArtifact(
+export type ArtifactKind = "crash" | "timeout";
+
+export function writeArtifact(
   testDir: string,
   testName: string,
   data: Buffer,
+  kind: ArtifactKind = "crash",
 ): string {
   const dir = getFuzzTestDataDir(testDir, testName);
   mkdirSync(dir, { recursive: true });
   const hash = contentHash(data);
-  const fileName = `crash-${hash}`;
+  const fileName = `${kind}-${hash}`;
   const filePath = path.join(dir, fileName);
   writeExclusive(filePath, data);
   return filePath;

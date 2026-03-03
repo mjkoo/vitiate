@@ -3,12 +3,14 @@ import { existsSync } from "node:fs";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import {
   fuzz,
-  shouldEnterFuzzLoop,
   resolveVitestCli,
   buildTestNamePatternFromNames,
 } from "./fuzz.js";
+import { isFuzzingMode } from "./config.js";
+import { sanitizeTestName } from "./corpus.js";
 
 describe("fuzz API", () => {
   it("fuzz is a function", () => {
@@ -45,9 +47,13 @@ describe("fuzz regression mode - replay corpus files", () => {
     `vitiate-fuzz-api-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
   const originalCacheDir = process.env["VITIATE_CACHE_DIR"];
-
   beforeAll(() => {
-    const seedDir = path.join(cacheDir, "regression-replay");
+    // Set project root so the relative test file path is predictable
+    const projectRoot = process.env["VITIATE_PROJECT_ROOT"] ?? process.cwd();
+    const thisFile = fileURLToPath(import.meta.url);
+    const relativeFilePath = path.relative(projectRoot, thisFile);
+    const sanitizedName = sanitizeTestName("regression-replay");
+    const seedDir = path.join(cacheDir, relativeFilePath, sanitizedName);
     mkdirSync(seedDir, { recursive: true });
     writeFileSync(path.join(seedDir, "seed-hello"), "hello");
     process.env["VITIATE_CACHE_DIR"] = cacheDir;
@@ -67,9 +73,8 @@ describe("fuzz regression mode - replay corpus files", () => {
   });
 });
 
-describe("shouldEnterFuzzLoop", () => {
+describe("fuzz mode activation", () => {
   const originalFuzz = process.env["VITIATE_FUZZ"];
-  const originalPattern = process.env["VITIATE_FUZZ_PATTERN"];
 
   afterEach(() => {
     if (originalFuzz === undefined) {
@@ -77,43 +82,16 @@ describe("shouldEnterFuzzLoop", () => {
     } else {
       process.env["VITIATE_FUZZ"] = originalFuzz;
     }
-    if (originalPattern === undefined) {
-      delete process.env["VITIATE_FUZZ_PATTERN"];
-    } else {
-      process.env["VITIATE_FUZZ_PATTERN"] = originalPattern;
-    }
   });
 
-  it("returns false when VITIATE_FUZZ is unset", () => {
+  it("all fuzz tests enter fuzz loop when VITIATE_FUZZ=1 (no pattern filtering)", () => {
+    process.env["VITIATE_FUZZ"] = "1";
+    expect(isFuzzingMode()).toBe(true);
+  });
+
+  it("no fuzz tests enter fuzz loop when VITIATE_FUZZ is unset", () => {
     delete process.env["VITIATE_FUZZ"];
-    expect(shouldEnterFuzzLoop("any-test")).toBe(false);
-  });
-
-  it("returns true for all tests when VITIATE_FUZZ=1 and no pattern", () => {
-    process.env["VITIATE_FUZZ"] = "1";
-    delete process.env["VITIATE_FUZZ_PATTERN"];
-    expect(shouldEnterFuzzLoop("any-test")).toBe(true);
-    expect(shouldEnterFuzzLoop("other-test")).toBe(true);
-  });
-
-  it("matches tests via regex pattern", () => {
-    process.env["VITIATE_FUZZ"] = "1";
-    process.env["VITIATE_FUZZ_PATTERN"] = "parser";
-    expect(shouldEnterFuzzLoop("parser-test")).toBe(true);
-    expect(shouldEnterFuzzLoop("my-parser")).toBe(true);
-  });
-
-  it("does not match non-matching pattern", () => {
-    process.env["VITIATE_FUZZ"] = "1";
-    process.env["VITIATE_FUZZ_PATTERN"] = "parser";
-    expect(shouldEnterFuzzLoop("lexer-test")).toBe(false);
-  });
-
-  it("falls back to substring match on invalid regex", () => {
-    process.env["VITIATE_FUZZ"] = "1";
-    process.env["VITIATE_FUZZ_PATTERN"] = "[invalid(";
-    expect(shouldEnterFuzzLoop("test-[invalid(-foo")).toBe(true);
-    expect(shouldEnterFuzzLoop("other-test")).toBe(false);
+    expect(isFuzzingMode()).toBe(false);
   });
 });
 
@@ -176,21 +154,21 @@ describe("supervisor mode detection", () => {
     }
   });
 
-  it("shouldEnterFuzzLoop is true when VITIATE_FUZZ=1 (regardless of VITIATE_SUPERVISOR)", () => {
+  it("isFuzzingMode is true when VITIATE_FUZZ=1 (regardless of VITIATE_SUPERVISOR)", () => {
     process.env["VITIATE_FUZZ"] = "1";
     delete process.env["VITIATE_SUPERVISOR"];
-    expect(shouldEnterFuzzLoop("any-test")).toBe(true);
+    expect(isFuzzingMode()).toBe(true);
 
     process.env["VITIATE_SUPERVISOR"] = "1";
-    expect(shouldEnterFuzzLoop("any-test")).toBe(true);
+    expect(isFuzzingMode()).toBe(true);
   });
 
   it("parent mode condition: VITIATE_FUZZ=1 and VITIATE_SUPERVISOR not set", () => {
     process.env["VITIATE_FUZZ"] = "1";
     delete process.env["VITIATE_SUPERVISOR"];
 
-    // shouldEnterFuzzLoop returns true, VITIATE_SUPERVISOR is absent → parent mode
-    expect(shouldEnterFuzzLoop("test")).toBe(true);
+    // isFuzzingMode returns true, VITIATE_SUPERVISOR is absent → parent mode
+    expect(isFuzzingMode()).toBe(true);
     expect(process.env["VITIATE_SUPERVISOR"]).toBeUndefined();
   });
 
@@ -198,8 +176,8 @@ describe("supervisor mode detection", () => {
     process.env["VITIATE_FUZZ"] = "1";
     process.env["VITIATE_SUPERVISOR"] = "1";
 
-    // shouldEnterFuzzLoop returns true, VITIATE_SUPERVISOR is present → child mode
-    expect(shouldEnterFuzzLoop("test")).toBe(true);
+    // isFuzzingMode returns true, VITIATE_SUPERVISOR is present → child mode
+    expect(isFuzzingMode()).toBe(true);
     expect(process.env["VITIATE_SUPERVISOR"]).toBe("1");
   });
 });

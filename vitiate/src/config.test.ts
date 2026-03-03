@@ -1,7 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import {
   isFuzzingMode,
-  getFuzzPattern,
   getCliOptions,
   resolveInstrumentOptions,
   COVERAGE_MAP_SIZE,
@@ -47,33 +46,6 @@ describe("config", () => {
     it("returns true when VITIATE_FUZZ is a pattern", () => {
       process.env["VITIATE_FUZZ"] = "parser";
       expect(isFuzzingMode()).toBe(true);
-    });
-  });
-
-  describe("getFuzzPattern", () => {
-    const originalPattern = process.env["VITIATE_FUZZ_PATTERN"];
-
-    afterEach(() => {
-      if (originalPattern === undefined) {
-        delete process.env["VITIATE_FUZZ_PATTERN"];
-      } else {
-        process.env["VITIATE_FUZZ_PATTERN"] = originalPattern;
-      }
-    });
-
-    it("returns null when VITIATE_FUZZ_PATTERN is not set", () => {
-      delete process.env["VITIATE_FUZZ_PATTERN"];
-      expect(getFuzzPattern()).toBeNull();
-    });
-
-    it("returns null when VITIATE_FUZZ_PATTERN is empty", () => {
-      process.env["VITIATE_FUZZ_PATTERN"] = "";
-      expect(getFuzzPattern()).toBeNull();
-    });
-
-    it("returns pattern when VITIATE_FUZZ_PATTERN is set", () => {
-      process.env["VITIATE_FUZZ_PATTERN"] = "parser";
-      expect(getFuzzPattern()).toBe("parser");
     });
   });
 

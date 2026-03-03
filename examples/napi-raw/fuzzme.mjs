@@ -12,7 +12,7 @@ import vm from "node:vm";
 const require = createRequire(
   path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
-    "../vitiate/package.json",
+    "../../vitiate/package.json",
   ),
 );
 const { transformSync } = require("@swc/core");
@@ -48,7 +48,7 @@ function fuzzme(data) {
 // ---------------------------------------------------------------------------
 const wasmPluginPath = path.resolve(
   __dirname,
-  "../vitiate-instrument/vitiate_instrument.wasm",
+  "../../vitiate-instrument/vitiate_instrument.wasm",
 );
 
 console.log("Instrumenting target with SWC WASM plugin...");

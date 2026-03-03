@@ -12,7 +12,7 @@ import {
   loadSeedCorpus,
   loadCachedCorpus,
   writeCorpusEntry,
-  writeCrashArtifact,
+  writeArtifact,
   sanitizeTestName,
   getCacheDir,
   loadCorpusFromDirs,
@@ -40,14 +40,16 @@ describe("corpus", () => {
     });
 
     it("returns empty array when directory is empty", () => {
-      const dir = path.join(tmpDir, "testdata", "fuzz", "empty");
+      const dirName = sanitizeTestName("empty");
+      const dir = path.join(tmpDir, "testdata", "fuzz", dirName);
       mkdirSync(dir, { recursive: true });
       const result = loadSeedCorpus(tmpDir, "empty");
       expect(result).toEqual([]);
     });
 
     it("loads all files from seed corpus directory", () => {
-      const dir = path.join(tmpDir, "testdata", "fuzz", "parse");
+      const dirName = sanitizeTestName("parse");
+      const dir = path.join(tmpDir, "testdata", "fuzz", dirName);
       mkdirSync(dir, { recursive: true });
       writeFileSync(path.join(dir, "seed1"), "hello");
       writeFileSync(path.join(dir, "seed2"), "world");
@@ -60,7 +62,8 @@ describe("corpus", () => {
     });
 
     it("skips subdirectories in seed corpus", () => {
-      const dir = path.join(tmpDir, "testdata", "fuzz", "withsubdir");
+      const dirName = sanitizeTestName("withsubdir");
+      const dir = path.join(tmpDir, "testdata", "fuzz", dirName);
       mkdirSync(dir, { recursive: true });
       writeFileSync(path.join(dir, "seed1"), "hello");
       mkdirSync(path.join(dir, "subdir"), { recursive: true });
@@ -74,28 +77,30 @@ describe("corpus", () => {
 
   describe("loadCachedCorpus", () => {
     it("returns empty array when directory does not exist", () => {
-      const result = loadCachedCorpus(tmpDir, "nonexistent");
+      const result = loadCachedCorpus(tmpDir, "test.fuzz.ts", "nonexistent");
       expect(result).toEqual([]);
     });
 
     it("loads all files from cached corpus directory", () => {
-      const dir = path.join(tmpDir, "parse");
+      const dirName = sanitizeTestName("parse");
+      const dir = path.join(tmpDir, "test.fuzz.ts", dirName);
       mkdirSync(dir, { recursive: true });
       writeFileSync(path.join(dir, "a1b2c3d4"), "data1");
       writeFileSync(path.join(dir, "e5f6g7h8"), "data2");
 
-      const result = loadCachedCorpus(tmpDir, "parse");
+      const result = loadCachedCorpus(tmpDir, "test.fuzz.ts", "parse");
       expect(result).toHaveLength(2);
     });
 
     it("skips subdirectories in cached corpus", () => {
-      const dir = path.join(tmpDir, "withsubdir");
+      const dirName = sanitizeTestName("withsubdir");
+      const dir = path.join(tmpDir, "test.fuzz.ts", dirName);
       mkdirSync(dir, { recursive: true });
       writeFileSync(path.join(dir, "a1b2c3d4"), "data1");
       mkdirSync(path.join(dir, "subdir"), { recursive: true });
       writeFileSync(path.join(dir, "subdir", "nested"), "should be ignored");
 
-      const result = loadCachedCorpus(tmpDir, "withsubdir");
+      const result = loadCachedCorpus(tmpDir, "test.fuzz.ts", "withsubdir");
       expect(result).toHaveLength(1);
       expect(result[0]!.toString()).toBe("data1");
     });
@@ -104,7 +109,7 @@ describe("corpus", () => {
   describe("writeCorpusEntry", () => {
     it("writes a corpus entry and returns the path", () => {
       const data = Buffer.from("interesting input");
-      const filePath = writeCorpusEntry(tmpDir, "parse", data);
+      const filePath = writeCorpusEntry(tmpDir, "test.fuzz.ts", "parse", data);
 
       expect(existsSync(filePath)).toBe(true);
       expect(readFileSync(filePath)).toEqual(data);
@@ -113,35 +118,35 @@ describe("corpus", () => {
     it("creates directories on demand", () => {
       const cacheDir = path.join(tmpDir, "deeply", "nested");
       const data = Buffer.from("data");
-      const filePath = writeCorpusEntry(cacheDir, "test", data);
+      const filePath = writeCorpusEntry(cacheDir, "test.fuzz.ts", "test", data);
 
       expect(existsSync(filePath)).toBe(true);
     });
 
     it("is idempotent - duplicate writes do not overwrite", () => {
       const data = Buffer.from("same input");
-      const path1 = writeCorpusEntry(tmpDir, "parse", data);
-      const path2 = writeCorpusEntry(tmpDir, "parse", data);
+      const path1 = writeCorpusEntry(tmpDir, "test.fuzz.ts", "parse", data);
+      const path2 = writeCorpusEntry(tmpDir, "test.fuzz.ts", "parse", data);
 
       expect(path1).toBe(path2);
     });
 
     it("round-trips: write then load returns same data", () => {
       const data = Buffer.from("round trip test");
-      writeCorpusEntry(tmpDir, "parse", data);
+      writeCorpusEntry(tmpDir, "test.fuzz.ts", "parse", data);
 
-      const loaded = loadCachedCorpus(tmpDir, "parse");
+      const loaded = loadCachedCorpus(tmpDir, "test.fuzz.ts", "parse");
       expect(loaded).toHaveLength(1);
       expect(loaded[0]).toEqual(data);
     });
   });
 
-  describe("writeCrashArtifact", () => {
+  describe("writeArtifact", () => {
     it("writes a crash artifact with crash- prefix", () => {
       const data = Buffer.from("crash input");
-      const filePath = writeCrashArtifact(tmpDir, "parse", data);
+      const filePath = writeArtifact(tmpDir, "parse", data);
 
-      expect(path.basename(filePath)).toMatch(/^crash-[0-9a-f]{16}$/);
+      expect(path.basename(filePath)).toMatch(/^crash-[0-9a-f]{64}$/);
       expect(existsSync(filePath)).toBe(true);
       expect(readFileSync(filePath)).toEqual(data);
     });
@@ -149,66 +154,118 @@ describe("corpus", () => {
     it("creates directories on demand", () => {
       const testDir = path.join(tmpDir, "deeply", "nested");
       const data = Buffer.from("crash");
-      const filePath = writeCrashArtifact(testDir, "test", data);
+      const filePath = writeArtifact(testDir, "test", data);
 
       expect(existsSync(filePath)).toBe(true);
     });
 
     it("is idempotent - duplicate writes do not overwrite", () => {
       const data = Buffer.from("same crash");
-      const path1 = writeCrashArtifact(tmpDir, "parse", data);
-      const path2 = writeCrashArtifact(tmpDir, "parse", data);
+      const path1 = writeArtifact(tmpDir, "parse", data);
+      const path2 = writeArtifact(tmpDir, "parse", data);
 
       expect(path1).toBe(path2);
     });
 
     it("round-trips: crash artifact can be loaded as seed corpus", () => {
       const data = Buffer.from("crash round trip");
-      writeCrashArtifact(tmpDir, "parse", data);
+      writeArtifact(tmpDir, "parse", data);
 
       const loaded = loadSeedCorpus(tmpDir, "parse");
       expect(loaded).toHaveLength(1);
       expect(loaded[0]).toEqual(data);
     });
+
+    it("writes a timeout artifact with timeout- prefix", () => {
+      const data = Buffer.from("timeout input");
+      const filePath = writeArtifact(tmpDir, "parse", data, "timeout");
+
+      expect(path.basename(filePath)).toMatch(/^timeout-[0-9a-f]{64}$/);
+      expect(existsSync(filePath)).toBe(true);
+      expect(readFileSync(filePath)).toEqual(data);
+    });
   });
 
   describe("sanitizeTestName", () => {
-    it("replaces slashes with underscores", () => {
-      expect(sanitizeTestName("a/b/c")).toBe("a_b_c");
+    it("produces hash-slug format for simple name", () => {
+      const result = sanitizeTestName("parse-url");
+      expect(result).toMatch(/^[0-9a-f]{8}-parse-url$/);
     });
 
-    it("replaces path separators but preserves dots", () => {
-      expect(sanitizeTestName("../../../etc/passwd")).toBe(
-        ".._.._.._etc_passwd",
+    it("produces different hashes for names that differ only in non-alphanumeric chars", () => {
+      const a = sanitizeTestName("parse url");
+      const b = sanitizeTestName("parse:url");
+      // Both have same slug but different hashes
+      expect(a).toMatch(/-parse_url$/);
+      expect(b).toMatch(/-parse_url$/);
+      expect(a).not.toBe(b);
+    });
+
+    it("produces hash-only for empty string", () => {
+      const result = sanitizeTestName("");
+      expect(result).toMatch(/^[0-9a-f]{8}$/);
+    });
+
+    it("produces hash-only for only special chars", () => {
+      const result = sanitizeTestName("///");
+      expect(result).toMatch(/^[0-9a-f]{8}$/);
+    });
+
+    it("produces hash-only for single dot", () => {
+      const result = sanitizeTestName(".");
+      expect(result).toMatch(/^[0-9a-f]{8}$/);
+    });
+
+    it("produces hash-only for double dot", () => {
+      const result = sanitizeTestName("..");
+      expect(result).toMatch(/^[0-9a-f]{8}$/);
+    });
+
+    it("preserves dots dashes and alphanumerics in slug", () => {
+      const result = sanitizeTestName("valid-name_1.0");
+      expect(result).toMatch(/^[0-9a-f]{8}-valid-name_1\.0$/);
+    });
+
+    it("collapses runs of underscores in slug", () => {
+      const result = sanitizeTestName("a///b");
+      expect(result).toMatch(/^[0-9a-f]{8}-a_b$/);
+    });
+
+    it("replaces spaces in slug", () => {
+      const result = sanitizeTestName("my test name");
+      expect(result).toMatch(/^[0-9a-f]{8}-my_test_name$/);
+    });
+
+    it("same name always produces the same result (deterministic)", () => {
+      expect(sanitizeTestName("parse-url")).toBe(sanitizeTestName("parse-url"));
+    });
+  });
+
+  describe("file-qualified cached corpus prevents cross-file collisions", () => {
+    it("same test name in different files produces distinct cache paths", () => {
+      const data = Buffer.from("test data");
+      const path1 = writeCorpusEntry(tmpDir, "test/url.fuzz.ts", "parse", data);
+      const path2 = writeCorpusEntry(
+        tmpDir,
+        "test/json.fuzz.ts",
+        "parse",
+        data,
       );
+
+      // Same file name, different parent directories
+      expect(path1).not.toBe(path2);
+
+      // Each loads only its own entry
+      const loaded1 = loadCachedCorpus(tmpDir, "test/url.fuzz.ts", "parse");
+      const loaded2 = loadCachedCorpus(tmpDir, "test/json.fuzz.ts", "parse");
+      expect(loaded1).toHaveLength(1);
+      expect(loaded2).toHaveLength(1);
     });
 
-    it("collapses runs of underscores", () => {
-      expect(sanitizeTestName("a///b")).toBe("a_b");
-    });
-
-    it("replaces spaces", () => {
-      expect(sanitizeTestName("my test name")).toBe("my_test_name");
-    });
-
-    it("returns unnamed for empty string", () => {
-      expect(sanitizeTestName("")).toBe("unnamed");
-    });
-
-    it("returns unnamed for only special chars", () => {
-      expect(sanitizeTestName("///")).toBe("unnamed");
-    });
-
-    it("preserves dots dashes and alphanumerics", () => {
-      expect(sanitizeTestName("valid-name_1.0")).toBe("valid-name_1.0");
-    });
-
-    it("returns unnamed for single dot", () => {
-      expect(sanitizeTestName(".")).toBe("unnamed");
-    });
-
-    it("returns unnamed for double dot", () => {
-      expect(sanitizeTestName("..")).toBe("unnamed");
+    it("empty/degenerate names produce valid hash-only directories", () => {
+      const data = Buffer.from("test data");
+      const filePath = writeCorpusEntry(tmpDir, "test.fuzz.ts", "", data);
+      expect(existsSync(filePath)).toBe(true);
     });
   });
 

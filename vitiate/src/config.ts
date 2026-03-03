@@ -56,12 +56,6 @@ export function isFuzzingMode(): boolean {
   return val !== undefined && val !== "" && val !== "0" && val !== "false";
 }
 
-export function getFuzzPattern(): string | null {
-  const val = process.env["VITIATE_FUZZ_PATTERN"];
-  if (val === undefined || val === "") return null;
-  return val;
-}
-
 function validateFuzzOptions(obj: Record<string, unknown>): FuzzOptions {
   const valid: FuzzOptions = {};
   const keys: (keyof FuzzOptions)[] = [

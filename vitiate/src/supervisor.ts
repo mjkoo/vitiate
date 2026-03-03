@@ -6,7 +6,7 @@
  */
 import type { ChildProcess } from "node:child_process";
 import type { ShmemHandle } from "vitiate-napi";
-import { writeCrashArtifact } from "./corpus.js";
+import { writeArtifact, type ArtifactKind } from "./corpus.js";
 
 /**
  * Exit code used by the watchdog's `_exit` fallback for timeouts.
@@ -94,7 +94,7 @@ export async function runSupervisor(
         // Child was killed by a signal — native crash
         process.stderr.write(`vitiate: child killed by signal ${signal}\n`);
 
-        lastCrashArtifactPath = handleCrash(shmem, testDir, testName);
+        lastCrashArtifactPath = handleCrash(shmem, testDir, testName, "crash");
         shmem.resetGeneration();
 
         respawnCount++;
@@ -128,7 +128,12 @@ export async function runSupervisor(
         // Watchdog timeout — attempt backup recovery from shmem
         process.stderr.write("vitiate: child exited with watchdog timeout\n");
 
-        lastCrashArtifactPath = handleCrash(shmem, testDir, testName);
+        lastCrashArtifactPath = handleCrash(
+          shmem,
+          testDir,
+          testName,
+          "timeout",
+        );
         shmem.resetGeneration();
 
         respawnCount++;
@@ -156,19 +161,20 @@ export async function runSupervisor(
 }
 
 /**
- * Read the stashed input from shmem and write a crash artifact if present.
+ * Read the stashed input from shmem and write an artifact if present.
  * Returns the artifact path if an artifact was written.
  */
 function handleCrash(
   shmem: ShmemHandle,
   testDir: string,
   testName: string,
+  kind: ArtifactKind,
 ): string | undefined {
   const input = shmem.readStashedInput();
   if (input.length > 0) {
-    const artifactPath = writeCrashArtifact(testDir, testName, input);
+    const artifactPath = writeArtifact(testDir, testName, input, kind);
     process.stderr.write(
-      `vitiate: crash artifact written to ${artifactPath}\n`,
+      `vitiate: ${kind} artifact written to ${artifactPath}\n`,
     );
     return artifactPath;
   }

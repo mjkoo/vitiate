@@ -9,6 +9,7 @@
  *   in fuzzing mode, and runs the fuzz loop.
  */
 import { spawn } from "node:child_process";
+import { realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { object } from "@optique/core/constructs";
@@ -18,6 +19,7 @@ import { optional, multiple, withDefault } from "@optique/core/modifiers";
 import { type InferValue, parseSync } from "@optique/core/parser";
 import { formatMessage } from "@optique/core/message";
 import { runSync } from "@optique/run";
+import escapeStringRegexp from "escape-string-regexp";
 import { ShmemHandle } from "vitiate-napi";
 import { vitiatePlugin } from "./plugin.js";
 import { runSupervisor } from "./supervisor.js";
@@ -26,6 +28,7 @@ import { DEFAULT_MAX_INPUT_LEN, type FuzzOptions } from "./config.js";
 export interface CliArgs {
   testFile: string;
   corpusDirs: string[];
+  testName?: string;
   fuzzOptions: FuzzOptions;
 }
 
@@ -40,6 +43,8 @@ export const cliParser = object({
   runs: optional(option("-runs", integer({ min: 0 }))),
   seed: optional(option("-seed", integer())),
   maxTotalTime: optional(option("-max_total_time", integer({ min: 0 }))),
+  // Test targeting
+  testName: optional(option("-test", string())),
   // Minimization config
   minimizeBudget: optional(option("-minimize_budget", integer({ min: 0 }))),
   minimizeTimeLimit: optional(
@@ -80,6 +85,7 @@ function toCliArgs(parsed: InferValue<typeof cliParser>): CliArgs {
   const {
     testFile,
     corpusDirs,
+    testName,
     maxLen,
     timeout,
     runs,
@@ -91,6 +97,7 @@ function toCliArgs(parsed: InferValue<typeof cliParser>): CliArgs {
   return {
     testFile,
     corpusDirs: [...corpusDirs],
+    testName,
     fuzzOptions: {
       maxLen,
       timeoutMs: timeout != null ? timeout * 1000 : undefined,
@@ -119,19 +126,21 @@ export function parseArgs(argv: string[]): CliArgs {
 async function runParentMode(
   testFile: string,
   maxInputLen: number,
+  testName?: string,
 ): Promise<void> {
   const shmem = ShmemHandle.allocate(maxInputLen);
   const testDir = path.dirname(path.resolve(testFile));
 
-  // Known limitation: the parent derives the test name from the file basename,
-  // while the child uses the name passed to `fuzz()`. These may differ.
-  // The parent's artifacts serve as a backup recovery path for native crashes.
-  const testName = path.basename(testFile, path.extname(testFile));
+  // When -test is provided, use it as the test name for artifact paths.
+  // Otherwise, fall back to deriving from the filename (correct for the
+  // single-test-per-file convention used in libFuzzer/OSS-Fuzz).
+  const resolvedTestName =
+    testName ?? path.basename(testFile, path.extname(testFile));
 
   const result = await runSupervisor({
     shmem,
     testDir,
-    testName,
+    testName: resolvedTestName,
     spawnChild: () =>
       spawn(process.execPath, process.argv.slice(1), {
         env: { ...process.env, VITIATE_SUPERVISOR: "1" },
@@ -153,6 +162,7 @@ async function runChildMode(
   testFile: string,
   corpusDirs: string[],
   fuzzOptions: FuzzOptions,
+  testName?: string,
 ): Promise<void> {
   // Activate fuzzing mode
   process.env["VITIATE_FUZZ"] = "1";
@@ -173,6 +183,9 @@ async function runChildMode(
     {
       include: [testFile],
       testTimeout: 0,
+      ...(testName
+        ? { testNamePattern: `^${escapeStringRegexp(testName)}$` }
+        : {}),
     },
     {
       plugins: [vitiatePlugin({ instrument: {} })],
@@ -188,7 +201,7 @@ async function runChildMode(
 }
 
 async function main(): Promise<void> {
-  const { testFile, corpusDirs, fuzzOptions } = toCliArgs(
+  const { testFile, corpusDirs, testName, fuzzOptions } = toCliArgs(
     runSync(cliParser, {
       programName: "vitiate",
       help: "option",
@@ -197,15 +210,25 @@ async function main(): Promise<void> {
 
   if (process.env["VITIATE_SUPERVISOR"]) {
     // Child mode: shmem is already set up by the parent
-    await runChildMode(testFile, corpusDirs, fuzzOptions);
+    await runChildMode(testFile, corpusDirs, fuzzOptions, testName);
   } else {
     // Parent mode: allocate shmem, spawn child, supervise
     const maxInputLen = fuzzOptions.maxLen ?? DEFAULT_MAX_INPUT_LEN;
-    await runParentMode(testFile, maxInputLen);
+    await runParentMode(testFile, maxInputLen, testName);
   }
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+// Resolve symlinks so `pnpm exec vitiate` (which uses a symlinked bin) matches
+// the real path that `import.meta.url` resolves to.
+const resolvedArgv1 = (() => {
+  try {
+    return realpathSync(process.argv[1]!);
+  } catch {
+    return process.argv[1];
+  }
+})();
+
+if (resolvedArgv1 === fileURLToPath(import.meta.url)) {
   main().catch((err) => {
     process.stderr.write(
       `Fatal: ${err instanceof Error ? err.message : String(err)}\n`,

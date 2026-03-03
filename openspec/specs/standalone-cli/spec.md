@@ -9,10 +9,11 @@ Usage: `npx vitiate <test-file> [corpus_dirs...] [flags]`
 The CLI SHALL:
 
 1. Parse the test file path from the first positional argument.
-2. Check for the `VITIATE_SUPERVISOR` environment variable to determine mode:
-   - **If absent (parent mode)**: Allocate shmem, spawn itself as a child process with `VITIATE_SUPERVISOR` set to the shmem identifier, and enter the supervisor wait loop.
-   - **If present (child mode)**: Attach to the shmem region, set `VITIATE_FUZZ=1` in the process environment, and call `startVitest('test', [testFile], ...)` with the vitiate plugin loaded.
-3. In parent mode, forward the exit code from the supervisor's exit code protocol (0, 1, or respawn on signal death).
+2. Parse the optional `-test=<name>` flag.
+3. Check for the `VITIATE_SUPERVISOR` environment variable to determine mode:
+   - **If absent (parent mode)**: Allocate shmem, spawn itself as a child process with `VITIATE_SUPERVISOR` set to the shmem identifier, and enter the supervisor wait loop. If `-test` is provided, use the name as `testName` for `runSupervisor()`. Otherwise, derive `testName` from the filename.
+   - **If present (child mode)**: Attach to the shmem region, set `VITIATE_FUZZ=1` in the process environment, and call `startVitest('test', [testFile], ...)` with the vitiate plugin loaded. If `-test` is provided, escape and anchor the name as `^{escaped}$` and pass as `testNamePattern` to `startVitest()`.
+4. In parent mode, forward the exit code from the supervisor's exit code protocol (0, 1, or respawn on signal death).
 
 #### Scenario: Basic invocation (parent mode)
 
@@ -38,6 +39,41 @@ The CLI SHALL:
 - **WHEN** `npx vitiate ./test.ts -timeout=10 -runs=100000 -seed=42` is executed
 - **THEN** the child process receives the same arguments
 - **AND** the child parses and applies the same flags as if invoked directly
+
+#### Scenario: Test filter passed to child
+
+- **WHEN** `npx vitiate ./test.ts -test=parse-url` is executed in child mode
+- **THEN** `startVitest()` is called with `testNamePattern: "^parse\\-url$"` (escaped and anchored)
+- **AND** only the "parse-url" test callback executes (exact match)
+
+### Requirement: Test name flag
+
+The CLI SHALL accept a `-test=<name>` flag that selects exactly one fuzz test by name. When provided:
+
+1. The name SHALL be escaped and anchored as `^{escaped}$` before being passed to `startVitest()` as the `testNamePattern` option, ensuring exact-match semantics (e.g., `-test=parse-url` matches only "parse-url", not "parse-url-v2").
+2. The name SHALL be used as the `testName` for `runSupervisor()`, ensuring crash artifacts are written to the correct test-specific directory.
+
+When `-test` is not provided, all fuzz tests in the file enter the fuzz loop. The parent SHALL derive `testName` from the filename (current behavior), which is correct for the single-test-per-file convention used in libFuzzer/OSS-Fuzz.
+
+#### Scenario: Filter to specific test in multi-test file
+
+- **WHEN** `npx vitiate ./test.fuzz.ts -test=parse-url` is executed
+- **AND** the file contains `fuzz("parse-url", ...)` and `fuzz("normalize-url", ...)`
+- **THEN** only "parse-url" enters the fuzz loop
+- **AND** "normalize-url" is skipped by Vitest's runner (callback never executes)
+- **AND** crash artifacts are written to `testdata/fuzz/{hash}-parse-url/`
+
+#### Scenario: No filter runs all tests
+
+- **WHEN** `npx vitiate ./test.fuzz.ts` is executed without `-test`
+- **AND** the file contains `fuzz("parse-url", ...)` and `fuzz("normalize-url", ...)`
+- **THEN** both tests enter the fuzz loop sequentially
+- **AND** crash artifacts use the filename-derived test name
+
+#### Scenario: Filter with libFuzzer flags
+
+- **WHEN** `npx vitiate ./test.fuzz.ts -test=parse-url -max_total_time=30 -max_len=4096` is executed
+- **THEN** the test filter is applied AND the libFuzzer flags are forwarded to the fuzzer
 
 ### Requirement: libFuzzer-compatible flags
 

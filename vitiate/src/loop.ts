@@ -18,8 +18,9 @@ import {
   loadCorpusFromDirs,
   getCacheDir,
   writeCorpusEntry,
-  writeCrashArtifact,
+  writeArtifact,
   sanitizeTestName,
+  type ArtifactKind,
 } from "./corpus.js";
 import {
   createReporter,
@@ -48,6 +49,7 @@ export async function runFuzzLoop(
   target: (data: Buffer) => void | Promise<void>,
   testDir: string,
   testName: string,
+  testFilePath: string,
   options: FuzzOptions,
   corpusDirs?: string[],
 ): Promise<FuzzLoopResult> {
@@ -77,7 +79,7 @@ export async function runFuzzLoop(
 
   // Load seeds
   const seedCorpus = loadSeedCorpus(testDir, testName);
-  const cachedCorpus = loadCachedCorpus(cacheDir, testName);
+  const cachedCorpus = loadCachedCorpus(cacheDir, testFilePath, testName);
   const extraCorpus = corpusDirs ? loadCorpusFromDirs(corpusDirs) : [];
   for (const seed of [...seedCorpus, ...cachedCorpus, ...extraCorpus]) {
     fuzzer.addSeed(seed);
@@ -235,7 +237,14 @@ export async function runFuzzLoop(
           );
         }
 
-        const artifactPath = writeCrashArtifact(testDir, testName, crashData);
+        const artifactKind: ArtifactKind =
+          exitKind === ExitKind.Timeout ? "timeout" : "crash";
+        const artifactPath = writeArtifact(
+          testDir,
+          testName,
+          crashData,
+          artifactKind,
+        );
         printCrash(caughtError ?? new Error("unknown crash"), artifactPath);
         result = {
           crashed: true,
@@ -248,7 +257,7 @@ export async function runFuzzLoop(
       }
 
       if (iterResult === IterationResult.Interesting) {
-        writeCorpusEntry(cacheDir, testName, input);
+        writeCorpusEntry(cacheDir, testFilePath, testName, input);
 
         // Calibration loop: re-run target to average timing and detect unstable edges.
         // The original fuzz iteration counts as calibration run #1; additional runs start here.

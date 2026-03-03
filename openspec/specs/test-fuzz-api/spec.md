@@ -68,9 +68,11 @@ In fuzzing mode (`VITIATE_FUZZ` is set), the `fuzz()` function SHALL detect whet
 
 Each `fuzz()` call in a test file SHALL get its own independent supervisor lifecycle â€” its own shmem allocation, its own child process, its own crash recovery. Multiple fuzz tests in the same file run sequentially, each independently supervised.
 
-If `VITIATE_FUZZ_PATTERN` is set, its value SHALL be treated as a regex filter â€” only fuzz tests whose name matches the pattern SHALL enter supervised fuzzing mode. Non-matching tests SHALL fall back to regression behavior. If `VITIATE_FUZZ_PATTERN` is not set (or empty), all fuzz tests SHALL enter fuzzing mode.
+All fuzz tests SHALL enter fuzzing mode when `VITIATE_FUZZ` is set. Per-test filtering SHALL be handled by Vitest's built-in `--test-name-pattern` / `-t` flag, which skips non-matching test callbacks at the runner level. The `VITIATE_FUZZ_PATTERN` env var, `getFuzzPattern()` helper, and `shouldEnterFuzzLoop()` pattern matching logic SHALL be removed.
 
-`getFuzzPattern()` SHALL read `process.env["VITIATE_FUZZ_PATTERN"]` and return its value if it is a non-empty string, or `null` otherwise. The function SHALL NOT inspect the value of `VITIATE_FUZZ`.
+> **Removed in change `projects-fuzz-activation`**: The following scenarios were removed: "Filter by pattern via VITIATE_FUZZ_PATTERN", "No pattern means all tests fuzz", "getFuzzPattern returns pattern from VITIATE_FUZZ_PATTERN", "getFuzzPattern returns null when no pattern is set", "getFuzzPattern returns null when pattern is empty".
+> **Reason**: `VITIATE_FUZZ_PATTERN` had incorrect behavior â€” non-matching tests regression-replayed instead of skipping. Vitest's built-in `-t` / `--test-name-pattern` provides correct runner-level filtering. The standalone CLI adds `-test=<name>` for the same purpose.
+> **Migration**: Use `VITIATE_FUZZ=1 vitest run -t "<pattern>"` instead of `VITIATE_FUZZ=1 VITIATE_FUZZ_PATTERN=<pattern> vitest run`. For the standalone CLI, use `-test=<name>`.
 
 #### Scenario: Enter fuzz loop (child mode)
 
@@ -97,18 +99,12 @@ If `VITIATE_FUZZ_PATTERN` is set, its value SHALL be treated as a regex filter â
 - **AND** then "serialize" spawns its own supervised child, runs to completion, and returns
 - **AND** each has independent shmem, independent crash recovery, and independent artifacts
 
-#### Scenario: Filter by pattern via VITIATE_FUZZ_PATTERN
+#### Scenario: All fuzz tests enter fuzzing mode when VITIATE_FUZZ is set
 
-- **WHEN** `VITIATE_FUZZ=1` and `VITIATE_FUZZ_PATTERN=parse` are set
-- **AND** two fuzz tests exist: "parse" and "serialize"
-- **THEN** only "parse" enters supervised fuzzing mode
-- **AND** "serialize" runs in regression mode
-
-#### Scenario: No pattern means all tests fuzz
-
-- **WHEN** `VITIATE_FUZZ=1` is set and `VITIATE_FUZZ_PATTERN` is not set
+- **WHEN** `VITIATE_FUZZ=1` is set
 - **AND** two fuzz tests exist: "parse" and "serialize"
 - **THEN** both "parse" and "serialize" enter supervised fuzzing mode
+- **AND** per-test filtering is handled by Vitest's `-t` flag at the runner level (non-matching callbacks never execute)
 
 #### Scenario: Crash found during supervised fuzzing
 
@@ -122,21 +118,6 @@ If `VITIATE_FUZZ_PATTERN` is set, its value SHALL be treated as a regex filter â
 - **WHEN** the supervised child exits with code 0 (campaign complete)
 - **THEN** the `fuzz()` callback returns normally
 - **AND** the Vitest test is reported as passed
-
-#### Scenario: getFuzzPattern returns pattern from VITIATE_FUZZ_PATTERN
-
-- **WHEN** `VITIATE_FUZZ_PATTERN=parser` is set in the environment
-- **THEN** `getFuzzPattern()` returns `"parser"`
-
-#### Scenario: getFuzzPattern returns null when no pattern is set
-
-- **WHEN** `VITIATE_FUZZ_PATTERN` is not set in the environment
-- **THEN** `getFuzzPattern()` returns `null`
-
-#### Scenario: getFuzzPattern returns null when pattern is empty
-
-- **WHEN** `VITIATE_FUZZ_PATTERN=""` is set in the environment
-- **THEN** `getFuzzPattern()` returns `null`
 
 ### Requirement: Child process spawning
 

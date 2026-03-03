@@ -165,6 +165,32 @@ describe("parseArgs", () => {
   });
 });
 
+describe("-test flag", () => {
+  it("parses -test flag", () => {
+    const result = parseArgs(argv("./test.ts", "-test=parse-url"));
+    expect(result.testName).toBe("parse-url");
+  });
+
+  it("returns undefined testName when not provided", () => {
+    const result = parseArgs(argv("./test.ts"));
+    expect(result.testName).toBeUndefined();
+  });
+
+  it("combines -test with other flags", () => {
+    const result = parseArgs(
+      argv(
+        "./test.ts",
+        "-test=parse-url",
+        "-max_total_time=30",
+        "-max_len=4096",
+      ),
+    );
+    expect(result.testName).toBe("parse-url");
+    expect(result.fuzzOptions.maxTotalTimeMs).toBe(30000);
+    expect(result.fuzzOptions.maxLen).toBe(4096);
+  });
+});
+
 describe("minimization config flags", () => {
   it("parses -minimize_budget flag", () => {
     const result = parseArgs(argv("./test.ts", "-minimize_budget=5000"));

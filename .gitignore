@@ -25,5 +25,8 @@ dist/
 # Lefthook
 lefthook-local.yml
 
+# Vitiate fuzzer cache
+.vitiate-corpus/
+
 # OS
 .DS_Store

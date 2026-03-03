@@ -1,0 +1,17 @@
+{
+  "name": "example-url-parser",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "fuzz": "VITIATE_FUZZ=1 vitest run --project fuzz",
+    "fuzz:cli": "vitiate test/url-parser.fuzz.ts -max_total_time=30"
+  },
+  "dependencies": {
+    "vitiate": "workspace:*"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0",
+    "vitest": "^3.1.0"
+  }
+}
