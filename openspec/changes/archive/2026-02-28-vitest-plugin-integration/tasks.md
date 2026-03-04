@@ -60,7 +60,7 @@
 
 ## 8. Standalone CLI
 
-- [x] 8.1 Implement `src/cli.ts`: parse libFuzzer-style arguments (positional test file, corpus dirs, -max_len, -timeout, -runs, -seed, -fuzztime)
+- [x] 8.1 Implement `src/cli.ts`: parse libFuzzer-style arguments (positional test file, corpus dirs, -max_len, -timeout, -runs, -seed, -max_total_time)
 - [x] 8.2 Implement flag translation: convert libFuzzer flags to vitiate FuzzOptions
 - [x] 8.3 Implement startVitest wrapper: call `startVitest('test', [testFile], ...)` with vitiate plugin and fuzzing mode
 - [x] 8.4 Handle unsupported flags (-fork, -jobs, -merge) with warnings
