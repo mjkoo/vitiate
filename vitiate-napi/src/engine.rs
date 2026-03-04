@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use libafl::corpus::{Corpus, CorpusId, InMemoryCorpus, SchedulerTestcaseMetadata, Testcase};
@@ -9,17 +9,20 @@ use libafl::feedbacks::{
     CrashFeedback, Feedback, MaxMapFeedback, StateInitializer, TimeoutFeedback,
 };
 use libafl::inputs::BytesInput;
-use libafl::mutators::token_mutations::I2SRandReplace;
-use libafl::mutators::{HavocMutationsType, HavocScheduledMutator, Mutator, havoc_mutations};
+use libafl::mutators::token_mutations::{I2SRandReplace, TokenInsert, TokenReplace};
+use libafl::mutators::{
+    HavocMutationsType, HavocScheduledMutator, Mutator, Tokens, havoc_mutations, tokens_mutations,
+};
 use libafl::observers::StdMapObserver;
-use libafl::observers::cmp::CmpValuesMetadata;
+use libafl::observers::cmp::{CmpValues, CmpValuesMetadata};
 use libafl::schedulers::powersched::{N_FUZZ_SIZE, PowerSchedule, SchedulerMetadata};
 use libafl::schedulers::testcase_score::CorpusPowerTestcaseScore;
 use libafl::schedulers::{ProbabilitySamplingScheduler, RemovableScheduler, Scheduler};
 use libafl::state::{HasCorpus, HasExecutions, HasMaxSize, HasSolutions, StdState};
 use libafl::{HasMetadata, HasNamedMetadata};
+use libafl_bolts::AsSlice;
 use libafl_bolts::rands::StdRand;
-use libafl_bolts::tuples::tuple_list;
+use libafl_bolts::tuples::{Merge, tuple_list};
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
@@ -46,13 +49,40 @@ const CALIBRATION_STAGE_MAX: usize = 8;
 /// Nominal execution time assigned to seeds (not calibrated).
 const SEED_EXEC_TIME: Duration = Duration::from_millis(1);
 
+/// Minimum number of observations (appearances in CmpLog entries across all
+/// `report_result` calls) before a token candidate is promoted into the mutation
+/// dictionary. A token appearing in multiple `CmpValues::Bytes` entries within
+/// a single call increments multiple times. Constants like `"javascript"` appear
+/// in every execution that reaches a comparison; one-off garbled byte sequences
+/// produced by havoc mutations appear only once. A threshold of 3 effectively
+/// filters out noise while keeping real constants.
+const TOKEN_PROMOTION_THRESHOLD: usize = 3;
+
+/// Maximum number of token candidates tracked before new candidates are
+/// dropped. Real comparison constants are promoted quickly (they appear in
+/// every execution that reaches the comparison), so this cap prevents unbounded
+/// growth from the long tail of one-off garbled byte sequences.
+const MAX_TOKEN_CANDIDATES: usize = 4096;
+
+/// Maximum number of auto-discovered tokens in the mutation dictionary.
+/// Once this limit is reached, no further tokens are promoted. Real comparison
+/// constants are promoted within the first few iterations (they appear in every
+/// execution that reaches the comparison), so a cap prevents the long tail of
+/// garbled byte sequences that happen to exceed `TOKEN_PROMOTION_THRESHOLD` from
+/// diluting the dictionary. Matches AFL++'s `MAX_AUTO_EXTRAS` order of magnitude
+/// but scaled down since our single-threaded loop benefits from a tighter
+/// dictionary.
+const MAX_DICTIONARY_SIZE: usize = 512;
+
 // Concrete LibAFL type aliases.
 type CovObserver = StdMapObserver<'static, u8, false>;
 type FuzzerFeedback = MaxMapFeedback<CovObserver, CovObserver>;
 type CrashObjective = CrashFeedback;
 type TimeoutObjective = TimeoutFeedback;
 type FuzzerScheduler = ProbabilitySamplingScheduler<CorpusPowerTestcaseScore>;
-type FuzzerMutator = HavocScheduledMutator<HavocMutationsType>;
+type TokensMutationsType = (TokenInsert, (TokenReplace, ()));
+type FuzzerMutationsType = <HavocMutationsType as Merge<TokensMutationsType>>::MergeResult;
+type FuzzerMutator = HavocScheduledMutator<FuzzerMutationsType>;
 type FuzzerState =
     StdState<InMemoryCorpus<BytesInput>, BytesInput, StdRand, InMemoryCorpus<BytesInput>>;
 
@@ -90,6 +120,15 @@ pub struct Fuzzer {
     calibration_has_unstable: bool,
     /// Coverage map indices observed to differ between calibration runs (grows monotonically).
     unstable_entries: HashSet<usize>,
+    /// CmpLog token candidates and their observation counts. Tokens are promoted
+    /// into the mutation dictionary only after reaching `TOKEN_PROMOTION_THRESHOLD`
+    /// observations, filtering out one-off garbled byte sequences from havoc.
+    token_candidates: HashMap<Vec<u8>, usize>,
+    /// Set of tokens already promoted to the mutation dictionary. Checked before
+    /// inserting into `token_candidates` to prevent re-promotion cycles.
+    /// Implicitly bounded by `MAX_DICTIONARY_SIZE` — tokens only enter this set
+    /// via the promotion loop, which stops when the dictionary is full.
+    promoted_tokens: HashSet<Vec<u8>>,
 }
 
 // SAFETY: `Fuzzer` contains `*mut u8` which is `!Send`. napi-rs requires `Send`
@@ -115,6 +154,36 @@ fn set_n_fuzz_entry_for_corpus_id(state: &FuzzerState, id: CorpusId) -> Result<(
         meta.set_n_fuzz_entry(usize::from(id) % N_FUZZ_SIZE);
     }
     Ok(())
+}
+
+/// Extract byte tokens from CmpLog entries for dictionary-based mutations.
+///
+/// Iterates `CmpValues::Bytes` entries and collects both operands, filtering
+/// out empty sequences, all-null byte sequences, and all-0xFF byte sequences.
+/// Non-Bytes entries (U8, U16, U32, U64) are skipped — integer comparisons
+/// already produce a companion `CmpValues::Bytes` entry with decimal string
+/// representations.
+fn extract_tokens_from_cmplog(entries: &[CmpValues]) -> Vec<Vec<u8>> {
+    let mut tokens = Vec::new();
+
+    for entry in entries {
+        if let CmpValues::Bytes((left, right)) = entry {
+            for operand in [left, right] {
+                let bytes = operand.as_slice();
+                // CmplogBytes has a natural 32-byte capacity bound, so no
+                // upper-length filter is needed.
+                if bytes.is_empty() {
+                    continue;
+                }
+                if bytes.iter().all(|&b| b == 0x00) || bytes.iter().all(|&b| b == 0xFF) {
+                    continue;
+                }
+                tokens.push(bytes.to_vec());
+            }
+        }
+    }
+
+    tokens
 }
 
 #[napi]
@@ -163,7 +232,7 @@ impl Fuzzer {
             .map_err(|e| Error::from_reason(format!("Failed to init timeout state: {e}")))?;
 
         let scheduler = ProbabilitySamplingScheduler::new();
-        let mutator = HavocScheduledMutator::new(havoc_mutations());
+        let mutator = HavocScheduledMutator::new(havoc_mutations().merge(tokens_mutations()));
         let i2s_mutator = I2SRandReplace::new();
 
         // Drop the temporary observer - feedback only holds a name-based Handle.
@@ -203,6 +272,8 @@ impl Fuzzer {
             calibration_iterations: 0,
             calibration_has_unstable: false,
             unstable_entries: HashSet::new(),
+            token_candidates: HashMap::new(),
+            promoted_tokens: HashSet::new(),
         })
     }
 
@@ -470,6 +541,55 @@ impl Fuzzer {
 
         // Drain CmpLog accumulator into state metadata for the next I2S pass.
         let cmp_entries = crate::cmplog::drain();
+
+        // Extract byte tokens from CmpLog entries and promote frequent ones into
+        // the mutation dictionary. Each candidate is tracked in `token_candidates`
+        // and only promoted to `Tokens` after being observed
+        // `TOKEN_PROMOTION_THRESHOLD` times. This filters out one-off garbled byte
+        // sequences produced by havoc mutations (which each appear once) while
+        // keeping real comparison constants like `"javascript"` (which appear in
+        // every execution that reaches the comparison).
+        let extracted = extract_tokens_from_cmplog(&cmp_entries);
+        if !extracted.is_empty() {
+            if !self.state.has_metadata::<Tokens>() {
+                self.state.add_metadata(Tokens::default());
+            }
+            let dict_full = self
+                .state
+                .metadata::<Tokens>()
+                .map(|t| t.tokens().len() >= MAX_DICTIONARY_SIZE)
+                .unwrap_or(false);
+            if !dict_full {
+                let mut promoted = Vec::new();
+                for token in &extracted {
+                    if self.promoted_tokens.contains(token) {
+                        continue;
+                    }
+                    let count = if let Some(c) = self.token_candidates.get_mut(token) {
+                        *c += 1;
+                        *c
+                    } else if self.token_candidates.len() < MAX_TOKEN_CANDIDATES {
+                        self.token_candidates.insert(token.clone(), 1);
+                        1
+                    } else {
+                        continue;
+                    };
+                    if count == TOKEN_PROMOTION_THRESHOLD {
+                        promoted.push(token.clone());
+                    }
+                }
+                for token in &promoted {
+                    self.token_candidates.remove(token);
+                    self.promoted_tokens.insert(token.clone());
+                    let tokens = self.state.metadata_mut::<Tokens>().unwrap();
+                    tokens.add_token(token);
+                    if tokens.tokens().len() >= MAX_DICTIONARY_SIZE {
+                        break;
+                    }
+                }
+            }
+        }
+
         self.state
             .metadata_map_mut()
             .insert(CmpValuesMetadata { list: cmp_entries });
@@ -677,6 +797,7 @@ impl Drop for Fuzzer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use libafl::observers::cmp::CmplogBytes;
 
     fn make_coverage_map(size: usize) -> (*mut u8, Vec<u8>) {
         let mut map = vec![0u8; size];
@@ -787,7 +908,7 @@ mod tests {
         let (map_ptr, _map) = make_coverage_map(65536);
         let (mut state, _feedback, _objective) = make_state_and_feedback(map_ptr, 65536);
         let mut scheduler: FuzzerScheduler = ProbabilitySamplingScheduler::new();
-        let mut mutator = HavocScheduledMutator::new(havoc_mutations());
+        let mut mutator = HavocScheduledMutator::new(havoc_mutations().merge(tokens_mutations()));
 
         // Seed with only non-empty entries so the non-empty assertion is sound
         // regardless of which entry the scheduler picks.
@@ -995,7 +1116,7 @@ mod tests {
         let (map_ptr, _map) = make_coverage_map(65536);
         let (mut state, _feedback, _objective) = make_state_and_feedback(map_ptr, 65536);
         let mut scheduler: FuzzerScheduler = ProbabilitySamplingScheduler::new();
-        let mut mutator = HavocScheduledMutator::new(havoc_mutations());
+        let mut mutator = HavocScheduledMutator::new(havoc_mutations().merge(tokens_mutations()));
         let max_input_len: u32 = 128;
 
         // Add a large seed with scheduler metadata.
@@ -1082,6 +1203,266 @@ mod tests {
         assert_eq!(meta.list.len(), 2);
         assert_eq!(meta.list[0], CmpValues::U8((10, 20, false)));
         assert_eq!(meta.list[1], CmpValues::U16((1000, 2000, false)));
+
+        cmplog::disable();
+    }
+
+    // === Token extraction tests ===
+
+    /// Helper to construct a `CmplogBytes` from a byte slice (mirrors cmplog::to_cmplog_bytes).
+    fn make_cmplog_bytes(data: &[u8]) -> CmplogBytes {
+        let len = data.len().min(32) as u8;
+        let mut buf = [0u8; 32];
+        buf[..len as usize].copy_from_slice(&data[..len as usize]);
+        CmplogBytes::from_buf_and_len(buf, len)
+    }
+
+    #[test]
+    fn test_extract_tokens_from_mixed_cmpvalues() {
+        use libafl::observers::cmp::CmpValues;
+
+        let entries = vec![
+            CmpValues::Bytes((make_cmplog_bytes(b"http"), make_cmplog_bytes(b"javascript"))),
+            CmpValues::U8((10, 20, false)),
+            CmpValues::Bytes((make_cmplog_bytes(b"ftp"), make_cmplog_bytes(b"ssh"))),
+            CmpValues::U16((1000, 2000, false)),
+        ];
+
+        let tokens = extract_tokens_from_cmplog(&entries);
+
+        // Should extract both operands from each Bytes entry, skip numeric entries.
+        assert!(tokens.contains(&b"http".to_vec()));
+        assert!(tokens.contains(&b"javascript".to_vec()));
+        assert!(tokens.contains(&b"ftp".to_vec()));
+        assert!(tokens.contains(&b"ssh".to_vec()));
+        assert_eq!(tokens.len(), 4);
+    }
+
+    #[test]
+    fn test_extract_tokens_filters_empty_null_and_0xff() {
+        use libafl::observers::cmp::CmpValues;
+
+        let entries = vec![
+            // Empty left operand — should be skipped.
+            CmpValues::Bytes((make_cmplog_bytes(b""), make_cmplog_bytes(b"valid"))),
+            // All-null operands — both should be skipped.
+            CmpValues::Bytes((
+                make_cmplog_bytes(&[0x00, 0x00, 0x00, 0x00]),
+                make_cmplog_bytes(b"also_valid"),
+            )),
+            // All-0xFF operand — should be skipped.
+            CmpValues::Bytes((
+                make_cmplog_bytes(b"keep_this"),
+                make_cmplog_bytes(&[0xFF, 0xFF]),
+            )),
+            // Mixed-with-nulls — should be kept (not all-null).
+            CmpValues::Bytes((
+                make_cmplog_bytes(&[0x00, 0x41, 0x00]),
+                make_cmplog_bytes(b"another"),
+            )),
+        ];
+
+        let tokens = extract_tokens_from_cmplog(&entries);
+
+        // Kept: "valid", "also_valid", "keep_this", [0x00, 0x41, 0x00], "another"
+        assert!(tokens.contains(&b"valid".to_vec()));
+        assert!(tokens.contains(&b"also_valid".to_vec()));
+        assert!(tokens.contains(&b"keep_this".to_vec()));
+        assert!(tokens.contains(&vec![0x00, 0x41, 0x00]));
+        assert!(tokens.contains(&b"another".to_vec()));
+        assert_eq!(tokens.len(), 5);
+
+        // Filtered: empty, all-null, all-0xFF
+        assert!(!tokens.contains(&vec![]));
+        assert!(!tokens.contains(&vec![0x00, 0x00, 0x00, 0x00]));
+        assert!(!tokens.contains(&vec![0xFF, 0xFF]));
+    }
+
+    #[test]
+    fn test_report_result_populates_tokens_from_cmplog() {
+        use crate::cmplog;
+
+        cmplog::disable();
+        cmplog::drain();
+
+        let mut fuzzer = make_test_fuzzer(256);
+
+        // Add a seed so the fuzzer has something to work with.
+        cmplog::enable();
+        fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+
+        // Push the same CmpLog entries TOKEN_PROMOTION_THRESHOLD times so
+        // the tokens get promoted into the dictionary.
+        for _ in 0..TOKEN_PROMOTION_THRESHOLD {
+            let _input = fuzzer.get_next_input().unwrap();
+            cmplog::push(CmpValues::Bytes((
+                make_cmplog_bytes(b"http"),
+                make_cmplog_bytes(b"javascript"),
+            )));
+            cmplog::push(CmpValues::U16((1000, 2000, false)));
+            fuzzer.report_result(ExitKind::Ok, 50_000.0).unwrap();
+        }
+
+        // Verify Tokens metadata was populated from the Bytes entry.
+        let tokens = fuzzer.state.metadata::<Tokens>().unwrap();
+        let token_list: Vec<&[u8]> = tokens.tokens().iter().map(|t| t.as_slice()).collect();
+        assert!(
+            token_list.contains(&b"http".as_slice()),
+            "should contain 'http'"
+        );
+        assert!(
+            token_list.contains(&b"javascript".as_slice()),
+            "should contain 'javascript'"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_tokens_accumulate_across_report_result_calls() {
+        use crate::cmplog;
+
+        cmplog::disable();
+        cmplog::drain();
+
+        let mut fuzzer = make_test_fuzzer(256);
+        cmplog::enable();
+        fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+
+        // Push two different comparisons TOKEN_PROMOTION_THRESHOLD times each
+        // so both pairs get promoted.
+        for _ in 0..TOKEN_PROMOTION_THRESHOLD {
+            let _input = fuzzer.get_next_input().unwrap();
+            cmplog::push(CmpValues::Bytes((
+                make_cmplog_bytes(b"http"),
+                make_cmplog_bytes(b"javascript"),
+            )));
+            cmplog::push(CmpValues::Bytes((
+                make_cmplog_bytes(b"ftp"),
+                make_cmplog_bytes(b"ssh"),
+            )));
+            fuzzer.report_result(ExitKind::Ok, 50_000.0).unwrap();
+        }
+
+        // All four tokens should be present (accumulated, not replaced).
+        let tokens = fuzzer.state.metadata::<Tokens>().unwrap();
+        let token_list: Vec<&[u8]> = tokens.tokens().iter().map(|t| t.as_slice()).collect();
+        assert!(token_list.contains(&b"http".as_slice()));
+        assert!(token_list.contains(&b"javascript".as_slice()));
+        assert!(token_list.contains(&b"ftp".as_slice()));
+        assert!(token_list.contains(&b"ssh".as_slice()));
+        assert_eq!(token_list.len(), 4);
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_token_candidates_capped_at_max() {
+        use crate::cmplog;
+
+        cmplog::disable();
+        cmplog::drain();
+
+        let mut fuzzer = make_test_fuzzer(256);
+        cmplog::enable();
+        fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+
+        // Push MAX_TOKEN_CANDIDATES + 100 unique single-observation tokens.
+        // Each token is observed only once, so none are promoted.
+        for i in 0..(MAX_TOKEN_CANDIDATES + 100) {
+            let _input = fuzzer.get_next_input().unwrap();
+            let token_bytes = format!("tok_{i:06}");
+            cmplog::push(CmpValues::Bytes((
+                make_cmplog_bytes(token_bytes.as_bytes()),
+                make_cmplog_bytes(b"other"),
+            )));
+            fuzzer.report_result(ExitKind::Ok, 50_000.0).unwrap();
+        }
+
+        assert!(
+            fuzzer.token_candidates.len() <= MAX_TOKEN_CANDIDATES,
+            "token_candidates should be capped at {MAX_TOKEN_CANDIDATES}, got {}",
+            fuzzer.token_candidates.len(),
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_promoted_tokens_not_reinserted_into_candidates() {
+        use crate::cmplog;
+
+        cmplog::disable();
+        cmplog::drain();
+
+        let mut fuzzer = make_test_fuzzer(256);
+        cmplog::enable();
+        fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+
+        // Push a token TOKEN_PROMOTION_THRESHOLD observations to promote it.
+        for _ in 0..TOKEN_PROMOTION_THRESHOLD {
+            let _input = fuzzer.get_next_input().unwrap();
+            cmplog::push(CmpValues::Bytes((
+                make_cmplog_bytes(b"promote_me"),
+                make_cmplog_bytes(b"other_side"),
+            )));
+            fuzzer.report_result(ExitKind::Ok, 50_000.0).unwrap();
+        }
+
+        // The promoted token should be in the dictionary.
+        let tokens = fuzzer.state.metadata::<Tokens>().unwrap();
+        assert!(
+            tokens
+                .tokens()
+                .iter()
+                .any(|t| t.as_slice() == b"promote_me"),
+            "promoted token should be in the dictionary"
+        );
+
+        // The promoted token should be removed from candidates and tracked in promoted_tokens.
+        assert!(
+            !fuzzer
+                .token_candidates
+                .contains_key(b"promote_me".as_slice()),
+            "promoted token should be removed from token_candidates"
+        );
+        assert!(
+            fuzzer.promoted_tokens.contains(b"promote_me".as_slice()),
+            "promoted token should be tracked in promoted_tokens"
+        );
+
+        let dict_len_before = fuzzer.state.metadata::<Tokens>().unwrap().tokens().len();
+
+        // Push the same CmpLog entry again — the token must NOT re-enter candidates.
+        for _ in 0..TOKEN_PROMOTION_THRESHOLD {
+            let _input = fuzzer.get_next_input().unwrap();
+            cmplog::push(CmpValues::Bytes((
+                make_cmplog_bytes(b"promote_me"),
+                make_cmplog_bytes(b"other_side"),
+            )));
+            fuzzer.report_result(ExitKind::Ok, 50_000.0).unwrap();
+        }
+
+        // Token must not re-enter candidates.
+        assert!(
+            !fuzzer
+                .token_candidates
+                .contains_key(b"promote_me".as_slice()),
+            "promoted token should not re-enter token_candidates"
+        );
+
+        // Token must still be in the promoted set.
+        assert!(
+            fuzzer.promoted_tokens.contains(b"promote_me".as_slice()),
+            "promoted token should remain in promoted_tokens"
+        );
+
+        // Dictionary should not have grown (no duplicate promotion).
+        let dict_len_after = fuzzer.state.metadata::<Tokens>().unwrap().tokens().len();
+        assert_eq!(
+            dict_len_before, dict_len_after,
+            "dictionary should not grow from re-observed promoted tokens"
+        );
 
         cmplog::disable();
     }
@@ -1988,7 +2369,7 @@ mod tests {
         timeout_objective.init_state(&mut state).unwrap();
 
         let scheduler = ProbabilitySamplingScheduler::new();
-        let mutator = HavocScheduledMutator::new(havoc_mutations());
+        let mutator = HavocScheduledMutator::new(havoc_mutations().merge(tokens_mutations()));
         let i2s_mutator = I2SRandReplace::new();
 
         drop(temp_observer);
@@ -2021,6 +2402,8 @@ mod tests {
             calibration_iterations: 0,
             calibration_has_unstable: false,
             unstable_entries: HashSet::new(),
+            token_candidates: HashMap::new(),
+            promoted_tokens: HashSet::new(),
         }
     }
 
