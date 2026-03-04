@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import os from "node:os";
 import {
   createCoverageMap,
   Fuzzer,
@@ -6,6 +7,7 @@ import {
   ExitKind,
   IterationResult,
   traceCmp,
+  v8ShimAvailable,
 } from "../index.js";
 
 // Create coverage map.
@@ -389,6 +391,38 @@ console.log("traceCmp tests passed!");
   // Cleanup
   fs.rmSync(tmpDir, { recursive: true, force: true });
   console.log("Watchdog smoke test passed!");
+}
+
+// ===== V8 shim availability =====
+{
+  const isUnix = os.platform() !== "win32";
+  // detect musl: glibc reports a version string, musl does not
+  const isMusl =
+    os.platform() === "linux" &&
+    !process.report?.getReport()?.header?.glibcVersionRuntime;
+  const available = v8ShimAvailable();
+  console.log(
+    `V8 shim available: ${available} (platform=${os.platform()}, musl=${isMusl})`,
+  );
+
+  if (isUnix && !isMusl) {
+    // On glibc Linux and macOS, Node.js exports V8 symbols and dlsym
+    // should resolve them. If this fails, the watchdog silently degrades
+    // to _exit-only mode — this assertion catches that.
+    assert.equal(
+      available,
+      true,
+      "v8ShimAvailable() should be true on glibc Linux and macOS",
+    );
+  } else {
+    // On Windows and musl Linux, V8 symbols are not available via dlsym.
+    assert.equal(
+      available,
+      false,
+      "v8ShimAvailable() should be false on Windows and musl Linux",
+    );
+  }
+  console.log("V8 shim availability test passed!");
 }
 
 // ===== Fuzzer smoke test summary =====

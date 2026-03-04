@@ -584,4 +584,5 @@ module.exports.ExitKind = nativeBinding.ExitKind
 module.exports.installExceptionHandler = nativeBinding.installExceptionHandler
 module.exports.IterationResult = nativeBinding.IterationResult
 module.exports.traceCmp = nativeBinding.traceCmp
+module.exports.v8ShimAvailable = nativeBinding.v8ShimAvailable
 module.exports.version = nativeBinding.version
