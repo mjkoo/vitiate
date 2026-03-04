@@ -93,6 +93,25 @@ importers:
       '@napi-rs/cli':
         specifier: ^3.2.0
         version: 3.5.1(@emnapi/runtime@1.8.1)(@types/node@25.3.0)
+    optionalDependencies:
+      vitiate-napi-darwin-arm64:
+        specifier: workspace:*
+        version: link:npm/darwin-arm64
+      vitiate-napi-darwin-x64:
+        specifier: workspace:*
+        version: link:npm/darwin-x64
+      vitiate-napi-linux-arm64-gnu:
+        specifier: workspace:*
+        version: link:npm/linux-arm64-gnu
+      vitiate-napi-linux-x64-gnu:
+        specifier: workspace:*
+        version: link:npm/linux-x64-gnu
+      vitiate-napi-linux-x64-musl:
+        specifier: workspace:*
+        version: link:npm/linux-x64-musl
+      vitiate-napi-win32-x64-msvc:
+        specifier: workspace:*
+        version: link:npm/win32-x64-msvc
 
   vitiate-napi/npm/darwin-arm64: {}
 

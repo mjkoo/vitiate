@@ -39,11 +39,11 @@
     "@napi-rs/cli": "^3.2.0"
   },
   "optionalDependencies": {
-    "vitiate-napi-win32-x64-msvc": "0.1.0",
-    "vitiate-napi-darwin-x64": "0.1.0",
-    "vitiate-napi-linux-x64-gnu": "0.1.0",
-    "vitiate-napi-linux-x64-musl": "0.1.0",
-    "vitiate-napi-linux-arm64-gnu": "0.1.0",
-    "vitiate-napi-darwin-arm64": "0.1.0"
+    "vitiate-napi-win32-x64-msvc": "workspace:*",
+    "vitiate-napi-darwin-x64": "workspace:*",
+    "vitiate-napi-linux-x64-gnu": "workspace:*",
+    "vitiate-napi-linux-x64-musl": "workspace:*",
+    "vitiate-napi-linux-arm64-gnu": "workspace:*",
+    "vitiate-napi-darwin-arm64": "workspace:*"
   }
 }
