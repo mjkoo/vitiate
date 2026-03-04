@@ -20,9 +20,10 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const EXAMPLE_DIR = path.resolve(
-  path.dirname(new URL(import.meta.url).pathname),
+  path.dirname(fileURLToPath(import.meta.url)),
   "../../examples/url-parser",
 );
 
@@ -90,6 +91,9 @@ describe("fuzz pipeline: discovers planted bugs end-to-end", () => {
           cwd: EXAMPLE_DIR,
           timeout: 300_000,
           stdio: ["ignore", "inherit", "inherit"],
+          // On Windows, spawn can't resolve .cmd shims (e.g. pnpm.cmd)
+          // without a shell. Harmless on Unix.
+          shell: true,
           env: {
             ...process.env,
             VITIATE_FUZZ: "1",
