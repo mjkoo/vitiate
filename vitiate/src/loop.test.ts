@@ -405,6 +405,66 @@ describe("fuzz loop", () => {
     expect(callCount).toBeGreaterThan(50);
   });
 
+  it("collects coverage from async target continuations and runs calibration", async () => {
+    await setupFuzzingMode();
+    let callCount = 0;
+    const covMap = globalThis.__vitiate_cov as Buffer;
+    const target = async (data: Buffer): Promise<void> => {
+      callCount++;
+      await Promise.resolve();
+      if (data.length > 0) {
+        covMap[data[0]!] = 1;
+      }
+    };
+
+    const result = await runFuzzLoop(
+      target,
+      tmpDir,
+      "async-cov",
+      "test.fuzz.ts",
+      {
+        runs: 50,
+      },
+    );
+
+    expect(result.crashed).toBe(false);
+    expect(result.totalExecs).toBe(50);
+    // Calibration re-runs the target 3 additional times per interesting input.
+    // Coverage written after `await` must be detected as interesting for this
+    // to hold — if async coverage collection were broken, callCount === 50.
+    expect(callCount).toBeGreaterThan(50);
+  });
+
+  it("collects coverage from async target with timeout configured", async () => {
+    await setupFuzzingMode();
+    let callCount = 0;
+    const covMap = globalThis.__vitiate_cov as Buffer;
+    const target = async (data: Buffer): Promise<void> => {
+      callCount++;
+      await Promise.resolve();
+      if (data.length > 0) {
+        covMap[data[0]!] = 1;
+      }
+    };
+
+    const result = await runFuzzLoop(
+      target,
+      tmpDir,
+      "async-cov-timeout",
+      "test.fuzz.ts",
+      {
+        runs: 50,
+        timeoutMs: 5000,
+      },
+    );
+
+    expect(result.crashed).toBe(false);
+    expect(result.totalExecs).toBe(50);
+    // Same calibration assertion as the non-timeout variant, but exercises the
+    // watchdog arm/disarm path during both the main loop and calibration.
+    expect(callCount).toBeGreaterThan(50);
+  });
+
   it("maxTotalTimeMs=0 means unlimited total time (runs until crash or runs limit)", async () => {
     await setupFuzzingMode();
     const target = (data: Buffer): void => {

@@ -10,7 +10,11 @@ export default defineConfig({
     }),
   ],
   test: {
-    include: ["test/url-parser.fuzz.ts", "test/url-scheme.fuzz.ts"],
-    testNamePattern: "^(parse-url|validate-scheme)$",
+    include: [
+      "test/url-parser.fuzz.ts",
+      "test/url-parser-async.fuzz.ts",
+      "test/url-scheme.fuzz.ts",
+    ],
+    testNamePattern: "^(parse-url|parse-url-async|validate-scheme)$",
   },
 });

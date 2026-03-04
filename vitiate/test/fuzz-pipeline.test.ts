@@ -5,8 +5,9 @@
  * vitiatePlugin() → SWC instrumentation → Vitest runner → supervisor →
  * fuzz loop → crash discovery → artifact writing.
  *
- * Tests both fuzz targets:
+ * Tests all three fuzz targets:
  * - parse-url: planted port-0 bug found via I2SRandReplace (integer comparison)
+ * - parse-url-async: same planted bug discovered through an async fuzz target
  * - validate-scheme: planted "javascript" scheme bug found via CmpLog token
  *   injection (string comparison)
  *
@@ -35,6 +36,14 @@ const PARSE_URL_ARTIFACT_DIR = path.join(
   "8fcacc40-parse-url",
 );
 
+const PARSE_URL_ASYNC_ARTIFACT_DIR = path.join(
+  EXAMPLE_DIR,
+  "test",
+  "testdata",
+  "fuzz",
+  "2ed41517-parse-url-async",
+);
+
 const VALIDATE_SCHEME_ARTIFACT_DIR = path.join(
   EXAMPLE_DIR,
   "test",
@@ -55,7 +64,11 @@ function findArtifacts(artifactDir: string): string[] {
 
 afterAll(() => {
   // Clean up crash artifacts and corpus cache to avoid polluting the git tree
-  for (const dir of [PARSE_URL_ARTIFACT_DIR, VALIDATE_SCHEME_ARTIFACT_DIR]) {
+  for (const dir of [
+    PARSE_URL_ARTIFACT_DIR,
+    PARSE_URL_ASYNC_ARTIFACT_DIR,
+    VALIDATE_SCHEME_ARTIFACT_DIR,
+  ]) {
     for (const artifact of findArtifacts(dir)) {
       rmSync(artifact, { force: true });
     }
@@ -66,8 +79,8 @@ afterAll(() => {
 describe("fuzz pipeline: discovers planted bugs end-to-end", () => {
   let exitCode = 0;
 
-  // Each target runs for up to 60s. Two targets run sequentially, so the
-  // fuzz run can take up to ~120s plus startup overhead.
+  // Each target runs for up to 60s. Three targets run sequentially, so the
+  // fuzz run can take up to ~180s plus startup overhead.
   //
   // Uses async spawn instead of execSync so the outer vitest worker's event
   // loop stays unblocked — this prevents birpc RPC timeouts (e.g.
@@ -77,7 +90,11 @@ describe("fuzz pipeline: discovers planted bugs end-to-end", () => {
     // Start from a clean state: remove cached corpus and any leftover crash
     // artifacts so results are not influenced by previous runs.
     rmSync(CORPUS_CACHE_DIR, { recursive: true, force: true });
-    for (const dir of [PARSE_URL_ARTIFACT_DIR, VALIDATE_SCHEME_ARTIFACT_DIR]) {
+    for (const dir of [
+      PARSE_URL_ARTIFACT_DIR,
+      PARSE_URL_ASYNC_ARTIFACT_DIR,
+      VALIDATE_SCHEME_ARTIFACT_DIR,
+    ]) {
       for (const artifact of findArtifacts(dir)) {
         rmSync(artifact, { force: true });
       }
@@ -111,6 +128,15 @@ describe("fuzz pipeline: discovers planted bugs end-to-end", () => {
 
     // A crash artifact should have been written
     const artifacts = findArtifacts(PARSE_URL_ARTIFACT_DIR);
+    expect(artifacts.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("finds the parse-url-async planted bug via async fuzz target", () => {
+    // The fuzz run should find at least one planted bug and exit non-zero
+    expect(exitCode).toBe(1);
+
+    // A crash artifact should have been written
+    const artifacts = findArtifacts(PARSE_URL_ASYNC_ARTIFACT_DIR);
     expect(artifacts.length).toBeGreaterThanOrEqual(1);
   });
 
