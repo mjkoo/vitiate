@@ -1,48 +1,10 @@
-## Purpose
+## RENAMED Requirements
 
-The watchdog subsystem provides timeout enforcement for fuzz targets. It manages a background Rust thread that can interrupt long-running JavaScript execution via V8's `TerminateExecution` API, with a fallback to `_exit()` for cases where V8 interruption is unavailable or ineffective.
+### Requirement: V8 TerminateExecution as primary timeout (Unix)
+FROM: V8 TerminateExecution as primary timeout (Unix)
+TO: V8 TerminateExecution as primary timeout
 
-## Requirements
-
-### Requirement: Watchdog thread lifecycle
-
-The system SHALL provide a `Watchdog` NAPI class that manages a background Rust thread for timeout enforcement. The thread SHALL be spawned once at construction and live for the `Watchdog` instance's lifetime. When not armed, the thread SHALL park on a condvar and consume zero CPU.
-
-#### Scenario: Watchdog construction
-
-- **WHEN** a `Watchdog` is constructed
-- **THEN** a background thread is spawned
-- **AND** the V8 isolate pointer is cached for later use
-- **AND** the thread parks immediately (no timeout active)
-
-#### Scenario: Watchdog is garbage collected
-
-- **WHEN** the `Watchdog` instance is dropped
-- **THEN** the background thread is signaled to exit and joined
-- **AND** no resources are leaked
-
-### Requirement: Arm and disarm
-
-The `Watchdog` SHALL expose `arm(timeoutMs: number)` and `disarm()` methods. `arm` sets a deadline and wakes the watchdog thread. `disarm` clears the deadline. Both operations SHALL complete in under 100 nanoseconds (condvar signal, no syscalls in the hot path beyond futex wake).
-
-#### Scenario: Arm before target execution
-
-- **WHEN** `arm(5000)` is called
-- **THEN** the watchdog thread wakes and begins timing the 5000ms deadline
-- **AND** the method returns immediately without blocking
-
-#### Scenario: Disarm after normal execution
-
-- **WHEN** `disarm()` is called before the deadline expires
-- **THEN** the watchdog thread cancels the pending deadline and parks
-- **AND** no termination action is taken
-
-#### Scenario: Disarm after termination fired
-
-- **WHEN** the watchdog fired `TerminateExecution` and `disarm()` is subsequently called
-- **THEN** `CancelTerminateExecution()` is called to clear V8's pending termination flag
-- **AND** the watchdog thread parks
-- **AND** subsequent JavaScript execution proceeds normally
+## MODIFIED Requirements
 
 ### Requirement: V8 TerminateExecution as primary timeout
 
@@ -117,6 +79,8 @@ When V8 termination is available, the `_exit` deadline SHALL be 5x the configure
 - **AND** writes it to disk with `fsync` before calling `_exit(77)`
 - **AND** the timeout artifact is recoverable after process termination
 
+## ADDED Requirements
+
 ### Requirement: Rust fallback path V8 termination safety
 
 When the C++ shim's `vitiate_run_target` is unavailable (returns 0, indicating the shim is not initialized) and the Rust fallback path handles target execution, the fallback path SHALL read the watchdog's `fired` flag BEFORE calling `disarm()`, and SHALL use the saved value for exit kind classification. When the saved `fired` value is true, the fallback path SHALL call `CancelTerminateExecution()` before making any NAPI calls to build the result object.
@@ -145,36 +109,3 @@ This addresses two interacting bugs in the current fallback path:
 - **AND** the fallback path clears the pending NAPI exception
 - **AND** the fallback path returns `exitKind=1` (crash) with the exception as the error
 - **AND** `CancelTerminateExecution()` is NOT called
-
-### Requirement: Input pre-stash
-
-The `Watchdog` SHALL read the current input from the cross-process shmem region (shared-memory-stash capability) instead of from the in-process `InputStash`. The shmem region is written by the fuzz loop before each iteration and is readable by both the watchdog thread (same process) and the parent process (cross-process).
-
-The watchdog SHALL use atomic operations to read `generation` before and after copying the input data, verifying consistency (the fuzz loop did not start writing a new input mid-read).
-
-#### Scenario: Input stashed before execution
-
-- **WHEN** the fuzz loop calls `stashInput(input)` before executing the target
-- **THEN** the input bytes and length are copied to the shmem region
-- **AND** the generation counter is incremented atomically
-
-#### Scenario: Watchdog reads stashed input from shmem
-
-- **WHEN** the watchdog needs to write a timeout artifact (during `_exit` path)
-- **THEN** it reads the input length and bytes from the shmem region
-- **AND** the read is consistent (generation counter matches before and after read)
-
-### Requirement: V8 termination exception identity
-
-The fuzz loop MUST be able to distinguish a V8 termination exception (from `TerminateExecution`) from a regular exception thrown by the fuzz target. The watchdog SHALL set an atomic flag when it fires `TerminateExecution`. The fuzz loop SHALL check this flag when classifying caught exceptions to determine `ExitKind.Timeout` vs `ExitKind.Crash`.
-
-#### Scenario: Termination exception classified as timeout
-
-- **WHEN** the watchdog fires `TerminateExecution` and the fuzz loop catches the resulting exception
-- **THEN** the exception is classified as `ExitKind.Timeout` (not `ExitKind.Crash`)
-
-#### Scenario: Regular exception not misclassified
-
-- **WHEN** a fuzz target throws a normal `Error` before the watchdog deadline expires
-- **THEN** the exception is classified as `ExitKind.Crash`
-- **AND** the watchdog's "fired" flag is not set

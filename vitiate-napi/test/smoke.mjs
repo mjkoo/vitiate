@@ -361,10 +361,9 @@ console.log("traceCmp tests passed!");
   }
 
   // Test runTarget with synchronous timeout (V8 TerminateExecution)
-  // On Windows, V8 TerminateExecution is not available — the watchdog's only
-  // recourse is ExitProcess, which kills the process. This test can only run
-  // on Unix where the C++ shim intercepts the termination and returns cleanly.
-  if (process.platform !== "win32") {
+  // V8 shim is available on all platforms (Unix via dlsym, Windows via
+  // GetProcAddress), so the infinite-loop timeout test runs everywhere.
+  {
     const wd5 = new Watchdog(tmpDir);
     const target = (_data) => {
       for (;;) {
@@ -382,10 +381,6 @@ console.log("traceCmp tests passed!");
       `runTarget timeout error should mention timed out, got: ${result.error.message}`,
     );
     wd5.shutdown();
-  } else {
-    console.log(
-      "  (skipped infinite-loop timeout test on Windows — no V8 shim)",
-    );
   }
 
   // Cleanup
@@ -395,7 +390,6 @@ console.log("traceCmp tests passed!");
 
 // ===== V8 shim availability =====
 {
-  const isUnix = os.platform() !== "win32";
   // detect musl: glibc reports a version string, musl does not
   const isMusl =
     os.platform() === "linux" &&
@@ -405,7 +399,14 @@ console.log("traceCmp tests passed!");
     `V8 shim available: ${available} (platform=${os.platform()}, musl=${isMusl})`,
   );
 
-  if (isUnix && !isMusl) {
+  if (os.platform() === "win32") {
+    // On Windows, V8 symbols are resolved via GetProcAddress from node.exe.
+    assert.equal(
+      available,
+      true,
+      "v8ShimAvailable() should be true on Windows",
+    );
+  } else if (!isMusl) {
     // On glibc Linux and macOS, Node.js exports V8 symbols and dlsym
     // should resolve them. If this fails, the watchdog silently degrades
     // to _exit-only mode — this assertion catches that.
@@ -414,14 +415,10 @@ console.log("traceCmp tests passed!");
       true,
       "v8ShimAvailable() should be true on glibc Linux and macOS",
     );
-  } else {
-    // On Windows and musl Linux, V8 symbols are not available via dlsym.
-    assert.equal(
-      available,
-      false,
-      "v8ShimAvailable() should be false on Windows and musl Linux",
-    );
   }
+  // On musl Linux, V8 symbol availability depends on how Node.js was built.
+  // Some musl builds (e.g. node:22-alpine) export V8 symbols; others don't.
+  // Either value is acceptable — just log it.
   console.log("V8 shim availability test passed!");
 }
 

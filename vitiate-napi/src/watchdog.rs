@@ -2,7 +2,7 @@
 //!
 //! Spawns a background thread that parks on a condvar when idle. When armed,
 //! it waits until the deadline expires or is disarmed. On expiry, it calls
-//! `v8::TerminateExecution` (Unix) to interrupt JS, and falls back to `_exit`
+//! `v8::TerminateExecution` to interrupt JS, and falls back to `_exit`
 //! with input capture if V8 termination is unavailable or ineffective.
 
 use std::fs;
@@ -49,7 +49,7 @@ struct WatchdogShared {
     /// Whether V8 TerminateExecution is available.
     v8_available: bool,
     /// The configured timeout multiplier for the `_exit` fallback.
-    /// On Unix: 5x the timeout. On Windows: 1x.
+    /// When V8 termination is available: 5x. When unavailable: 1x.
     exit_timeout_multiplier: u32,
 }
 
@@ -113,8 +113,8 @@ fn handle_timeout(shared: &WatchdogShared) {
         v8_shim::v8_terminate();
 
         // Wait for the _exit fallback deadline: (multiplier - 1) * timeout_ms
-        // after TerminateExecution. On Unix this gives 4x more time for the
-        // termination exception to propagate.
+        // after TerminateExecution. This gives 4x more time for the termination
+        // exception to propagate when V8 termination is available.
         let timeout_ms = shared.timeout_ms.load(Ordering::Acquire);
         let exit_wait = Duration::from_millis(timeout_ms)
             .saturating_mul(shared.exit_timeout_multiplier.saturating_sub(1));
@@ -215,14 +215,14 @@ impl Watchdog {
         // Watchdog::new(). OnceLock guarantees exactly one initialization.
         static V8_INIT_RESULT: OnceLock<bool> = OnceLock::new();
         let v8_ok = *V8_INIT_RESULT.get_or_init(v8_shim::v8_init);
-        if !v8_ok && v8_shim::v8_terminate_available() {
+        if !v8_ok {
             eprintln!(
                 "vitiate: warning: V8 isolate not available, \
                  watchdog will use _exit fallback only"
             );
         }
 
-        let exit_multiplier = if cfg!(unix) { 5 } else { 1 };
+        let exit_multiplier = if v8_ok { 5 } else { 1 };
         let shmem_view = shmem.map(|s| s.view());
 
         let shared = Arc::new(WatchdogShared {
@@ -364,8 +364,8 @@ impl Watchdog {
             return Ok(Object::from_raw(raw_env, result.value));
         }
 
-        // Fallback path: no V8 termination handling (cargo test / non-Unix).
-        // Just call the function and treat any exception as a crash.
+        // Fallback path: C++ shim not initialized (cargo test, symbol resolution
+        // failed). Call the function via NAPI and handle exceptions manually.
         let mut result_value: napi::sys::napi_value = std::ptr::null_mut();
         let mut global: napi::sys::napi_value = std::ptr::null_mut();
         let status = unsafe { napi::sys::napi_get_global(raw_env, &mut global) };
@@ -387,6 +387,25 @@ impl Watchdog {
             )
         };
 
+        // Read fired BEFORE disarm() resets it. disarm() atomically swaps
+        // fired to false, so reading after disarm() always sees false.
+        //
+        // Note: in practice, `timed_out` is always false here. This fallback
+        // path only runs when the C++ shim isn't initialized (v8_available is
+        // false), and without V8 termination the watchdog calls _exit() on
+        // timeout — the process is dead before we reach this point. The timeout
+        // handling below exists for defensive consistency with the C++ shim path.
+        let timed_out = self.shared.fired.load(Ordering::Acquire);
+
+        // If V8 termination fired, cancel it before any NAPI calls to clear
+        // V8's internal termination flag. disarm() calls cancel again —
+        // idempotent, harmless.
+        if timed_out {
+            v8_shim::v8_cancel_terminate();
+        }
+
+        // Stop the watchdog timer to prevent _exit from firing while we
+        // build the result object.
         self.disarm();
 
         let mut raw_obj: napi::sys::napi_value = std::ptr::null_mut();
@@ -407,8 +426,37 @@ impl Watchdog {
             let mut exception: napi::sys::napi_value = std::ptr::null_mut();
             let exc_status =
                 unsafe { napi::sys::napi_get_and_clear_last_exception(raw_env, &mut exception) };
-            if self.shared.fired.load(Ordering::Acquire) {
+            if timed_out {
                 obj.set("exitKind", 2u32)?;
+
+                // Create a timeout error for consistency with the C++ shim path.
+                // Best-effort — exitKind is already set for classification.
+                let msg = "fuzz target timed out";
+                let mut js_msg: napi::sys::napi_value = std::ptr::null_mut();
+                let msg_status = unsafe {
+                    napi::sys::napi_create_string_utf8(
+                        raw_env,
+                        msg.as_ptr().cast(),
+                        msg.len() as isize,
+                        &mut js_msg,
+                    )
+                };
+                if exc_status == napi::sys::Status::napi_ok
+                    && msg_status == napi::sys::Status::napi_ok
+                {
+                    let mut js_error: napi::sys::napi_value = std::ptr::null_mut();
+                    let err_status = unsafe {
+                        napi::sys::napi_create_error(
+                            raw_env,
+                            std::ptr::null_mut(),
+                            js_msg,
+                            &mut js_error,
+                        )
+                    };
+                    if err_status == napi::sys::Status::napi_ok {
+                        obj.set("error", js_error)?;
+                    }
+                }
             } else {
                 obj.set("exitKind", 1u32)?;
                 if exc_status == napi::sys::Status::napi_ok {

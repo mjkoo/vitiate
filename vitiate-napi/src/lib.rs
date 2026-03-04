@@ -17,11 +17,11 @@ pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
-/// Returns `true` if the V8 C++ shim resolved all required symbols via `dlsym`.
+/// Returns `true` if the V8 C++ shim resolved all required symbols at runtime.
 ///
-/// Under Node.js on platforms where V8 symbols are visible (glibc Linux, macOS),
-/// this should return `true`. Returns `false` under `cargo test`, on Windows,
-/// or on musl Linux where Node.js may not export V8 symbols.
+/// Under Node.js on platforms where V8 symbols are visible (glibc Linux, macOS,
+/// Windows), this should return `true`. Returns `false` under `cargo test` or
+/// on platforms where V8 symbols are not in the dynamic symbol table.
 #[napi]
 pub fn v8_shim_available() -> bool {
     v8_shim::v8_init()

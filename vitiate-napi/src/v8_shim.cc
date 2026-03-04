@@ -1,29 +1,32 @@
 // V8 shim and NAPI target runner for vitiate watchdog timeout enforcement.
 //
-// Uses dlsym to locate V8 and NAPI symbols at runtime from the Node.js host
-// binary, avoiding link-time dependencies. The symbols resolve when loaded by
-// Node.js; in test binaries without V8/NAPI, they're not found and the shim
-// functions return 0 (failure), falling back gracefully.
+// Resolves V8 and NAPI symbols at runtime from the Node.js host binary,
+// avoiding link-time dependencies. On Unix, uses dlsym(RTLD_DEFAULT, ...) with
+// Itanium ABI mangled names. On Windows, uses GetProcAddress(GetModuleHandle(NULL), ...)
+// with MSVC x64 mangled names for V8 symbols and plain C names for NAPI symbols.
 //
-// NAPI symbols are also resolved via dlsym (rather than linked directly) so
+// The symbols resolve when loaded by Node.js; in test binaries without
+// V8/NAPI, they're not found and the shim functions return 0 (failure),
+// falling back gracefully.
+//
+// NAPI symbols are also resolved at runtime (rather than linked directly) so
 // that the object file has no external symbol references. This keeps
 // `cargo test` working — the .node shared library resolves undefined symbols
 // from the Node.js host, but cargo test binaries can't.
 //
-// Only compiled on Unix targets (Linux, macOS) where V8 C++ symbols are
-// visible to dlopen'd shared libraries.
-//
-// Platform limitation: dlsym(RTLD_DEFAULT, ...) requires V8 symbols to be
-// exported from the host binary's dynamic symbol table. On musl-based or
-// statically-linked Node.js builds, symbols may not be visible. In that case,
-// vitiate_v8_init() returns 0 and the watchdog falls back to _exit-only mode
-// with no diagnostic beyond the stderr warning in Watchdog::new.
+// On statically-linked Node.js builds, symbols may not be visible. In that
+// case, vitiate_v8_init() returns 0 and the watchdog falls back to _exit-only
+// mode with no diagnostic beyond the stderr warning in Watchdog::new.
 
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <dlfcn.h>
+#endif
 
 // --- Forward declarations ---
 
@@ -128,20 +131,44 @@ static vitiate_napi_status set_prop_value(napi_env env, napi_value obj, const ch
     return fn_napi_set_property(env, obj, key_val, val);
 }
 
+// Platform-specific symbol resolution.
+// On Unix: dlsym(RTLD_DEFAULT, ...) looks up symbols in the host binary.
+// On Windows: GetProcAddress(GetModuleHandle(NULL), ...) does the same.
+static void* resolve_symbol(const char* name) {
+#ifdef _WIN32
+    return reinterpret_cast<void*>(
+        GetProcAddress(GetModuleHandle(NULL), name));
+#else
+    return dlsym(RTLD_DEFAULT, name);
+#endif
+}
+
 extern "C" {
 
 // Cache the current V8 isolate pointer and resolve V8 + NAPI symbol addresses.
 // Must be called from the main thread during initialization.
 // Returns 1 on success, 0 if any symbols are unavailable.
 int vitiate_v8_init() {
-    // Itanium ABI mangled names for v8::Isolate methods.
+    // V8 symbol names differ by platform due to C++ name mangling.
+    // Itanium ABI (Unix) and MSVC (Windows x64) have different schemes.
     // These have been stable since V8 6.x / Node 10.
+#ifdef _WIN32
+    // MSVC x64 mangled names for v8::Isolate methods.
     fn_get_current = reinterpret_cast<GetCurrentFn>(
-        dlsym(RTLD_DEFAULT, "_ZN2v87Isolate10GetCurrentEv"));
+        resolve_symbol("?GetCurrent@Isolate@v8@@SAPEAV12@XZ"));
     fn_terminate = reinterpret_cast<MemberFn>(
-        dlsym(RTLD_DEFAULT, "_ZN2v87Isolate18TerminateExecutionEv"));
+        resolve_symbol("?TerminateExecution@Isolate@v8@@QEAAXXZ"));
     fn_cancel_terminate = reinterpret_cast<MemberFn>(
-        dlsym(RTLD_DEFAULT, "_ZN2v87Isolate24CancelTerminateExecutionEv"));
+        resolve_symbol("?CancelTerminateExecution@Isolate@v8@@QEAAXXZ"));
+#else
+    // Itanium ABI mangled names for v8::Isolate methods.
+    fn_get_current = reinterpret_cast<GetCurrentFn>(
+        resolve_symbol("_ZN2v87Isolate10GetCurrentEv"));
+    fn_terminate = reinterpret_cast<MemberFn>(
+        resolve_symbol("_ZN2v87Isolate18TerminateExecutionEv"));
+    fn_cancel_terminate = reinterpret_cast<MemberFn>(
+        resolve_symbol("_ZN2v87Isolate24CancelTerminateExecutionEv"));
+#endif
 
     if (!fn_get_current || !fn_terminate || !fn_cancel_terminate) {
         fn_get_current = nullptr;
@@ -158,21 +185,21 @@ int vitiate_v8_init() {
 
     // Resolve NAPI symbols (plain C names, no mangling)
     fn_napi_get_global = reinterpret_cast<NapiGetGlobalFn>(
-        dlsym(RTLD_DEFAULT, "napi_get_global"));
+        resolve_symbol("napi_get_global"));
     fn_napi_call_function = reinterpret_cast<NapiCallFunctionFn>(
-        dlsym(RTLD_DEFAULT, "napi_call_function"));
+        resolve_symbol("napi_call_function"));
     fn_napi_create_object = reinterpret_cast<NapiCreateObjectFn>(
-        dlsym(RTLD_DEFAULT, "napi_create_object"));
+        resolve_symbol("napi_create_object"));
     fn_napi_create_string_utf8 = reinterpret_cast<NapiCreateStringUtf8Fn>(
-        dlsym(RTLD_DEFAULT, "napi_create_string_utf8"));
+        resolve_symbol("napi_create_string_utf8"));
     fn_napi_create_uint32 = reinterpret_cast<NapiCreateUint32Fn>(
-        dlsym(RTLD_DEFAULT, "napi_create_uint32"));
+        resolve_symbol("napi_create_uint32"));
     fn_napi_set_property = reinterpret_cast<NapiSetPropertyFn>(
-        dlsym(RTLD_DEFAULT, "napi_set_property"));
+        resolve_symbol("napi_set_property"));
     fn_napi_get_and_clear_last_exception = reinterpret_cast<NapiGetAndClearLastExceptionFn>(
-        dlsym(RTLD_DEFAULT, "napi_get_and_clear_last_exception"));
+        resolve_symbol("napi_get_and_clear_last_exception"));
     fn_napi_create_error = reinterpret_cast<NapiCreateErrorFn>(
-        dlsym(RTLD_DEFAULT, "napi_create_error"));
+        resolve_symbol("napi_create_error"));
 
     if (!fn_napi_get_global || !fn_napi_call_function ||
         !fn_napi_create_object || !fn_napi_create_string_utf8 ||
