@@ -17,7 +17,7 @@
  * (seeds only).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { execSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import path from "node:path";
 
@@ -67,7 +67,12 @@ describe("fuzz pipeline: discovers planted bugs end-to-end", () => {
 
   // Each target runs for up to 60s. Two targets run sequentially, so the
   // fuzz run can take up to ~120s plus startup overhead.
-  beforeAll(() => {
+  //
+  // Uses async spawn instead of execSync so the outer vitest worker's event
+  // loop stays unblocked — this prevents birpc RPC timeouts (e.g.
+  // "Timeout calling onTaskUpdate") that occur when execSync blocks for
+  // longer than birpc's 60-second default timeout.
+  beforeAll(async () => {
     // Start from a clean state: remove cached corpus and any leftover crash
     // artifacts so results are not influenced by previous runs.
     rmSync(CORPUS_CACHE_DIR, { recursive: true, force: true });
@@ -77,30 +82,23 @@ describe("fuzz pipeline: discovers planted bugs end-to-end", () => {
       }
     }
 
-    try {
-      execSync("pnpm exec vitest run --config vitest.fuzz-pipeline.config.ts", {
-        cwd: EXAMPLE_DIR,
-        timeout: 300_000,
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          VITIATE_FUZZ: "1",
+    exitCode = await new Promise<number>((resolve, reject) => {
+      const child = spawn(
+        "pnpm",
+        ["exec", "vitest", "run", "--config", "vitest.fuzz-pipeline.config.ts"],
+        {
+          cwd: EXAMPLE_DIR,
+          timeout: 300_000,
+          stdio: ["ignore", "inherit", "inherit"],
+          env: {
+            ...process.env,
+            VITIATE_FUZZ: "1",
+          },
         },
-      });
-    } catch (e: unknown) {
-      // execSync throws on non-zero exit code — that's expected when a
-      // crash is found (vitest exits 1).
-      if (
-        typeof e === "object" &&
-        e !== null &&
-        "status" in e &&
-        typeof (e as { status: unknown }).status === "number"
-      ) {
-        exitCode = (e as { status: number }).status;
-      } else {
-        throw e;
-      }
-    }
+      );
+      child.on("close", (code) => resolve(code ?? 1));
+      child.on("error", reject);
+    });
   }, 300_000);
 
   it("finds the parse-url planted bug via instrumented fuzz run", () => {

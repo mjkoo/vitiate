@@ -290,14 +290,14 @@ describe("corpus", () => {
       delete process.env["VITIATE_CACHE_DIR"];
       process.env["VITIATE_PROJECT_ROOT"] = "/home/user/project";
       const dir = getCacheDir();
-      expect(dir).toBe("/home/user/project/.vitiate-corpus");
+      expect(dir).toBe(path.resolve("/home/user/project", ".vitiate-corpus"));
     });
 
     it("resolves relative VITIATE_CACHE_DIR against project root", () => {
       process.env["VITIATE_CACHE_DIR"] = ".my-corpus";
       process.env["VITIATE_PROJECT_ROOT"] = "/home/user/project";
       const dir = getCacheDir();
-      expect(dir).toBe("/home/user/project/.my-corpus");
+      expect(dir).toBe(path.resolve("/home/user/project", ".my-corpus"));
     });
 
     it("returns absolute VITIATE_CACHE_DIR as-is", () => {

@@ -86,7 +86,9 @@ describe("plugin", () => {
       saveAndClearEnv();
       const plugin = vitiatePlugin();
       callConfig(plugin, { root: "/my/project" });
-      expect(process.env["VITIATE_PROJECT_ROOT"]).toBe("/my/project");
+      expect(process.env["VITIATE_PROJECT_ROOT"]).toBe(
+        path.resolve("/my/project"),
+      );
     });
 
     it("defaults project root to cwd when config.root is not set", () => {

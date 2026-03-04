@@ -5,12 +5,13 @@ import { describe, it, expect, afterEach } from "vitest";
 import { execSync } from "node:child_process";
 import { existsSync, rmSync, mkdirSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { initGlobals } from "../src/globals.js";
 import { loadSeedCorpus, writeArtifact } from "../src/corpus.js";
 import { parseCommand } from "./parser-target.js";
 
-const E2E_DIR = path.dirname(new URL(import.meta.url).pathname);
+const E2E_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 describe("e2e: regression mode with seeded corpus", () => {
   it("runs all seed corpus entries without crashing", () => {
@@ -80,7 +81,7 @@ describe("e2e: fuzzing mode discovers planted bug", () => {
 describe("e2e: instrumented child process", () => {
   it("runs the instrumented vitest config and all tests pass", () => {
     const vitiatePkg = path.resolve(
-      path.dirname(new URL(import.meta.url).pathname),
+      path.dirname(fileURLToPath(import.meta.url)),
       "..",
     );
     // Run the instrumented test suite as a child process
