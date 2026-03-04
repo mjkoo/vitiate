@@ -113,8 +113,8 @@ jobs:
       - name: Build musl binary
         run: cd vitiate-napi && pnpm exec napi build --platform --release --target x86_64-unknown-linux-musl --cross-compile
 
-  check-windows:
-    name: Check (Windows)
+  test-windows:
+    name: Test (Windows)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -123,6 +123,7 @@ jobs:
         with:
           toolchain: "1.89"
           components: clippy
+          targets: wasm32-wasip1
 
       - uses: Swatinem/rust-cache@v2
 
@@ -131,3 +132,22 @@ jobs:
 
       - name: Cargo test
         run: cargo test --workspace
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm run build
+
+      - name: JS test
+        run: pnpm exec turbo run test
+
+      - name: E2E fuzz pipeline
+        run: pnpm run test:e2e
+        timeout-minutes: 2

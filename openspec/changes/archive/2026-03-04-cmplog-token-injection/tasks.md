@@ -23,5 +23,5 @@
 
 - [x] 4.1 Run full test suite (`pnpm test`) — no regressions
 - [x] 4.2 Run lints and checks (clippy, eslint, prettier, cargo fmt, cargo deny)
-- [ ] 4.3 Verify fuzzer finds validate-scheme planted bug — BLOCKED: fuzzer runs 2.9M execs in 60s but only discovers 5 edges and never constructs "javascript://". Token injection alone is insufficient; needs investigation.
-- [ ] 4.4 Run fuzz-pipeline e2e test (`pnpm test:e2e`) — BLOCKED by 4.3
+- [x] 4.3 Verify fuzzer finds validate-scheme planted bug — found "javascript" scheme crash in ~28.5K execs (0.6s)
+- [x] 4.4 Run fuzz-pipeline e2e test (`pnpm test:e2e`) — both fuzz targets pass

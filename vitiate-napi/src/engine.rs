@@ -8,21 +8,22 @@ use libafl::feedbacks::map::MapFeedbackMetadata;
 use libafl::feedbacks::{
     CrashFeedback, Feedback, MaxMapFeedback, StateInitializer, TimeoutFeedback,
 };
-use libafl::inputs::BytesInput;
+use libafl::inputs::{BytesInput, HasMutatorBytes, ResizableMutator};
 use libafl::mutators::token_mutations::{I2SRandReplace, TokenInsert, TokenReplace};
 use libafl::mutators::{
-    HavocMutationsType, HavocScheduledMutator, Mutator, Tokens, havoc_mutations, tokens_mutations,
+    HavocMutationsType, HavocScheduledMutator, MutationResult, Mutator, Tokens, havoc_mutations,
+    tokens_mutations,
 };
 use libafl::observers::StdMapObserver;
 use libafl::observers::cmp::{CmpValues, CmpValuesMetadata};
 use libafl::schedulers::powersched::{N_FUZZ_SIZE, PowerSchedule, SchedulerMetadata};
 use libafl::schedulers::testcase_score::CorpusPowerTestcaseScore;
 use libafl::schedulers::{ProbabilitySamplingScheduler, RemovableScheduler, Scheduler};
-use libafl::state::{HasCorpus, HasExecutions, HasMaxSize, HasSolutions, StdState};
+use libafl::state::{HasCorpus, HasExecutions, HasMaxSize, HasRand, HasSolutions, StdState};
 use libafl::{HasMetadata, HasNamedMetadata};
-use libafl_bolts::AsSlice;
-use libafl_bolts::rands::StdRand;
+use libafl_bolts::rands::{Rand, StdRand};
 use libafl_bolts::tuples::{Merge, tuple_list};
+use libafl_bolts::{AsSlice, HasLen, Named};
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
@@ -86,6 +87,252 @@ type FuzzerMutator = HavocScheduledMutator<FuzzerMutationsType>;
 type FuzzerState =
     StdState<InMemoryCorpus<BytesInput>, BytesInput, StdRand, InMemoryCorpus<BytesInput>>;
 
+/// An I2S mutator that extends `I2SRandReplace` with a length-changing splice path
+/// for `CmpValues::Bytes` entries. When a byte operand match is found, it randomly
+/// chooses between overwrite (same-length, matching `I2SRandReplace` behavior) and
+/// splice (delete matched bytes, insert full replacement, changing input length).
+/// Non-`Bytes` variants delegate to the inner `I2SRandReplace`.
+struct I2SSpliceReplace {
+    inner: I2SRandReplace,
+}
+
+impl I2SSpliceReplace {
+    fn new() -> Self {
+        Self {
+            inner: I2SRandReplace::new(),
+        }
+    }
+}
+
+impl Named for I2SSpliceReplace {
+    fn name(&self) -> &std::borrow::Cow<'static, str> {
+        static NAME: std::borrow::Cow<'static, str> =
+            std::borrow::Cow::Borrowed("I2SSpliceReplace");
+        &NAME
+    }
+}
+
+impl<I, S> Mutator<I, S> for I2SSpliceReplace
+where
+    S: HasMetadata + HasRand + HasMaxSize,
+    I: ResizableMutator<u8> + HasMutatorBytes,
+{
+    fn mutate(
+        &mut self,
+        state: &mut S,
+        input: &mut I,
+    ) -> std::result::Result<MutationResult, libafl::Error> {
+        let input_len = input.len();
+        if input_len == 0 {
+            return Ok(MutationResult::Skipped);
+        }
+
+        let cmps_len = {
+            let Some(meta) = state.metadata_map().get::<CmpValuesMetadata>() else {
+                return Ok(MutationResult::Skipped);
+            };
+            meta.list.len()
+        };
+        if cmps_len == 0 {
+            return Ok(MutationResult::Skipped);
+        }
+
+        // SAFETY of unwraps: cmps_len and input_len are checked > 0 above.
+        let idx = state
+            .rand_mut()
+            .below(core::num::NonZero::new(cmps_len).unwrap());
+        let off = state
+            .rand_mut()
+            .below(core::num::NonZero::new(input_len).unwrap());
+        // Pre-generate splice/overwrite coin flip while we have &mut state.
+        let use_splice = state.rand_mut().coinflip(0.5);
+
+        let meta = state.metadata_map().get::<CmpValuesMetadata>().unwrap();
+        let cmp_values = meta.list[idx].clone();
+
+        match &cmp_values {
+            CmpValues::Bytes(v) => {
+                let max_size = state.max_size();
+                self.mutate_bytes_splice(input, &v.0, &v.1, off, max_size, use_splice)
+            }
+            // Non-Bytes variants: delegate entirely to inner I2SRandReplace.
+            CmpValues::U8(_) | CmpValues::U16(_) | CmpValues::U32(_) | CmpValues::U64(_) => {
+                self.inner.mutate(state, input)
+            }
+        }
+    }
+
+    #[inline]
+    fn post_exec(
+        &mut self,
+        _state: &mut S,
+        _new_corpus_id: Option<CorpusId>,
+    ) -> std::result::Result<(), libafl::Error> {
+        Ok(())
+    }
+}
+
+impl I2SSpliceReplace {
+    /// Handle a `CmpValues::Bytes` match with splice/overwrite logic.
+    ///
+    /// Scans for both operands bidirectionally (v0 found → replace with v1,
+    /// v1 found → replace with v0). Uses decreasing prefix lengths at each
+    /// position. On match, randomly chooses between splice and overwrite
+    /// (equal-length operands always use overwrite).
+    fn mutate_bytes_splice<I>(
+        &self,
+        input: &mut I,
+        v0: &libafl::observers::cmp::CmplogBytes,
+        v1: &libafl::observers::cmp::CmplogBytes,
+        off: usize,
+        max_size: usize,
+        use_splice: bool,
+    ) -> std::result::Result<MutationResult, libafl::Error>
+    where
+        I: ResizableMutator<u8> + HasMutatorBytes,
+    {
+        let source_replacement_pairs: [(&[u8], &[u8]); 2] = [
+            (v0.as_slice(), v1.as_slice()),
+            (v1.as_slice(), v0.as_slice()),
+        ];
+
+        let input_len = input.len();
+
+        for i in off..input_len {
+            for &(source, replacement) in &source_replacement_pairs {
+                if source.is_empty() {
+                    continue;
+                }
+                if replacement.is_empty() {
+                    continue;
+                }
+                let mut matched_prefix_len = core::cmp::min(source.len(), input_len - i);
+                while matched_prefix_len > 0 {
+                    if source[..matched_prefix_len]
+                        == input.mutator_bytes()[i..i + matched_prefix_len]
+                    {
+                        return Ok(self.apply_splice_or_overwrite(
+                            input,
+                            replacement,
+                            i,
+                            matched_prefix_len,
+                            max_size,
+                            use_splice,
+                        ));
+                    }
+                    matched_prefix_len -= 1;
+                }
+            }
+        }
+
+        Ok(MutationResult::Skipped)
+    }
+
+    /// Apply either splice or overwrite at the match position.
+    ///
+    /// For equal-length operands, always overwrites. Otherwise, uses the
+    /// pre-generated coin flip.
+    /// Splice respects max_size — falls back to overwrite if exceeded.
+    fn apply_splice_or_overwrite<I>(
+        &self,
+        input: &mut I,
+        replacement: &[u8],
+        pos: usize,
+        matched_prefix_len: usize,
+        max_size: usize,
+        use_splice: bool,
+    ) -> MutationResult
+    where
+        I: ResizableMutator<u8> + HasMutatorBytes,
+    {
+        let replacement_len = replacement.len();
+        let current_len = input.len();
+
+        if matched_prefix_len == replacement_len {
+            // Equal length: always overwrite (splice and overwrite are identical).
+            self.apply_overwrite(input, replacement, pos, matched_prefix_len);
+        } else if use_splice {
+            let new_len = current_len - matched_prefix_len + replacement_len;
+            if new_len <= max_size {
+                self.apply_splice(input, replacement, pos, matched_prefix_len);
+            } else {
+                // Splice would exceed max_size — fall back to overwrite.
+                self.apply_overwrite(input, replacement, pos, matched_prefix_len);
+            }
+        } else {
+            self.apply_overwrite(input, replacement, pos, matched_prefix_len);
+        }
+
+        MutationResult::Mutated
+    }
+
+    /// Overwrite: write `matched_prefix_len` bytes of replacement at pos.
+    fn apply_overwrite<I>(
+        &self,
+        input: &mut I,
+        replacement: &[u8],
+        pos: usize,
+        matched_prefix_len: usize,
+    ) where
+        I: HasMutatorBytes,
+    {
+        let write_len = core::cmp::min(matched_prefix_len, replacement.len());
+        input.mutator_bytes_mut()[pos..pos + write_len].copy_from_slice(&replacement[..write_len]);
+    }
+
+    /// Splice: delete matched_prefix_len bytes at pos, insert full replacement.
+    fn apply_splice<I>(
+        &self,
+        input: &mut I,
+        replacement: &[u8],
+        pos: usize,
+        matched_prefix_len: usize,
+    ) where
+        I: ResizableMutator<u8> + HasMutatorBytes,
+    {
+        let current_len = input.len();
+        let replacement_len = replacement.len();
+        let tail_start = pos + matched_prefix_len;
+        let tail_len = current_len - tail_start;
+        let new_len = current_len - matched_prefix_len + replacement_len;
+
+        if replacement_len > matched_prefix_len {
+            // Growing: resize first, shift tail right, write replacement.
+            input.resize(new_len, 0);
+            let new_tail_start = pos + replacement_len;
+            // SAFETY: after resize, new_tail_start + tail_len == new_len <= capacity.
+            // `from` and `to` ranges may overlap, but `core::ptr::copy` handles that.
+            if tail_len > 0 {
+                let bytes = input.mutator_bytes_mut();
+                unsafe {
+                    core::ptr::copy(
+                        bytes.as_ptr().add(tail_start),
+                        bytes.as_mut_ptr().add(new_tail_start),
+                        tail_len,
+                    );
+                }
+            }
+        } else {
+            // Shrinking: shift tail left, then resize.
+            let new_tail_start = pos + replacement_len;
+            if tail_len > 0 {
+                let bytes = input.mutator_bytes_mut();
+                unsafe {
+                    core::ptr::copy(
+                        bytes.as_ptr().add(tail_start),
+                        bytes.as_mut_ptr().add(new_tail_start),
+                        tail_len,
+                    );
+                }
+            }
+            input.resize(new_len, 0);
+        }
+
+        // Write the full replacement.
+        input.mutator_bytes_mut()[pos..pos + replacement_len].copy_from_slice(replacement);
+    }
+}
+
 #[napi]
 pub struct Fuzzer {
     state: FuzzerState,
@@ -94,7 +341,7 @@ pub struct Fuzzer {
     crash_objective: CrashObjective,
     timeout_objective: TimeoutObjective,
     mutator: FuzzerMutator,
-    i2s_mutator: I2SRandReplace,
+    i2s_mutator: I2SSpliceReplace,
     map_ptr: *mut u8,
     map_len: usize,
     _coverage_map: Buffer,
@@ -233,7 +480,7 @@ impl Fuzzer {
 
         let scheduler = ProbabilitySamplingScheduler::new();
         let mutator = HavocScheduledMutator::new(havoc_mutations().merge(tokens_mutations()));
-        let i2s_mutator = I2SRandReplace::new();
+        let i2s_mutator = I2SSpliceReplace::new();
 
         // Drop the temporary observer - feedback only holds a name-based Handle.
         drop(temp_observer);
@@ -797,7 +1044,10 @@ impl Drop for Fuzzer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libafl::observers::cmp::CmplogBytes;
+    use crate::cmplog;
+    use libafl::observers::MapObserver;
+    use libafl::observers::cmp::{CmpValues, CmpValuesMetadata, CmplogBytes};
+    use libafl::schedulers::TestcaseScore;
 
     fn make_coverage_map(size: usize) -> (*mut u8, Vec<u8>) {
         let mut map = vec![0u8; size];
@@ -1101,7 +1351,7 @@ mod tests {
             unsafe { StdMapObserver::from_mut_ptr(EDGES_OBSERVER_NAME, map_ptr, map.len()) };
 
         // Verify observer reads the written values.
-        use libafl::observers::MapObserver;
+
         assert_eq!(observer.get(10), 5);
         assert_eq!(observer.get(100), 42);
         assert_eq!(observer.get(0), 0); // untouched position
@@ -1140,9 +1390,6 @@ mod tests {
 
     #[test]
     fn test_cmplog_enable_disable_on_fuzzer_lifecycle() {
-        use crate::cmplog;
-        use libafl::observers::cmp::CmpValues;
-
         // Reset cmplog state.
         cmplog::disable();
         cmplog::drain();
@@ -1169,9 +1416,6 @@ mod tests {
 
     #[test]
     fn test_cmplog_entries_drained_into_metadata() {
-        use crate::cmplog;
-        use libafl::observers::cmp::{CmpValues, CmpValuesMetadata};
-
         // Reset cmplog state.
         cmplog::disable();
         cmplog::drain();
@@ -1219,8 +1463,6 @@ mod tests {
 
     #[test]
     fn test_extract_tokens_from_mixed_cmpvalues() {
-        use libafl::observers::cmp::CmpValues;
-
         let entries = vec![
             CmpValues::Bytes((make_cmplog_bytes(b"http"), make_cmplog_bytes(b"javascript"))),
             CmpValues::U8((10, 20, false)),
@@ -1240,8 +1482,6 @@ mod tests {
 
     #[test]
     fn test_extract_tokens_filters_empty_null_and_0xff() {
-        use libafl::observers::cmp::CmpValues;
-
         let entries = vec![
             // Empty left operand — should be skipped.
             CmpValues::Bytes((make_cmplog_bytes(b""), make_cmplog_bytes(b"valid"))),
@@ -1280,8 +1520,6 @@ mod tests {
 
     #[test]
     fn test_report_result_populates_tokens_from_cmplog() {
-        use crate::cmplog;
-
         cmplog::disable();
         cmplog::drain();
 
@@ -1320,8 +1558,6 @@ mod tests {
 
     #[test]
     fn test_tokens_accumulate_across_report_result_calls() {
-        use crate::cmplog;
-
         cmplog::disable();
         cmplog::drain();
 
@@ -1358,8 +1594,6 @@ mod tests {
 
     #[test]
     fn test_token_candidates_capped_at_max() {
-        use crate::cmplog;
-
         cmplog::disable();
         cmplog::drain();
 
@@ -1390,8 +1624,6 @@ mod tests {
 
     #[test]
     fn test_promoted_tokens_not_reinserted_into_candidates() {
-        use crate::cmplog;
-
         cmplog::disable();
         cmplog::drain();
 
@@ -2134,8 +2366,6 @@ mod tests {
 
     #[test]
     fn test_power_scoring_favors_fast_high_coverage_entry() {
-        use libafl::schedulers::TestcaseScore;
-
         let (map_ptr, _map) = make_coverage_map(1024);
         let (mut state, ..) = make_fuzzer(map_ptr, 1024);
 
@@ -2370,7 +2600,7 @@ mod tests {
 
         let scheduler = ProbabilitySamplingScheduler::new();
         let mutator = HavocScheduledMutator::new(havoc_mutations().merge(tokens_mutations()));
-        let i2s_mutator = I2SRandReplace::new();
+        let i2s_mutator = I2SSpliceReplace::new();
 
         drop(temp_observer);
 
@@ -2619,5 +2849,339 @@ mod tests {
                 "second interesting entry should have depth 2"
             );
         }
+    }
+
+    // === I2SSpliceReplace unit tests ===
+
+    /// Find a seed that produces the desired RNG sequence for I2SSpliceReplace::mutate().
+    ///
+    /// The mutate() method makes three RNG calls in order:
+    /// 1. `below(cmps_len)` → entry index
+    /// 2. `below(input_len)` → starting offset
+    /// 3. `coinflip(0.5)` → splice (true) or overwrite (false)
+    fn find_i2s_seed(
+        cmps_len: usize,
+        input_len: usize,
+        want_idx: usize,
+        want_off: usize,
+        want_splice: bool,
+    ) -> u64 {
+        use core::num::NonZero;
+        for seed in 0u64..100_000 {
+            let mut rng = StdRand::with_seed(seed);
+            let idx = rng.below(NonZero::new(cmps_len).unwrap());
+            let off = rng.below(NonZero::new(input_len).unwrap());
+            let flip = rng.coinflip(0.5);
+            if idx == want_idx && off == want_off && flip == want_splice {
+                return seed;
+            }
+        }
+        panic!(
+            "no seed found for cmps_len={cmps_len}, input_len={input_len}, want_idx={want_idx}, want_off={want_off}, want_splice={want_splice}"
+        );
+    }
+
+    /// Create a FuzzerState with seeded RNG and CmpValuesMetadata containing the given entries.
+    fn make_i2s_state(seed: u64, entries: Vec<CmpValues>, max_size: usize) -> FuzzerState {
+        let (map_ptr, _map) = make_coverage_map(65536);
+        let (mut state, _feedback, _objective) = make_state_and_feedback(map_ptr, 65536);
+        // Replace the default RNG with our seeded one.
+        *state.rand_mut() = StdRand::with_seed(seed);
+        state.set_max_size(max_size);
+        state
+            .metadata_map_mut()
+            .insert(CmpValuesMetadata { list: entries });
+        state
+    }
+
+    #[test]
+    fn test_i2s_splice_shorter_match_with_longer_operand() {
+        // 3.1: splice "http" → "javascript" in "http://example.com"
+        //      produces "javascript://example.com" (24 bytes)
+        let seed = find_i2s_seed(1, 18, 0, 0, true);
+        let entries = vec![CmpValues::Bytes((
+            make_cmplog_bytes(b"http"),
+            make_cmplog_bytes(b"javascript"),
+        ))];
+        let mut state = make_i2s_state(seed, entries, 4096);
+        let mut input = BytesInput::new(b"http://example.com".to_vec());
+        let mut mutator = I2SSpliceReplace::new();
+
+        let result = mutator.mutate(&mut state, &mut input).unwrap();
+        assert_eq!(result, MutationResult::Mutated);
+        assert_eq!(input.mutator_bytes(), b"javascript://example.com");
+        assert_eq!(input.mutator_bytes().len(), 24);
+    }
+
+    #[test]
+    fn test_i2s_splice_longer_match_with_shorter_operand() {
+        // 3.2: splice "javascript" → "ftp" in "javascript://x"
+        //      produces "ftp://x" (7 bytes)
+        let seed = find_i2s_seed(1, 14, 0, 0, true);
+        let entries = vec![CmpValues::Bytes((
+            make_cmplog_bytes(b"javascript"),
+            make_cmplog_bytes(b"ftp"),
+        ))];
+        let mut state = make_i2s_state(seed, entries, 4096);
+        let mut input = BytesInput::new(b"javascript://x".to_vec());
+        let mut mutator = I2SSpliceReplace::new();
+
+        let result = mutator.mutate(&mut state, &mut input).unwrap();
+        assert_eq!(result, MutationResult::Mutated);
+        assert_eq!(input.mutator_bytes(), b"ftp://x");
+        assert_eq!(input.mutator_bytes().len(), 7);
+    }
+
+    #[test]
+    fn test_i2s_overwrite_truncates_replacement() {
+        // 3.3: overwrite "http" → "javascript" in "http://example.com"
+        //      produces "java://example.com" (18 bytes, unchanged)
+        let seed = find_i2s_seed(1, 18, 0, 0, false);
+        let entries = vec![CmpValues::Bytes((
+            make_cmplog_bytes(b"http"),
+            make_cmplog_bytes(b"javascript"),
+        ))];
+        let mut state = make_i2s_state(seed, entries, 4096);
+        let mut input = BytesInput::new(b"http://example.com".to_vec());
+        let mut mutator = I2SSpliceReplace::new();
+
+        let result = mutator.mutate(&mut state, &mut input).unwrap();
+        assert_eq!(result, MutationResult::Mutated);
+        assert_eq!(input.mutator_bytes(), b"java://example.com");
+        assert_eq!(input.mutator_bytes().len(), 18);
+    }
+
+    #[test]
+    fn test_i2s_equal_length_always_overwrites() {
+        // 3.4: equal-length "test"→"pass" in "test" — always overwrite regardless of RNG.
+        // Test with both splice=true and splice=false seeds.
+        for want_splice in [true, false] {
+            let seed = find_i2s_seed(1, 4, 0, 0, want_splice);
+            let entries = vec![CmpValues::Bytes((
+                make_cmplog_bytes(b"test"),
+                make_cmplog_bytes(b"pass"),
+            ))];
+            let mut state = make_i2s_state(seed, entries, 4096);
+            let mut input = BytesInput::new(b"test".to_vec());
+            let mut mutator = I2SSpliceReplace::new();
+
+            let result = mutator.mutate(&mut state, &mut input).unwrap();
+            assert_eq!(result, MutationResult::Mutated);
+            assert_eq!(
+                input.mutator_bytes(),
+                b"pass",
+                "equal-length operands should always overwrite, want_splice={want_splice}"
+            );
+            assert_eq!(input.mutator_bytes().len(), 4, "length should be unchanged");
+        }
+    }
+
+    #[test]
+    fn test_i2s_non_bytes_delegates_to_inner() {
+        // 3.5: When the selected entry is non-Bytes (U32), delegates to inner I2SRandReplace.
+        // Use 2 entries: [U32, Bytes]. Need idx=0 to select the U32.
+        use core::num::NonZero;
+
+        // Find a seed where below(2) → 0 (selects the U32 entry).
+        let mut seed = 0u64;
+        for s in 0u64..100_000 {
+            let mut rng = StdRand::with_seed(s);
+            let idx = rng.below(NonZero::new(2).unwrap());
+            if idx == 0 {
+                seed = s;
+                break;
+            }
+        }
+
+        let entries = vec![
+            CmpValues::U32((42, 99, false)),
+            CmpValues::Bytes((make_cmplog_bytes(b"abc"), make_cmplog_bytes(b"xyz"))),
+        ];
+
+        // Input containing the U32 value 42 as bytes: we expect I2SRandReplace
+        // to handle it. With a 4-byte input containing [42, 0, 0, 0] (little-endian u32),
+        // the inner mutator should attempt to replace it.
+        let input_bytes = 42u32.to_ne_bytes().to_vec();
+        let mut state = make_i2s_state(seed, entries, 4096);
+        let mut input = BytesInput::new(input_bytes.clone());
+        let mut mutator = I2SSpliceReplace::new();
+
+        // The inner I2SRandReplace handles it — result may be Mutated or Skipped
+        // depending on its own RNG. The key assertion is that it doesn't panic
+        // and returns a valid result (delegation worked).
+        let result = mutator.mutate(&mut state, &mut input).unwrap();
+        assert!(
+            result == MutationResult::Mutated || result == MutationResult::Skipped,
+            "non-Bytes entry should delegate to inner I2SRandReplace"
+        );
+
+        // Verify the Bytes entry was NOT used — input should not contain
+        // the byte replacements from the Bytes pair.
+        let mutated = input.mutator_bytes();
+        assert!(
+            !mutated.windows(3).any(|w| w == b"xyz" || w == b"abc"),
+            "Bytes entry should not have been applied; \
+             the U32 path (delegation) should have been taken instead"
+        );
+    }
+
+    #[test]
+    fn test_i2s_splice_exceeding_max_size_falls_back_to_overwrite() {
+        // 3.6: max_size=128, input=120 bytes with 4-byte match, replacement=20 bytes.
+        // Splice would produce 120 - 4 + 20 = 136 > 128, so falls back to overwrite.
+        let mut input_bytes = vec![0u8; 120];
+        input_bytes[0..4].copy_from_slice(b"http");
+
+        let seed = find_i2s_seed(1, 120, 0, 0, true);
+        let entries = vec![CmpValues::Bytes((
+            make_cmplog_bytes(b"http"),
+            make_cmplog_bytes(b"12345678901234567890"), // 20 bytes
+        ))];
+        let mut state = make_i2s_state(seed, entries, 128);
+        let mut input = BytesInput::new(input_bytes);
+        let mut mutator = I2SSpliceReplace::new();
+
+        let result = mutator.mutate(&mut state, &mut input).unwrap();
+        assert_eq!(result, MutationResult::Mutated);
+        // Should have fallen back to overwrite: first 4 bytes of replacement written.
+        assert_eq!(&input.mutator_bytes()[0..4], b"1234");
+        assert_eq!(
+            input.mutator_bytes().len(),
+            120,
+            "length should be unchanged (overwrite fallback)"
+        );
+        assert_eq!(
+            &input.mutator_bytes()[4..],
+            &[0u8; 116],
+            "tail bytes should be unchanged after overwrite fallback"
+        );
+    }
+
+    #[test]
+    fn test_i2s_splice_within_max_size_proceeds() {
+        // 3.7: max_size=4096, input=100 bytes, splice produces 106 bytes.
+        let mut input_bytes = vec![0x41u8; 100];
+        input_bytes[0..4].copy_from_slice(b"http");
+
+        let seed = find_i2s_seed(1, 100, 0, 0, true);
+        let entries = vec![CmpValues::Bytes((
+            make_cmplog_bytes(b"http"),
+            make_cmplog_bytes(b"javascript"),
+        ))];
+        let mut state = make_i2s_state(seed, entries, 4096);
+        let mut input = BytesInput::new(input_bytes);
+        let mut mutator = I2SSpliceReplace::new();
+
+        let result = mutator.mutate(&mut state, &mut input).unwrap();
+        assert_eq!(result, MutationResult::Mutated);
+        assert_eq!(&input.mutator_bytes()[0..10], b"javascript");
+        assert_eq!(
+            input.mutator_bytes().len(),
+            106,
+            "splice should grow input by 6"
+        );
+        assert!(
+            input.mutator_bytes()[10..].iter().all(|&b| b == 0x41),
+            "tail bytes should be preserved after splice"
+        );
+    }
+
+    #[test]
+    fn test_i2s_bidirectional_matching() {
+        // 3.8: Forward: input contains "abc" → replace with "xyz".
+        //       Reverse: input contains "xyz" → replace with "abc".
+        let entries_forward = vec![CmpValues::Bytes((
+            make_cmplog_bytes(b"abc"),
+            make_cmplog_bytes(b"xyz"),
+        ))];
+        let entries_reverse = vec![CmpValues::Bytes((
+            make_cmplog_bytes(b"abc"),
+            make_cmplog_bytes(b"xyz"),
+        ))];
+
+        // Forward: input has "abc", should be replaced with "xyz".
+        let seed = find_i2s_seed(1, 3, 0, 0, false);
+        let mut state = make_i2s_state(seed, entries_forward, 4096);
+        let mut input = BytesInput::new(b"abc".to_vec());
+        let mut mutator = I2SSpliceReplace::new();
+
+        let result = mutator.mutate(&mut state, &mut input).unwrap();
+        assert_eq!(result, MutationResult::Mutated);
+        assert_eq!(input.mutator_bytes(), b"xyz", "forward match: abc → xyz");
+
+        // Reverse: input has "xyz", should be replaced with "abc".
+        let mut state = make_i2s_state(seed, entries_reverse, 4096);
+        let mut input = BytesInput::new(b"xyz".to_vec());
+
+        let result = mutator.mutate(&mut state, &mut input).unwrap();
+        assert_eq!(result, MutationResult::Mutated);
+        assert_eq!(input.mutator_bytes(), b"abc", "reverse match: xyz → abc");
+    }
+
+    #[test]
+    fn test_i2s_partial_prefix_match_with_splice() {
+        // 3.9: Input contains "htt" (3-byte prefix of "http").
+        // Splice should delete 3 matched bytes and insert full "javascript" (10 bytes).
+        // Result: "javascript" + remaining bytes after "htt".
+        let input_bytes = b"htt://x".to_vec(); // 7 bytes, "htt" is a 3-byte prefix match
+        let seed = find_i2s_seed(1, 7, 0, 0, true);
+        let entries = vec![CmpValues::Bytes((
+            make_cmplog_bytes(b"http"),
+            make_cmplog_bytes(b"javascript"),
+        ))];
+        let mut state = make_i2s_state(seed, entries, 4096);
+        let mut input = BytesInput::new(input_bytes);
+        let mut mutator = I2SSpliceReplace::new();
+
+        let result = mutator.mutate(&mut state, &mut input).unwrap();
+        assert_eq!(result, MutationResult::Mutated);
+        // "htt" (3 bytes) replaced by full "javascript" (10 bytes), tail "://x" preserved
+        assert_eq!(input.mutator_bytes(), b"javascript://x");
+        assert_eq!(
+            input.mutator_bytes().len(),
+            14,
+            "length should be 7 - 3 + 10 = 14"
+        );
+    }
+
+    #[test]
+    fn test_i2s_empty_metadata_or_input_returns_skipped() {
+        // 3.10a-0: Absent CmpValuesMetadata entirely → Skipped.
+        let (map_ptr, _map) = make_coverage_map(65536);
+        let (mut state, _feedback, _objective) = make_state_and_feedback(map_ptr, 65536);
+        *state.rand_mut() = StdRand::with_seed(42);
+        state.set_max_size(4096);
+        let mut input = BytesInput::new(b"some data".to_vec());
+        let mut mutator = I2SSpliceReplace::new();
+
+        let result = mutator.mutate(&mut state, &mut input).unwrap();
+        assert_eq!(
+            result,
+            MutationResult::Skipped,
+            "absent metadata should skip"
+        );
+
+        // 3.10a: Empty CmpValuesMetadata → Skipped.
+        let mut state = make_i2s_state(42, vec![], 4096);
+        let mut input = BytesInput::new(b"some data".to_vec());
+        let mut mutator = I2SSpliceReplace::new();
+
+        let result = mutator.mutate(&mut state, &mut input).unwrap();
+        assert_eq!(
+            result,
+            MutationResult::Skipped,
+            "empty metadata should skip"
+        );
+
+        // 3.10b: Empty input → Skipped.
+        let entries = vec![CmpValues::Bytes((
+            make_cmplog_bytes(b"abc"),
+            make_cmplog_bytes(b"xyz"),
+        ))];
+        let mut state = make_i2s_state(42, entries, 4096);
+        let mut input = BytesInput::new(vec![]);
+
+        let result = mutator.mutate(&mut state, &mut input).unwrap();
+        assert_eq!(result, MutationResult::Skipped, "empty input should skip");
     }
 }

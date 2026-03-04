@@ -2,7 +2,7 @@
  * End-to-end integration tests for the fuzz API.
  */
 import { describe, it, expect, afterEach } from "vitest";
-import { execFileSync } from "node:child_process";
+import { execSync } from "node:child_process";
 import { existsSync, rmSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
@@ -85,9 +85,8 @@ describe("e2e: instrumented child process", () => {
     );
     // Run the instrumented test suite as a child process
     // It verifies that instrumented code produces non-zero coverage entries
-    const output = execFileSync(
-      "npx",
-      ["vitest", "run", "--config", "test/vitest.instrumented.config.ts"],
+    const output = execSync(
+      "pnpm exec vitest run --config test/vitest.instrumented.config.ts",
       {
         cwd: vitiatePkg,
         timeout: 60_000,

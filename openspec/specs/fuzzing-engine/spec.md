@@ -15,9 +15,11 @@ The config SHALL support the following fields, all optional with defaults:
 
 On construction, the Fuzzer SHALL enable the CmpLog accumulator so that `traceCmp` calls
 record comparison operands. The Fuzzer SHALL also initialize `CmpValuesMetadata` on the
-fuzzer state and include `I2SRandReplace` in its mutation pipeline.
+fuzzer state and include `I2SSpliceReplace` (wrapping `I2SRandReplace`) in its mutation pipeline. This replaces the prior `I2SRandReplace` as the post-havoc I2S mutator.
 
 On construction, the Fuzzer SHALL initialize `SchedulerMetadata` with `PowerSchedule::fast()` on the fuzzer state. The scheduler SHALL use `CorpusPowerTestcaseScore` as its `TestcaseScore` implementation (replacing the prior `UniformScore`).
+
+On construction, the Fuzzer SHALL initialize the havoc mutator with `havoc_mutations()` merged with `tokens_mutations()`, providing both standard havoc mutations and dictionary-based token mutations in a single scheduled mutator.
 
 #### Scenario: Create with defaults
 
@@ -26,6 +28,7 @@ On construction, the Fuzzer SHALL initialize `SchedulerMetadata` with `PowerSche
   a reference to the provided coverage map
 - **AND** the CmpLog accumulator is enabled
 - **AND** `SchedulerMetadata` with `PowerSchedule::fast()` is present on the state
+- **AND** the havoc mutator includes token mutations
 
 #### Scenario: Create with custom config
 
@@ -80,9 +83,11 @@ Each auto-seed SHALL receive `SchedulerTestcaseMetadata` with depth 0 and a nomi
 
 The system SHALL provide `fuzzer.getNextInput()` which returns a `Buffer` containing a
 mutated input derived from the corpus. The system uses LibAFL's havoc mutations (bit
-flips, byte flips, arithmetic, block insert/delete/copy, splicing) applied to a corpus
-entry selected by the scheduler, followed by `I2SRandReplace` which may replace byte
-patterns matching recorded comparison operands.
+flips, byte flips, arithmetic, block insert/delete/copy, splicing) combined with token mutations (`TokenInsert`, `TokenReplace`) applied to a corpus
+entry selected by the scheduler, followed by `I2SSpliceReplace` which may replace byte
+patterns matching recorded comparison operands. For `CmpValues::Bytes` matches, `I2SSpliceReplace` randomly chooses between same-length overwrite and length-changing splice, enabling the fuzzer to construct operand substitutions where the replacement differs in length from the matched region.
+
+The token mutations operate on the `Tokens` metadata in the fuzzer state. `TokenInsert` selects a random token and inserts it at a random position in the input, growing the input buffer. `TokenReplace` selects a random token and overwrites bytes at a random position. If no `Tokens` metadata exists or the token list is empty, token mutations are skipped.
 
 The method SHALL record the corpus ID of the selected entry as the "last corpus ID" for mutation depth tracking. When `reportResult()` subsequently adds a new corpus entry, it SHALL use this stored ID to determine the parent and compute depth.
 
@@ -103,6 +108,27 @@ The method SHALL record the corpus ID of the selected entry as the "last corpus 
 - **AND** `getNextInput()` is called multiple times
 - **THEN** at least one returned input SHALL contain the bytes `"bar"` replacing `"foo"`
   (demonstrating I2S replacement)
+
+#### Scenario: I2S splice produces length-changing replacement
+
+- **WHEN** `CmpValuesMetadata` contains `CmpValues::Bytes("http", "javascript")`
+- **AND** the corpus contains an input with bytes `"http://a"`
+- **AND** `getNextInput()` is called multiple times
+- **THEN** at least one returned input SHALL contain the bytes `"javascript"` replacing `"http"` with the input length increased by 6 bytes (demonstrating I2S splice)
+
+#### Scenario: Token mutations can grow the input
+
+- **WHEN** the fuzzer state contains `Tokens` metadata with token `"javascript"`
+- **AND** the corpus contains a seed `"http://example.com"` (18 bytes)
+- **AND** `getNextInput()` is called multiple times
+- **THEN** at least one returned input SHALL have length greater than 18 bytes
+  (demonstrating `TokenInsert` can grow the input)
+
+#### Scenario: Token mutations use dictionary tokens
+
+- **WHEN** the fuzzer state contains `Tokens` metadata with token `"javascript"`
+- **AND** `getNextInput()` is called multiple times
+- **THEN** at least one returned input SHALL contain the bytes `"javascript"`
 
 #### Scenario: Selected corpus ID tracked for depth
 

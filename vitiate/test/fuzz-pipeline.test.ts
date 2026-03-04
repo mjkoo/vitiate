@@ -17,7 +17,7 @@
  * (seeds only).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { execFileSync } from "node:child_process";
+import { execSync } from "node:child_process";
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import path from "node:path";
 
@@ -53,12 +53,13 @@ function findArtifacts(artifactDir: string): string[] {
 }
 
 afterAll(() => {
-  // Clean up any crash artifacts to avoid polluting the git tree
+  // Clean up crash artifacts and corpus cache to avoid polluting the git tree
   for (const dir of [PARSE_URL_ARTIFACT_DIR, VALIDATE_SCHEME_ARTIFACT_DIR]) {
     for (const artifact of findArtifacts(dir)) {
       rmSync(artifact, { force: true });
     }
   }
+  rmSync(CORPUS_CACHE_DIR, { recursive: true, force: true });
 });
 
 describe("fuzz pipeline: discovers planted bugs end-to-end", () => {
@@ -77,21 +78,17 @@ describe("fuzz pipeline: discovers planted bugs end-to-end", () => {
     }
 
     try {
-      execFileSync(
-        "npx",
-        ["vitest", "run", "--config", "vitest.fuzz-pipeline.config.ts"],
-        {
-          cwd: EXAMPLE_DIR,
-          timeout: 300_000,
-          encoding: "utf-8",
-          env: {
-            ...process.env,
-            VITIATE_FUZZ: "1",
-          },
+      execSync("pnpm exec vitest run --config vitest.fuzz-pipeline.config.ts", {
+        cwd: EXAMPLE_DIR,
+        timeout: 300_000,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          VITIATE_FUZZ: "1",
         },
-      );
+      });
     } catch (e: unknown) {
-      // execFileSync throws on non-zero exit code — that's expected when a
+      // execSync throws on non-zero exit code — that's expected when a
       // crash is found (vitest exits 1).
       if (
         typeof e === "object" &&
