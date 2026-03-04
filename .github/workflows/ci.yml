@@ -159,6 +159,9 @@ jobs:
 
       - run: corepack enable && corepack prepare pnpm@10.30.2 --activate
 
+      - name: Fix git ownership (container runs as different user)
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - run: pnpm install --frozen-lockfile
 
       - name: Build
