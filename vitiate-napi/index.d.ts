@@ -15,6 +15,26 @@ export declare class Fuzzer {
    * Updates per-testcase and global metadata with calibrated values.
    */
   calibrateFinish(): void
+  /**
+   * Initiate an I2S mutational stage for the most recently calibrated corpus entry.
+   *
+   * Returns the first I2S-mutated input as a `Buffer`, or `null` if preconditions
+   * are not met (no active stage allowed, no pending interesting corpus entry, or
+   * empty CmpValuesMetadata).
+   */
+  beginStage(): Buffer | null
+  /**
+   * Process the result of a stage execution and return the next candidate input.
+   *
+   * Returns the next I2S-mutated input as a `Buffer`, or `null` if the stage is
+   * complete (iterations exhausted) or no stage is active.
+   */
+  advanceStage(exitKind: ExitKind, execTimeNs: number): Buffer | null
+  /**
+   * Cleanly terminate the current stage without evaluating the final execution's
+   * coverage. No-op if no stage is active.
+   */
+  abortStage(exitKind: ExitKind): void
   get cmpLogEntryCount(): number
   get stats(): FuzzerStats
 }

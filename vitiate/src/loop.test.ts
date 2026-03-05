@@ -491,4 +491,343 @@ describe("fuzz loop", () => {
     expect(result.error!.message).toBe("found the bug!");
     expect(result.totalExecs).toBeGreaterThan(0);
   });
-}, 30000);
+
+  describe("I2S stage execution", () => {
+    it("runs I2S stage and counts stage executions in totalExecs", async () => {
+      await setupFuzzingMode();
+      let callCount = 0;
+      const covMap = globalThis.__vitiate_cov as Buffer;
+      const target = (data: Buffer): void => {
+        callCount++;
+        if (data.length > 0) {
+          covMap[data[0]!] = 1;
+        }
+        globalThis.__vitiate_trace_cmp(
+          data.toString(),
+          "target_value",
+          0,
+          "===",
+        );
+      };
+
+      const result = await runFuzzLoop(
+        target,
+        tmpDir,
+        "stage-execs",
+        "test.fuzz.ts",
+        { runs: 50, timeoutMs: 5000 },
+      );
+
+      expect(result.crashed).toBe(false);
+      // Stage iterations increment totalExecs beyond the main-loop iteration count.
+      // Without stages (no CmpLog data), totalExecs === runs.
+      expect(result.totalExecs).toBeGreaterThan(50);
+      // callCount additionally includes calibration re-runs.
+      expect(callCount).toBeGreaterThan(result.totalExecs);
+    });
+
+    it("skips I2S stage when no CmpLog data available", async () => {
+      await setupFuzzingMode();
+      let callCount = 0;
+      const covMap = globalThis.__vitiate_cov as Buffer;
+      const target = (data: Buffer): void => {
+        callCount++;
+        if (data.length > 0) {
+          covMap[data[0]!] = 1;
+        }
+      };
+
+      const result = await runFuzzLoop(
+        target,
+        tmpDir,
+        "stage-no-cmp",
+        "test.fuzz.ts",
+        { runs: 50 },
+      );
+
+      expect(result.crashed).toBe(false);
+      // No CmpLog data → no stage → totalExecs equals runs exactly.
+      expect(result.totalExecs).toBe(50);
+      // callCount > runs due to calibration re-runs only.
+      expect(callCount).toBeGreaterThan(50);
+    });
+
+    it("writes crash artifact when target crashes during I2S stage", async () => {
+      await setupFuzzingMode();
+      const covMap = globalThis.__vitiate_cov as Buffer;
+      const target = (data: Buffer): void => {
+        if (data.length > 0) {
+          covMap[data[0]!] = 1;
+        }
+        // Record comparison; I2S mutator will try to splice "DEAD" into inputs.
+        if (data.length >= 4) {
+          globalThis.__vitiate_trace_cmp(
+            data.subarray(0, 4).toString(),
+            "DEAD",
+            0,
+            "===",
+          );
+        }
+        // Crash when I2S produces the exact bytes "DEAD" at the start.
+        // Havoc alone is extremely unlikely to produce this 4-byte sequence
+        // (~2e-10 per iteration), but I2S specifically tries it.
+        if (data.length >= 4 && data.subarray(0, 4).toString() === "DEAD") {
+          throw new Error("I2S stage crash!");
+        }
+      };
+
+      const result = await runFuzzLoop(
+        target,
+        tmpDir,
+        "stage-crash",
+        "test.fuzz.ts",
+        { runs: 1_000_000, maxTotalTimeMs: 30_000 },
+      );
+
+      expect(result.crashed).toBe(true);
+      expect(result.error).toBeInstanceOf(Error);
+      expect(result.error!.message).toBe("I2S stage crash!");
+      expect(result.crashArtifactPath).toBeDefined();
+      expect(existsSync(result.crashArtifactPath!)).toBe(true);
+
+      // Verify the artifact contains the I2S-produced crash trigger.
+      const artifactData = readFileSync(result.crashArtifactPath!);
+      expect(artifactData.subarray(0, 4).toString()).toBe("DEAD");
+    });
+
+    it("runs I2S stage with async target", async () => {
+      await setupFuzzingMode();
+      let callCount = 0;
+      const covMap = globalThis.__vitiate_cov as Buffer;
+      const target = async (data: Buffer): Promise<void> => {
+        callCount++;
+        await Promise.resolve();
+        if (data.length > 0) {
+          covMap[data[0]!] = 1;
+        }
+        globalThis.__vitiate_trace_cmp(data.toString(), "async_val", 0, "===");
+      };
+
+      const result = await runFuzzLoop(
+        target,
+        tmpDir,
+        "stage-async",
+        "test.fuzz.ts",
+        { runs: 50, timeoutMs: 5000 },
+      );
+
+      expect(result.crashed).toBe(false);
+      // Stage ran: totalExecs > runs
+      expect(result.totalExecs).toBeGreaterThan(50);
+      // Calibration + stage: callCount > totalExecs
+      expect(callCount).toBeGreaterThan(result.totalExecs);
+    });
+
+    it("writes timeout artifact when I2S stage execution times out", async () => {
+      await setupFuzzingMode();
+      const covMap = globalThis.__vitiate_cov as Buffer;
+      const target = (data: Buffer): void => {
+        if (data.length > 0) {
+          covMap[data[0]!] = 1;
+        }
+        if (data.length >= 4) {
+          globalThis.__vitiate_trace_cmp(
+            data.subarray(0, 4).toString(),
+            "HANG",
+            0,
+            "===",
+          );
+        }
+        // Infinite loop when I2S produces "HANG" at the start.
+        if (data.length >= 4 && data.subarray(0, 4).toString() === "HANG") {
+          for (;;) {
+            /* intentionally empty */
+          }
+        }
+      };
+
+      const result = await runFuzzLoop(
+        target,
+        tmpDir,
+        "stage-timeout",
+        "test.fuzz.ts",
+        { runs: 1_000_000, timeoutMs: 200, maxTotalTimeMs: 30_000 },
+      );
+
+      expect(result.crashed).toBe(true);
+      expect(result.error).toBeInstanceOf(Error);
+      expect(result.error!.message).toContain("timed out");
+      expect(result.crashArtifactPath).toBeDefined();
+      expect(existsSync(result.crashArtifactPath!)).toBe(true);
+
+      // Verify timeout artifact naming
+      expect(path.basename(result.crashArtifactPath!)).toMatch(/^timeout-/);
+    });
+
+    it("totalExecs includes aborted stage execution", async () => {
+      await setupFuzzingMode();
+      const covMap = globalThis.__vitiate_cov as Buffer;
+      const target = (data: Buffer): void => {
+        if (data.length > 0) {
+          covMap[data[0]!] = 1;
+        }
+        if (data.length >= 4) {
+          globalThis.__vitiate_trace_cmp(
+            data.subarray(0, 4).toString(),
+            "DEAD",
+            0,
+            "===",
+          );
+        }
+        if (data.length >= 4 && data.subarray(0, 4).toString() === "DEAD") {
+          throw new Error("stage crash for execs count");
+        }
+      };
+
+      const result = await runFuzzLoop(
+        target,
+        tmpDir,
+        "stage-execs-abort",
+        "test.fuzz.ts",
+        { runs: 1_000_000, maxTotalTimeMs: 30_000 },
+      );
+
+      expect(result.crashed).toBe(true);
+      // At least 1 main-loop iteration (Interesting) + 1 stage execution (the
+      // aborted crash). totalExecs must reflect the aborted stage work.
+      expect(result.totalExecs).toBeGreaterThan(1);
+      // Confirm the crash originated from the I2S stage (not the main loop).
+      const artifactData = readFileSync(result.crashArtifactPath!);
+      expect(artifactData.subarray(0, 4).toString()).toBe("DEAD");
+    });
+
+    it("adds stage-discovered interesting inputs to corpus without calibration", async () => {
+      await setupFuzzingMode();
+      const covMap = globalThis.__vitiate_cov as Buffer;
+      const { Fuzzer } = await import("vitiate-napi");
+      const fuzzer = new Fuzzer(covMap, {});
+
+      // Step 1: Execute first input with new coverage + CmpLog data
+      fuzzer.getNextInput();
+      covMap[10] = 1;
+      globalThis.__vitiate_trace_cmp("hello", "world", 0, "===");
+      // ExitKind.Ok = 0, IterationResult.Interesting = 1
+      const iterResult = fuzzer.reportResult(0, 1000);
+      expect(iterResult).toBe(1);
+
+      // Step 2: Run calibration to completion
+      covMap[10] = 1;
+      while (fuzzer.calibrateRun(1000)) {
+        covMap[10] = 1;
+      }
+      fuzzer.calibrateFinish();
+
+      const corpusBefore = fuzzer.stats.corpusSize;
+
+      // Step 3: Begin I2S stage
+      const stageInput = fuzzer.beginStage();
+      expect(stageInput).not.toBeNull();
+
+      // Step 4: Simulate stage execution with NEW coverage edge
+      covMap[20] = 1;
+      // ExitKind.Ok = 0
+      const nextInput = fuzzer.advanceStage(0, 1000);
+
+      // Verify corpus grew from the stage-discovered coverage
+      expect(fuzzer.stats.corpusSize).toBeGreaterThan(corpusBefore);
+
+      // Drain remaining stage iterations
+      let next = nextInput;
+      while (next !== null) {
+        // No new coverage for remaining iterations
+        next = fuzzer.advanceStage(0, 1000);
+      }
+    });
+
+    it("beginStage returns null without preceding interesting input", async () => {
+      await setupFuzzingMode();
+      const covMap = globalThis.__vitiate_cov as Buffer;
+      const { Fuzzer } = await import("vitiate-napi");
+      const fuzzer = new Fuzzer(covMap, {});
+
+      // No inputs processed yet — beginStage should return null
+      expect(fuzzer.beginStage()).toBeNull();
+
+      // Process a non-interesting input (no coverage written)
+      fuzzer.getNextInput();
+      // ExitKind.Ok = 0, IterationResult.None = 0
+      const iterResult = fuzzer.reportResult(0, 1000);
+      expect(iterResult).toBe(0);
+
+      // Still no interesting input — beginStage should return null
+      expect(fuzzer.beginStage()).toBeNull();
+    });
+
+    it("runs I2S stage without watchdog when no timeout configured", async () => {
+      await setupFuzzingMode();
+      let callCount = 0;
+      const covMap = globalThis.__vitiate_cov as Buffer;
+      const target = (data: Buffer): void => {
+        callCount++;
+        if (data.length > 0) {
+          covMap[data[0]!] = 1;
+        }
+        globalThis.__vitiate_trace_cmp(data.toString(), "no_wd", 0, "===");
+      };
+
+      const result = await runFuzzLoop(
+        target,
+        tmpDir,
+        "stage-no-wd",
+        "test.fuzz.ts",
+        { runs: 50 },
+      );
+
+      expect(result.crashed).toBe(false);
+      // Stage ran without watchdog: totalExecs > runs
+      expect(result.totalExecs).toBeGreaterThan(50);
+      expect(callCount).toBeGreaterThan(result.totalExecs);
+    });
+
+    it("skips stage when calibration is interrupted by crash", async () => {
+      await setupFuzzingMode();
+      let callCount = 0;
+      const covMap = globalThis.__vitiate_cov as Buffer;
+      const seen = new Set<string>();
+      const target = (data: Buffer): void => {
+        callCount++;
+        if (data.length > 0) {
+          covMap[data[0]!] = 1;
+        }
+        globalThis.__vitiate_trace_cmp(
+          data.toString(),
+          "calib_crash",
+          0,
+          "===",
+        );
+        // Crash on second execution of any input (during calibration re-run).
+        // Main-loop iterations produce unique inputs from the mutator, so
+        // only calibration (which re-runs the same input) triggers this.
+        const key = data.toString("hex");
+        if (seen.has(key)) {
+          throw new Error("calibration crash!");
+        }
+        seen.add(key);
+      };
+
+      const result = await runFuzzLoop(
+        target,
+        tmpDir,
+        "stage-cal-crash",
+        "test.fuzz.ts",
+        { runs: 50 },
+      );
+
+      expect(result.crashed).toBe(false);
+      // No stage ran despite CmpLog data being available (calibration crashed).
+      expect(result.totalExecs).toBe(50);
+      // callCount > runs because of calibration attempts (even though they crash).
+      expect(callCount).toBeGreaterThan(50);
+    });
+  });
+}, 60000);

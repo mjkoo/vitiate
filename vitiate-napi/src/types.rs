@@ -18,6 +18,7 @@ pub enum ExitKind {
 /// These outcomes are mutually exclusive by design: LibAFL's `StdFuzzer::check_results()`
 /// evaluates the objective (crash/timeout) first, and only evaluates coverage feedback if the
 /// objective did not fire. An input is classified into exactly one of these categories.
+#[derive(Debug, PartialEq)]
 #[napi]
 pub enum IterationResult {
     /// Input did not trigger new coverage or a crash/timeout.

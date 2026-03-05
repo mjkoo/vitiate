@@ -261,6 +261,7 @@ export async function runFuzzLoop(
 
         // Calibration loop: re-run target to average timing and detect unstable edges.
         // The original fuzz iteration counts as calibration run #1; additional runs start here.
+        let calibrationCompleted = true;
         let needsMore = true;
         while (needsMore) {
           const calibrationStartNs = Number(process.hrtime.bigint());
@@ -299,6 +300,7 @@ export async function runFuzzLoop(
           }
 
           if (calibrationBroken) {
+            calibrationCompleted = false;
             break;
           }
 
@@ -307,6 +309,109 @@ export async function runFuzzLoop(
           needsMore = fuzzer.calibrateRun(calibrationTimeNs);
         }
         fuzzer.calibrateFinish();
+
+        // Stage execution loop: run concentrated I2S mutations on the freshly
+        // calibrated corpus entry. Only enter if calibration completed normally.
+        if (calibrationCompleted) {
+          let stageResult = fuzzer.beginStage();
+
+          while (stageResult !== null) {
+            const stageInput = Buffer.from(stageResult);
+            shmemHandle?.stashInput(stageInput);
+
+            const stageStartNs = Number(process.hrtime.bigint());
+            let stageExitKind = ExitKind.Ok;
+            let stageCaughtError: Error | undefined;
+
+            if (timeoutMs !== undefined && timeoutMs > 0) {
+              if (!watchdog) {
+                throw new Error(
+                  "unreachable: watchdog is null with timeout configured",
+                );
+              }
+              const wd = watchdog;
+              const targetResult = wd.runTarget(target, stageInput, timeoutMs);
+
+              if (targetResult.exitKind === 2) {
+                stageExitKind = ExitKind.Timeout;
+                stageCaughtError =
+                  targetResult.error instanceof Error
+                    ? targetResult.error
+                    : new Error("fuzz target timed out");
+              } else if (targetResult.exitKind === 1) {
+                stageExitKind = ExitKind.Crash;
+                stageCaughtError =
+                  targetResult.error instanceof Error
+                    ? targetResult.error
+                    : new Error(String(targetResult.error));
+              } else if (targetResult.result instanceof Promise) {
+                wd.arm(timeoutMs);
+                try {
+                  await targetResult.result;
+                } catch (e) {
+                  if (wd.didFire) {
+                    stageExitKind = ExitKind.Timeout;
+                    stageCaughtError = new Error("fuzz target timed out");
+                  } else {
+                    stageExitKind = ExitKind.Crash;
+                    stageCaughtError =
+                      e instanceof Error ? e : new Error(String(e));
+                  }
+                } finally {
+                  wd.disarm();
+                }
+              }
+            } else {
+              // No timeout — call target directly
+              try {
+                const maybePromise = target(stageInput);
+                if (maybePromise instanceof Promise) {
+                  await maybePromise;
+                }
+              } catch (e) {
+                stageCaughtError =
+                  e instanceof Error ? e : new Error(String(e));
+                stageExitKind = ExitKind.Crash;
+              }
+            }
+
+            if (stageExitKind !== ExitKind.Ok) {
+              // Crash or timeout during stage — abort and write artifact.
+              // Stage crashes are NOT minimized.
+              fuzzer.abortStage(stageExitKind);
+
+              const artifactKind: ArtifactKind =
+                stageExitKind === ExitKind.Timeout ? "timeout" : "crash";
+              const artifactPath = writeArtifact(
+                testDir,
+                testName,
+                stageInput,
+                artifactKind,
+              );
+              printCrash(
+                stageCaughtError ?? new Error("unknown crash"),
+                artifactPath,
+              );
+              result = {
+                crashed: true,
+                error: stageCaughtError,
+                crashInput: stageInput,
+                crashArtifactPath: artifactPath,
+                totalExecs: fuzzer.stats.totalExecs,
+              };
+              break;
+            }
+
+            const stageExecTimeNs =
+              Number(process.hrtime.bigint()) - stageStartNs;
+            stageResult = fuzzer.advanceStage(ExitKind.Ok, stageExecTimeNs);
+          }
+
+          // If a stage crash occurred, exit the main loop.
+          if (result.crashed) {
+            break;
+          }
+        }
       }
 
       // Yield to event loop periodically
