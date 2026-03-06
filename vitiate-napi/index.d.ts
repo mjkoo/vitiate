@@ -159,6 +159,11 @@ export interface FuzzerConfig {
    * `true` = force enable, `false` = force disable, absent = auto-detect from corpus UTF-8 content.
    */
   grimoire?: boolean
+  /**
+   * Unicode-aware mutation control.
+   * `true` = force enable, `false` = force disable, absent = auto-detect from corpus UTF-8 content.
+   */
+  unicode?: boolean
 }
 
 export interface FuzzerStats {

@@ -550,7 +550,7 @@ describe("fuzz loop", () => {
         tmpDir,
         "stage-no-cmp",
         "test.fuzz.ts",
-        { runs: 50, grimoire: false },
+        { runs: 50, grimoire: false, unicode: false },
       );
 
       expect(result.crashed).toBe(false);
@@ -793,7 +793,7 @@ describe("fuzz loop", () => {
         tmpDir,
         "stage-no-wd",
         "test.fuzz.ts",
-        { runs: 50, grimoire: false },
+        { runs: 50, grimoire: false, unicode: false },
       );
 
       expect(result.crashed).toBe(false);
@@ -833,7 +833,7 @@ describe("fuzz loop", () => {
         tmpDir,
         "stage-cal-crash",
         "test.fuzz.ts",
-        { runs: 50, grimoire: false },
+        { runs: 50, grimoire: false, unicode: false },
       );
 
       expect(result.crashed).toBe(false);

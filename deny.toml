@@ -44,4 +44,4 @@ skip = [
 
 [sources]
 unknown-registry = "deny"
-allow-git = ["https://github.com/AFLplusplus/LibAFL"]
+allow-git = ["https://github.com/mjkoo/LibAFL"]

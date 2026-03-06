@@ -77,6 +77,9 @@ export async function runFuzzLoop(
   if (options.grimoire !== undefined) {
     fuzzerConfig.grimoire = options.grimoire;
   }
+  if (options.unicode !== undefined) {
+    fuzzerConfig.unicode = options.unicode;
+  }
 
   const fuzzer = new Fuzzer(coverageMap, fuzzerConfig);
 

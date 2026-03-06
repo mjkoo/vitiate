@@ -7,6 +7,9 @@ pub struct FuzzerConfig {
     /// Grimoire structure-aware fuzzing control.
     /// `true` = force enable, `false` = force disable, absent = auto-detect from corpus UTF-8 content.
     pub grimoire: Option<bool>,
+    /// Unicode-aware mutation control.
+    /// `true` = force enable, `false` = force disable, absent = auto-detect from corpus UTF-8 content.
+    pub unicode: Option<bool>,
 }
 
 #[napi]

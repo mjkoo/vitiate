@@ -25,6 +25,11 @@ export interface FuzzOptions {
    * `true` = force enable, `false` = force disable, absent = auto-detect from corpus UTF-8 content.
    */
   grimoire?: boolean;
+  /**
+   * Unicode-aware mutation control.
+   * `true` = force enable, `false` = force disable, absent = auto-detect from corpus UTF-8 content.
+   */
+  unicode?: boolean;
 }
 
 export interface FuzzDefaults extends FuzzOptions {
@@ -63,7 +68,7 @@ export function isFuzzingMode(): boolean {
 
 function validateFuzzOptions(obj: Record<string, unknown>): FuzzOptions {
   const valid: FuzzOptions = {};
-  const numericKeys: (keyof Omit<FuzzOptions, "grimoire">)[] = [
+  const numericKeys: (keyof Omit<FuzzOptions, "grimoire" | "unicode">)[] = [
     "maxLen",
     "timeoutMs",
     "maxTotalTimeMs",
@@ -100,6 +105,17 @@ function validateFuzzOptions(obj: Record<string, unknown>): FuzzOptions {
   ) {
     process.stderr.write(
       `vitiate: warning: ignoring non-boolean VITIATE_FUZZ_OPTIONS.grimoire: ${JSON.stringify(obj["grimoire"])}\n`,
+    );
+  }
+  if ("unicode" in obj && typeof obj["unicode"] === "boolean") {
+    valid.unicode = obj["unicode"];
+  } else if (
+    "unicode" in obj &&
+    obj["unicode"] !== undefined &&
+    obj["unicode"] !== null
+  ) {
+    process.stderr.write(
+      `vitiate: warning: ignoring non-boolean VITIATE_FUZZ_OPTIONS.unicode: ${JSON.stringify(obj["unicode"])}\n`,
     );
   }
   return valid;

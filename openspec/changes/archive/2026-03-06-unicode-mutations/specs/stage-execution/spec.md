@@ -1,8 +1,4 @@
-## Purpose
-
-Stage execution manages the multi-stage pipeline (I2S, Generalization, Grimoire, Unicode) that runs after calibration for interesting inputs. This capability defines the protocol for beginning, advancing, and aborting stages, the state machine lifecycle, mutation semantics, and execution counting.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Begin stage after calibration
 

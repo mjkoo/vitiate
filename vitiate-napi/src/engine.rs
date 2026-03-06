@@ -15,6 +15,10 @@ use libafl::mutators::grimoire::{
     GrimoireStringReplacementMutator,
 };
 use libafl::mutators::token_mutations::{I2SRandReplace, TokenInsert, TokenReplace};
+use libafl::mutators::unicode::{
+    UnicodeCategoryRandMutator, UnicodeCategoryTokenReplaceMutator, UnicodeSubcategoryRandMutator,
+    UnicodeSubcategoryTokenReplaceMutator,
+};
 use libafl::mutators::{
     HavocMutationsType, HavocScheduledMutator, MutationResult, Mutator, Tokens, havoc_mutations,
     tokens_mutations,
@@ -24,6 +28,7 @@ use libafl::observers::cmp::{CmpValues, CmpValuesMetadata};
 use libafl::schedulers::powersched::{N_FUZZ_SIZE, PowerSchedule, SchedulerMetadata};
 use libafl::schedulers::testcase_score::CorpusPowerTestcaseScore;
 use libafl::schedulers::{ProbabilitySamplingScheduler, RemovableScheduler, Scheduler};
+use libafl::stages::UnicodeIdentificationMetadata;
 use libafl::state::{HasCorpus, HasExecutions, HasMaxSize, HasRand, HasSolutions, StdState};
 use libafl::{HasMetadata, HasNamedMetadata};
 use libafl_bolts::rands::{Rand, StdRand};
@@ -55,11 +60,15 @@ const CALIBRATION_STAGE_MAX: usize = 8;
 /// Nominal execution time assigned to seeds (not calibrated).
 const SEED_EXEC_TIME: Duration = Duration::from_millis(1);
 
-/// Number of interesting main-loop inputs before deferred Grimoire auto-detection fires.
-const GRIMOIRE_DEFERRED_THRESHOLD: usize = 10;
+/// Number of interesting main-loop inputs before deferred auto-detection fires.
+const DEFERRED_DETECTION_THRESHOLD: usize = 10;
 
 /// Maximum power-of-two stacked mutations per Grimoire iteration (2^3 = 8 max).
 const GRIMOIRE_MAX_STACK_POW: usize = 3;
+
+/// Maximum power-of-two stacked mutations per unicode iteration (2^7 = 128 max).
+/// Character-level mutations are small individually, so deeper stacking is appropriate.
+const UNICODE_MAX_STACK_POW: usize = 7;
 
 /// Maximum random iteration count for I2S and Grimoire stages (selected uniformly from 1..=N).
 const STAGE_MAX_ITERATIONS: usize = 128;
@@ -131,6 +140,39 @@ type GrimoireMutationsType = (
     ),
 );
 type GrimoireMutator = HavocScheduledMutator<GrimoireMutationsType>;
+/// Unicode input type: (BytesInput, UnicodeIdentificationMetadata) tuple.
+type UnicodeInput = (BytesInput, UnicodeIdentificationMetadata);
+/// Unicode mutator pool: 1x category + 4x subcategory for both random and token replacement.
+/// Subcategory mutators are weighted 4x relative to category mutators.
+type UnicodeMutationsType = (
+    UnicodeCategoryRandMutator,
+    (
+        UnicodeSubcategoryRandMutator,
+        (
+            UnicodeSubcategoryRandMutator,
+            (
+                UnicodeSubcategoryRandMutator,
+                (
+                    UnicodeSubcategoryRandMutator,
+                    (
+                        UnicodeCategoryTokenReplaceMutator,
+                        (
+                            UnicodeSubcategoryTokenReplaceMutator,
+                            (
+                                UnicodeSubcategoryTokenReplaceMutator,
+                                (
+                                    UnicodeSubcategoryTokenReplaceMutator,
+                                    (UnicodeSubcategoryTokenReplaceMutator, ()),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    ),
+);
+type UnicodeMutator = HavocScheduledMutator<UnicodeMutationsType>;
 type FuzzerState =
     StdState<InMemoryCorpus<BytesInput>, BytesInput, StdRand, InMemoryCorpus<BytesInput>>;
 
@@ -437,13 +479,25 @@ pub struct Fuzzer {
     /// Whether Grimoire structure-aware fuzzing is enabled. Determined by
     /// auto-detection (corpus UTF-8 scanning) or explicit override.
     grimoire_enabled: bool,
+    /// Unicode scheduled mutator operating on `(BytesInput, UnicodeIdentificationMetadata)`.
+    unicode_mutator: UnicodeMutator,
+    /// Whether unicode-aware mutations are enabled. Determined by
+    /// auto-detection (corpus UTF-8 scanning) or explicit override.
+    unicode_enabled: bool,
+    /// Original config override for grimoire. `None` = auto-detect.
+    /// Used by deferred detection to avoid overriding explicit `false`.
+    grimoire_override: Option<bool>,
+    /// Original config override for unicode. `None` = auto-detect.
+    /// Used by deferred detection to avoid overriding explicit `false`.
+    unicode_override: Option<bool>,
     /// Count of interesting inputs found via `report_result()` for deferred
-    /// Grimoire detection. `None` means detection is already resolved (not deferred).
-    /// Stage-found entries do NOT count toward this threshold.
-    grimoire_deferred_count: Option<usize>,
+    /// detection (shared by Grimoire and unicode). `None` means detection is
+    /// already resolved (not deferred). Stage-found entries do NOT count toward
+    /// this threshold.
+    deferred_detection_count: Option<usize>,
     /// Number of auto-seeded corpus entries (from `DEFAULT_SEEDS`). Used by
-    /// `scan_corpus_utf8` to skip auto-seeds when performing deferred Grimoire
-    /// detection — auto-seeds are all valid UTF-8 and would bias the vote.
+    /// `scan_corpus_utf8` to skip auto-seeds when performing deferred detection
+    /// — auto-seeds are all valid UTF-8 and would bias the vote.
     auto_seed_count: usize,
 }
 
@@ -558,6 +612,12 @@ enum StageState {
         iteration: usize,
         max_iterations: usize,
     },
+    /// Unicode mutational stage: category-aware character replacement mutations.
+    Unicode {
+        corpus_id: CorpusId,
+        iteration: usize,
+        max_iterations: usize,
+    },
 }
 
 /// Result of coverage evaluation for a single execution.
@@ -580,6 +640,7 @@ impl Fuzzer {
             .unwrap_or(DEFAULT_MAX_INPUT_LEN);
         let seed = config.as_ref().and_then(|c| c.seed);
         let grimoire_override = config.as_ref().and_then(|c| c.grimoire);
+        let unicode_override = config.as_ref().and_then(|c| c.unicode);
 
         let map_ptr = coverage_map.as_mut_ptr();
         let map_len = coverage_map.len();
@@ -631,6 +692,25 @@ impl Fuzzer {
             ),
             GRIMOIRE_MAX_STACK_POW,
         );
+        let unicode_mutator = HavocScheduledMutator::with_max_stack_pow(
+            tuple_list!(
+                // 1x category random replacement.
+                UnicodeCategoryRandMutator,
+                // 4x subcategory random replacement (finer-grained, higher weight).
+                UnicodeSubcategoryRandMutator,
+                UnicodeSubcategoryRandMutator,
+                UnicodeSubcategoryRandMutator,
+                UnicodeSubcategoryRandMutator,
+                // 1x category token replacement.
+                UnicodeCategoryTokenReplaceMutator,
+                // 4x subcategory token replacement.
+                UnicodeSubcategoryTokenReplaceMutator,
+                UnicodeSubcategoryTokenReplaceMutator,
+                UnicodeSubcategoryTokenReplaceMutator,
+                UnicodeSubcategoryTokenReplaceMutator,
+            ),
+            UNICODE_MAX_STACK_POW,
+        );
 
         // Drop the temporary observer - feedback only holds a name-based Handle.
         drop(temp_observer);
@@ -645,21 +725,28 @@ impl Fuzzer {
         // Initialize power scheduling metadata with FAST strategy.
         state.add_metadata(SchedulerMetadata::new(Some(PowerSchedule::fast())));
 
-        // Grimoire auto-detection: scan corpus for UTF-8 content.
-        let (grimoire_enabled, grimoire_deferred_count) = match grimoire_override {
-            Some(explicit) => (explicit, None),
-            None => {
-                if state.corpus().count() == 0 {
-                    // Empty corpus: defer detection until 10 interesting inputs.
-                    (false, Some(0))
-                } else {
-                    // Currently unreachable: state is freshly constructed with an empty
-                    // corpus. Retained as a defensive fallback if future changes introduce
-                    // pre-populated state (e.g., serialized corpus loading).
-                    (Self::scan_corpus_utf8(&state, 0), None)
-                }
-            }
+        // Auto-detection for Grimoire and unicode: scan corpus for UTF-8 content.
+        // Both features share the same detection signal and deferred threshold.
+        let grimoire_needs_detection = grimoire_override.is_none();
+        let unicode_needs_detection = unicode_override.is_none();
+        let needs_deferred = grimoire_needs_detection || unicode_needs_detection;
+
+        let (corpus_is_utf8, deferred_detection_count) = if !needs_deferred {
+            // Both features are explicitly configured — no detection needed.
+            (false, None)
+        } else if state.corpus().count() == 0 {
+            // Empty corpus: defer detection until DEFERRED_DETECTION_THRESHOLD
+            // interesting inputs.
+            (false, Some(0))
+        } else {
+            // Currently unreachable: state is freshly constructed with an empty
+            // corpus. Retained as a defensive fallback if future changes introduce
+            // pre-populated state (e.g., serialized corpus loading).
+            (Self::scan_corpus_utf8(&state, 0), None)
         };
+
+        let grimoire_enabled = grimoire_override.unwrap_or(corpus_is_utf8);
+        let unicode_enabled = unicode_override.unwrap_or(corpus_is_utf8);
 
         Ok(Self {
             state,
@@ -692,7 +779,11 @@ impl Fuzzer {
             last_stage_input: None,
             grimoire_mutator,
             grimoire_enabled,
-            grimoire_deferred_count,
+            unicode_mutator,
+            unicode_enabled,
+            grimoire_override,
+            unicode_override,
+            deferred_detection_count,
             auto_seed_count: 0,
         })
     }
@@ -843,14 +934,23 @@ impl Fuzzer {
             // Store for beginStage() — consumed after calibration completes.
             self.last_interesting_corpus_id = Some(corpus_id);
 
-            // Deferred Grimoire detection: count interesting inputs from the
-            // main loop (not stage-found). After threshold, scan corpus for UTF-8.
-            if let Some(count) = self.grimoire_deferred_count.as_mut() {
+            // Deferred detection: count interesting inputs from the main loop
+            // (not stage-found). After threshold, scan corpus for UTF-8 and
+            // resolve both Grimoire and unicode enable states in one pass.
+            if let Some(count) = self.deferred_detection_count.as_mut() {
                 *count += 1;
-                if *count >= GRIMOIRE_DEFERRED_THRESHOLD {
-                    self.grimoire_enabled =
-                        Self::scan_corpus_utf8(&self.state, self.auto_seed_count);
-                    self.grimoire_deferred_count = None;
+                if *count >= DEFERRED_DETECTION_THRESHOLD {
+                    let is_utf8 = Self::scan_corpus_utf8(&self.state, self.auto_seed_count);
+                    // Only override features that were not explicitly configured.
+                    // Explicit overrides (including explicit `false`) are preserved;
+                    // only `None` (auto-detect) entries are resolved here.
+                    if self.grimoire_override.is_none() {
+                        self.grimoire_enabled = is_utf8;
+                    }
+                    if self.unicode_override.is_none() {
+                        self.unicode_enabled = is_utf8;
+                    }
+                    self.deferred_detection_count = None;
                 }
             }
 
@@ -1093,7 +1193,7 @@ impl Fuzzer {
             .get::<CmpValuesMetadata>()
             .is_some_and(|m| !m.list.is_empty());
         if !has_cmp_data {
-            // I2S skipped — try generalization or Grimoire.
+            // I2S skipped — try generalization, Grimoire, or unicode.
             if self.grimoire_enabled {
                 if let Some(buf) = self.begin_generalization(corpus_id)? {
                     return Ok(Some(buf));
@@ -1102,6 +1202,10 @@ impl Fuzzer {
                 if let Some(buf) = self.begin_grimoire(corpus_id)? {
                     return Ok(Some(buf));
                 }
+            }
+            // Grimoire stages not applicable — try unicode.
+            if let Some(buf) = self.begin_unicode(corpus_id)? {
+                return Ok(Some(buf));
             }
             return Ok(None);
         }
@@ -1161,6 +1265,9 @@ impl Fuzzer {
             StageState::Grimoire { .. } => {
                 return self.advance_grimoire(exec_time_ns);
             }
+            StageState::Unicode { .. } => {
+                return self.advance_unicode(exec_time_ns);
+            }
             StageState::I2S { .. } => {}
         }
 
@@ -1195,7 +1302,7 @@ impl Fuzzer {
 
         let next_iteration = iteration + 1;
         if next_iteration >= max_iterations {
-            // I2S stage complete — try transitioning to Generalization or Grimoire.
+            // I2S stage complete — try transitioning to Generalization, Grimoire, or Unicode.
             // stage_state is already StageState::None (reset before evaluate_coverage above).
             if self.grimoire_enabled {
                 if let Some(buf) = self.begin_generalization(corpus_id)? {
@@ -1205,6 +1312,10 @@ impl Fuzzer {
                 if let Some(buf) = self.begin_grimoire(corpus_id)? {
                     return Ok(Some(buf));
                 }
+            }
+            // Grimoire stages not applicable — try unicode.
+            if let Some(buf) = self.begin_unicode(corpus_id)? {
+                return Ok(Some(buf));
             }
             return Ok(None);
         }
@@ -2170,9 +2281,15 @@ impl Fuzzer {
         tc.add_metadata(metadata);
         drop(tc);
 
-        // Transition to Grimoire stage (entry now has GeneralizedInputMetadata).
+        // Transition to next stage: try Grimoire, then Unicode.
         self.stage_state = StageState::None;
-        self.begin_grimoire(corpus_id)
+        if let Some(buf) = self.begin_grimoire(corpus_id)? {
+            return Ok(Some(buf));
+        }
+        if let Some(buf) = self.begin_unicode(corpus_id)? {
+            return Ok(Some(buf));
+        }
+        Ok(None)
     }
 
     /// Begin the Grimoire mutational stage for a corpus entry that has
@@ -2249,7 +2366,11 @@ impl Fuzzer {
 
         let next_iteration = iteration + 1;
         if next_iteration >= max_iterations {
+            // Grimoire complete — try unicode.
             // stage_state is already StageState::None (reset before evaluate_coverage above).
+            if let Some(buf) = self.begin_unicode(corpus_id)? {
+                return Ok(Some(buf));
+            }
             return Ok(None);
         }
 
@@ -2292,6 +2413,156 @@ impl Fuzzer {
         bytes.truncate(self.max_input_len as usize);
 
         Ok(bytes)
+    }
+
+    /// Begin the unicode mutation stage for a corpus entry.
+    /// Returns `None` if unicode is disabled, or if the entry has no valid UTF-8 regions.
+    fn begin_unicode(&mut self, corpus_id: CorpusId) -> Result<Option<Buffer>> {
+        if !self.unicode_enabled {
+            return Ok(None);
+        }
+
+        // Compute or retrieve cached UnicodeIdentificationMetadata.
+        let metadata = self.get_or_compute_unicode_metadata(corpus_id)?;
+
+        // Skip if no valid UTF-8 regions.
+        if metadata.ranges().is_empty() {
+            return Ok(None);
+        }
+
+        // Cache metadata on testcase if not already present.
+        {
+            let tc = self
+                .state
+                .corpus()
+                .get(corpus_id)
+                .map_err(|e| Error::from_reason(format!("Failed to get corpus entry: {e}")))?;
+            let mut tc_ref = tc.borrow_mut();
+            if !tc_ref.has_metadata::<UnicodeIdentificationMetadata>() {
+                tc_ref.add_metadata(metadata);
+            }
+        }
+
+        // Select random iteration count 1..=STAGE_MAX_ITERATIONS.
+        // SAFETY of unwrap: STAGE_MAX_ITERATIONS is a non-zero constant.
+        let max_iterations = self
+            .state
+            .rand_mut()
+            .below(core::num::NonZero::new(STAGE_MAX_ITERATIONS).unwrap())
+            + 1;
+
+        // Generate first mutated input.
+        let bytes = self.unicode_mutate_one(corpus_id)?;
+
+        self.last_stage_input = Some(bytes.clone());
+        self.stage_state = StageState::Unicode {
+            corpus_id,
+            iteration: 0,
+            max_iterations,
+        };
+
+        Ok(Some(Buffer::from(bytes)))
+    }
+
+    /// Advance the unicode stage after a target execution.
+    fn advance_unicode(&mut self, exec_time_ns: f64) -> Result<Option<Buffer>> {
+        let (corpus_id, iteration, max_iterations) = match self.stage_state {
+            StageState::Unicode {
+                corpus_id,
+                iteration,
+                max_iterations,
+            } => (corpus_id, iteration, max_iterations),
+            _ => return Ok(None),
+        };
+
+        // Drain CmpLog (discard — unicode doesn't use CmpLog data).
+        let _ = crate::cmplog::drain();
+
+        // Reset stage state before the fallible evaluate_coverage call. On error,
+        // the stage is cleanly abandoned (no zombie state). On success, stage_state
+        // is overwritten below with the next iteration or StageState::None.
+        self.stage_state = StageState::None;
+        let stage_input = self
+            .last_stage_input
+            .take()
+            .ok_or_else(|| Error::from_reason("advanceUnicode: no stashed stage input"))?;
+
+        // The target was invoked — count the execution before the fallible
+        // evaluate_coverage call so counters stay accurate on error.
+        self.total_execs += 1;
+        *self.state.executions_mut() += 1;
+
+        let _eval =
+            self.evaluate_coverage(&stage_input, exec_time_ns, LibaflExitKind::Ok, corpus_id)?;
+
+        let next_iteration = iteration + 1;
+        if next_iteration >= max_iterations {
+            // Unicode stage complete — pipeline done.
+            // stage_state is already StageState::None (reset before evaluate_coverage above).
+            return Ok(None);
+        }
+
+        // Generate next unicode candidate.
+        let bytes = self.unicode_mutate_one(corpus_id)?;
+        self.last_stage_input = Some(bytes.clone());
+
+        self.stage_state = StageState::Unicode {
+            corpus_id,
+            iteration: next_iteration,
+            max_iterations,
+        };
+
+        Ok(Some(Buffer::from(bytes)))
+    }
+
+    /// Clone a corpus entry, apply unicode mutations, and return the result bytes.
+    /// Each call starts from a fresh clone (non-cumulative mutations).
+    fn unicode_mutate_one(&mut self, corpus_id: CorpusId) -> Result<Vec<u8>> {
+        // Clone the corpus entry.
+        let input = self
+            .state
+            .corpus()
+            .cloned_input_for_id(corpus_id)
+            .map_err(|e| Error::from_reason(format!("Failed to clone corpus entry: {e}")))?;
+
+        // Retrieve cached metadata (mutations are non-cumulative: each iteration
+        // starts from the same original input, so metadata is identical).
+        let metadata = self.get_or_compute_unicode_metadata(corpus_id)?;
+
+        // Create UnicodeInput tuple and apply mutation.
+        let mut unicode_input: UnicodeInput = (input, metadata);
+        let _ = self
+            .unicode_mutator
+            .mutate(&mut self.state, &mut unicode_input)
+            .map_err(|e| Error::from_reason(format!("Unicode mutation failed: {e}")))?;
+
+        // Convert to bytes and truncate.
+        let mut bytes: Vec<u8> = unicode_input.0.into();
+        bytes.truncate(self.max_input_len as usize);
+
+        Ok(bytes)
+    }
+
+    /// Get or compute `UnicodeIdentificationMetadata` for a corpus entry.
+    /// Returns cached metadata if available, otherwise computes fresh metadata.
+    fn get_or_compute_unicode_metadata(
+        &self,
+        corpus_id: CorpusId,
+    ) -> Result<UnicodeIdentificationMetadata> {
+        let tc = self
+            .state
+            .corpus()
+            .get(corpus_id)
+            .map_err(|e| Error::from_reason(format!("Failed to get corpus entry: {e}")))?;
+        let tc_ref = tc.borrow();
+        if let Ok(meta) = tc_ref.metadata::<UnicodeIdentificationMetadata>() {
+            return Ok(meta.clone());
+        }
+        let Some(input) = tc_ref.input() else {
+            return Err(Error::from_reason("No input on corpus entry"));
+        };
+        let bytes: &[u8] = input.as_ref();
+        Ok(UnicodeIdentificationMetadata::new(bytes))
     }
 }
 
@@ -3885,6 +4156,21 @@ mod tests {
             ),
             GRIMOIRE_MAX_STACK_POW,
         );
+        let unicode_mutator = HavocScheduledMutator::with_max_stack_pow(
+            tuple_list!(
+                UnicodeCategoryRandMutator,
+                UnicodeSubcategoryRandMutator,
+                UnicodeSubcategoryRandMutator,
+                UnicodeSubcategoryRandMutator,
+                UnicodeSubcategoryRandMutator,
+                UnicodeCategoryTokenReplaceMutator,
+                UnicodeSubcategoryTokenReplaceMutator,
+                UnicodeSubcategoryTokenReplaceMutator,
+                UnicodeSubcategoryTokenReplaceMutator,
+                UnicodeSubcategoryTokenReplaceMutator,
+            ),
+            UNICODE_MAX_STACK_POW,
+        );
 
         drop(temp_observer);
 
@@ -3901,6 +4187,7 @@ mod tests {
             mutator,
             i2s_mutator,
             grimoire_mutator,
+            unicode_mutator,
             map_ptr,
             map_len,
             _coverage_map: coverage_map,
@@ -3923,7 +4210,10 @@ mod tests {
             last_interesting_corpus_id: None,
             last_stage_input: None,
             grimoire_enabled: false,
-            grimoire_deferred_count: Some(0),
+            unicode_enabled: false,
+            grimoire_override: None,
+            unicode_override: None,
+            deferred_detection_count: Some(0),
             auto_seed_count: 0,
         }
     }
@@ -5021,64 +5311,25 @@ mod tests {
     }
 
     #[test]
-    fn test_grimoire_explicit_override_bypasses_scanning() {
-        // Explicit `grimoire: false` should prevent deferred detection from
-        // enabling Grimoire, even after GRIMOIRE_DEFERRED_THRESHOLD interesting
-        // UTF-8 inputs arrive via report_result.
+    fn test_deferred_detection_respects_explicit_false_override() {
+        // grimoire: explicit false, unicode: auto-detect (None).
+        // After deferred detection fires with UTF-8 corpus, grimoire must stay
+        // false while unicode must be auto-enabled.
         cmplog::disable();
         cmplog::drain();
         let mut fuzzer = make_test_fuzzer(256);
-        // Simulate explicit override: grimoire disabled, no deferred tracking.
+        // Simulate: grimoire explicitly disabled, unicode left for auto-detect.
+        fuzzer.grimoire_override = Some(false);
         fuzzer.grimoire_enabled = false;
-        fuzzer.grimoire_deferred_count = None;
+        fuzzer.unicode_override = None;
+        fuzzer.unicode_enabled = false;
+        fuzzer.deferred_detection_count = Some(0);
         cmplog::enable();
 
-        assert!(
-            fuzzer.grimoire_deferred_count.is_none(),
-            "explicit override should set deferred_count to None"
-        );
-
-        fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
-        let seed_id = CorpusId::from(0usize);
-        for i in 0..GRIMOIRE_DEFERRED_THRESHOLD {
-            fuzzer.last_input = Some(BytesInput::new(format!("utf8_input_{i}").into_bytes()));
-            fuzzer.last_corpus_id = Some(seed_id);
-            unsafe {
-                *fuzzer.map_ptr.add(i + 10) = 1;
-            }
-            let result = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
-            assert!(matches!(result, IterationResult::Interesting));
-            fuzzer.calibrate_finish().unwrap();
-        }
-
-        assert!(
-            !fuzzer.grimoire_enabled,
-            "explicit false override should not be overridden by deferred detection"
-        );
-        cmplog::disable();
-    }
-
-    #[test]
-    fn test_grimoire_empty_corpus_defers_detection() {
-        let fuzzer = make_test_fuzzer(256);
-
-        // Empty corpus with no override → deferred.
-        assert!(!fuzzer.grimoire_enabled);
-        assert_eq!(fuzzer.grimoire_deferred_count, Some(0));
-    }
-
-    #[test]
-    fn test_grimoire_deferred_triggers_after_10_interesting() {
-        cmplog::disable();
-        cmplog::drain();
-        let mut fuzzer = make_test_fuzzer(256);
-        cmplog::enable();
         fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
 
-        // Generate GRIMOIRE_DEFERRED_THRESHOLD interesting inputs with controlled UTF-8 content.
-        // We bypass get_next_input to avoid havoc producing non-UTF-8 bytes.
         let seed_id = CorpusId::from(0usize);
-        for i in 0..GRIMOIRE_DEFERRED_THRESHOLD {
+        for i in 0..DEFERRED_DETECTION_THRESHOLD {
             fuzzer.last_input = Some(BytesInput::new(format!("utf8_input_{i}").into_bytes()));
             fuzzer.last_corpus_id = Some(seed_id);
             unsafe {
@@ -5092,13 +5343,110 @@ mod tests {
             fuzzer.calibrate_finish().unwrap();
         }
 
-        // After GRIMOIRE_DEFERRED_THRESHOLD interesting UTF-8 inputs, Grimoire should be enabled.
         assert!(
-            fuzzer.grimoire_enabled,
-            "should be enabled after GRIMOIRE_DEFERRED_THRESHOLD UTF-8 inputs"
+            !fuzzer.grimoire_enabled,
+            "explicit grimoire: false must not be overridden by deferred detection"
         );
         assert!(
-            fuzzer.grimoire_deferred_count.is_none(),
+            fuzzer.unicode_enabled,
+            "unicode (auto-detect) should be enabled after UTF-8 corpus detected"
+        );
+        assert!(
+            fuzzer.deferred_detection_count.is_none(),
+            "deferred count should be consumed"
+        );
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_deferred_detection_respects_explicit_false_unicode_override() {
+        // unicode: explicit false, grimoire: auto-detect (None).
+        // After deferred detection fires with UTF-8 corpus, unicode must stay
+        // false while grimoire must be auto-enabled.
+        cmplog::disable();
+        cmplog::drain();
+        let mut fuzzer = make_test_fuzzer(256);
+        // Simulate: unicode explicitly disabled, grimoire left for auto-detect.
+        fuzzer.unicode_override = Some(false);
+        fuzzer.unicode_enabled = false;
+        fuzzer.grimoire_override = None;
+        fuzzer.grimoire_enabled = false;
+        fuzzer.deferred_detection_count = Some(0);
+        cmplog::enable();
+
+        fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+
+        let seed_id = CorpusId::from(0usize);
+        for i in 0..DEFERRED_DETECTION_THRESHOLD {
+            fuzzer.last_input = Some(BytesInput::new(format!("utf8_input_{i}").into_bytes()));
+            fuzzer.last_corpus_id = Some(seed_id);
+            unsafe {
+                *fuzzer.map_ptr.add(i + 10) = 1;
+            }
+            let result = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
+            assert!(
+                matches!(result, IterationResult::Interesting),
+                "iteration {i} should be interesting"
+            );
+            fuzzer.calibrate_finish().unwrap();
+        }
+
+        assert!(
+            !fuzzer.unicode_enabled,
+            "explicit unicode: false must not be overridden by deferred detection"
+        );
+        assert!(
+            fuzzer.grimoire_enabled,
+            "grimoire (auto-detect) should be enabled after UTF-8 corpus detected"
+        );
+        assert!(
+            fuzzer.deferred_detection_count.is_none(),
+            "deferred count should be consumed"
+        );
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_grimoire_empty_corpus_defers_detection() {
+        let fuzzer = make_test_fuzzer(256);
+
+        // Empty corpus with no override → deferred.
+        assert!(!fuzzer.grimoire_enabled);
+        assert_eq!(fuzzer.deferred_detection_count, Some(0));
+    }
+
+    #[test]
+    fn test_grimoire_deferred_triggers_after_10_interesting() {
+        cmplog::disable();
+        cmplog::drain();
+        let mut fuzzer = make_test_fuzzer(256);
+        cmplog::enable();
+        fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+
+        // Generate DEFERRED_DETECTION_THRESHOLD interesting inputs with controlled UTF-8 content.
+        // We bypass get_next_input to avoid havoc producing non-UTF-8 bytes.
+        let seed_id = CorpusId::from(0usize);
+        for i in 0..DEFERRED_DETECTION_THRESHOLD {
+            fuzzer.last_input = Some(BytesInput::new(format!("utf8_input_{i}").into_bytes()));
+            fuzzer.last_corpus_id = Some(seed_id);
+            unsafe {
+                *fuzzer.map_ptr.add(i + 10) = 1;
+            }
+            let result = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
+            assert!(
+                matches!(result, IterationResult::Interesting),
+                "iteration {i} should be interesting"
+            );
+            fuzzer.calibrate_finish().unwrap();
+        }
+
+        // After DEFERRED_DETECTION_THRESHOLD interesting UTF-8 inputs, Grimoire should be enabled.
+        assert!(
+            fuzzer.grimoire_enabled,
+            "should be enabled after DEFERRED_DETECTION_THRESHOLD UTF-8 inputs"
+        );
+        assert!(
+            fuzzer.deferred_detection_count.is_none(),
             "deferred count should be consumed"
         );
         cmplog::disable();
@@ -5126,7 +5474,7 @@ mod tests {
         )));
         let result = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
         assert!(matches!(result, IterationResult::Interesting));
-        assert_eq!(fuzzer.grimoire_deferred_count, Some(1));
+        assert_eq!(fuzzer.deferred_detection_count, Some(1));
 
         // Calibrate to completion.
         loop {
@@ -5151,7 +5499,7 @@ mod tests {
 
         // Deferred count must still be 1 — stage-found entries don't count.
         assert_eq!(
-            fuzzer.grimoire_deferred_count,
+            fuzzer.deferred_detection_count,
             Some(1),
             "stage-found entries should not increment deferred count"
         );
@@ -5210,7 +5558,7 @@ mod tests {
 
         let mut fuzzer = make_test_fuzzer(map_size);
         fuzzer.grimoire_enabled = true;
-        fuzzer.grimoire_deferred_count = None;
+        fuzzer.deferred_detection_count = None;
         cmplog::enable();
 
         // Add a seed so the scheduler has something.
@@ -5302,7 +5650,7 @@ mod tests {
 
         let mut fuzzer = make_test_fuzzer(256);
         fuzzer.grimoire_enabled = true;
-        fuzzer.grimoire_deferred_count = None;
+        fuzzer.deferred_detection_count = None;
         cmplog::enable();
 
         // Add a corpus entry WITHOUT MapNoveltiesMetadata.
@@ -5836,7 +6184,7 @@ mod tests {
 
         let mut fuzzer = make_test_fuzzer(map_size);
         fuzzer.grimoire_enabled = true;
-        fuzzer.grimoire_deferred_count = None;
+        fuzzer.deferred_detection_count = None;
         cmplog::enable();
 
         // Add a seed so scheduler works.
@@ -5910,7 +6258,7 @@ mod tests {
 
         let mut fuzzer = make_test_fuzzer(256);
         fuzzer.grimoire_enabled = true;
-        fuzzer.grimoire_deferred_count = None;
+        fuzzer.deferred_detection_count = None;
         cmplog::enable();
 
         // Add a corpus entry WITHOUT GeneralizedInputMetadata.
@@ -6119,7 +6467,7 @@ mod tests {
         // Full pipeline: I2S (1 iteration) → Generalization → Grimoire → None.
         let mut fuzzer = make_fuzzer_ready_for_stage(256);
         fuzzer.grimoire_enabled = true;
-        fuzzer.grimoire_deferred_count = None;
+        fuzzer.deferred_detection_count = None;
 
         // begin_stage starts I2S (CmpLog data exists from make_fuzzer_ready_for_stage).
         let first = fuzzer.begin_stage().unwrap();
@@ -6480,7 +6828,7 @@ mod tests {
     #[test]
     fn test_grimoire_override_through_constructor() {
         // When FuzzerConfig.grimoire = Some(true), grimoire_enabled should be true
-        // and grimoire_deferred_count should be None (already resolved).
+        // and deferred_detection_count should be None (already resolved).
         let coverage_map: Buffer = vec![0u8; 256].into();
         let fuzzer = Fuzzer::new(
             coverage_map,
@@ -6488,6 +6836,7 @@ mod tests {
                 max_input_len: None,
                 seed: None,
                 grimoire: Some(true),
+                unicode: None,
             }),
         )
         .unwrap();
@@ -6495,9 +6844,10 @@ mod tests {
             fuzzer.grimoire_enabled,
             "grimoire_enabled should be true when config.grimoire = Some(true)"
         );
+        // unicode needs auto-detect, so deferred count is still Some.
         assert!(
-            fuzzer.grimoire_deferred_count.is_none(),
-            "grimoire_deferred_count should be None when explicitly set"
+            fuzzer.deferred_detection_count.is_some(),
+            "deferred_detection_count should be Some when unicode needs auto-detect"
         );
     }
 
@@ -6510,6 +6860,7 @@ mod tests {
                 max_input_len: None,
                 seed: None,
                 grimoire: Some(false),
+                unicode: None,
             }),
         )
         .unwrap();
@@ -6517,9 +6868,10 @@ mod tests {
             !fuzzer.grimoire_enabled,
             "grimoire_enabled should be false when config.grimoire = Some(false)"
         );
+        // unicode needs auto-detect, so deferred count is still Some.
         assert!(
-            fuzzer.grimoire_deferred_count.is_none(),
-            "grimoire_deferred_count should be None when explicitly set"
+            fuzzer.deferred_detection_count.is_some(),
+            "deferred_detection_count should be Some when unicode needs auto-detect"
         );
     }
 
@@ -6835,6 +7187,1212 @@ mod tests {
             }
             _ => panic!("unexpected stage state"),
         }
+
+        cmplog::disable();
+    }
+
+    // -----------------------------------------------------------------------
+    // Unicode Identification Metadata Tests (Task 1.3)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_unicode_metadata_fully_valid_utf8() {
+        let meta = UnicodeIdentificationMetadata::new(b"hello world");
+        assert_eq!(
+            meta.ranges().len(),
+            1,
+            "fully valid UTF-8 should have one region"
+        );
+        assert_eq!(meta.ranges()[0].0, 0, "region should start at offset 0");
+        // All ASCII chars are single-byte, so every position is a character boundary.
+        let bitvec = &meta.ranges()[0].1;
+        assert_eq!(bitvec.len(), 11);
+        for i in 0..11 {
+            assert!(bitvec[i], "byte {i} should be a character boundary");
+        }
+    }
+
+    #[test]
+    fn test_unicode_metadata_embedded_invalid_bytes() {
+        let mut input = b"abc".to_vec();
+        input.extend_from_slice(&[0xFF, 0xFE]);
+        input.extend_from_slice(b"def");
+        let meta = UnicodeIdentificationMetadata::new(&input);
+        assert!(
+            meta.ranges().len() >= 2,
+            "should have at least two regions for abc and def"
+        );
+    }
+
+    #[test]
+    fn test_unicode_metadata_multi_byte_characters() {
+        // Emoji "😀" is 4 bytes: F0 9F 98 80
+        let input = "😀".as_bytes();
+        let meta = UnicodeIdentificationMetadata::new(input);
+        assert_eq!(meta.ranges().len(), 1);
+        let bitvec = &meta.ranges()[0].1;
+        assert_eq!(bitvec.len(), 4);
+        // Only first byte is a character boundary.
+        assert!(bitvec[0], "first byte should be a character boundary");
+        assert!(!bitvec[1], "continuation byte should not be a boundary");
+        assert!(!bitvec[2], "continuation byte should not be a boundary");
+        assert!(!bitvec[3], "continuation byte should not be a boundary");
+    }
+
+    #[test]
+    fn test_unicode_metadata_empty_input() {
+        let meta = UnicodeIdentificationMetadata::new(b"");
+        assert!(
+            meta.ranges().is_empty(),
+            "empty input should have no regions"
+        );
+    }
+
+    #[test]
+    fn test_unicode_metadata_entirely_non_utf8() {
+        let input = vec![0xFF, 0xFE, 0xFD, 0xFC, 0xFB];
+        let meta = UnicodeIdentificationMetadata::new(&input);
+        assert!(
+            meta.ranges().is_empty(),
+            "entirely non-UTF-8 should have no regions"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Unicode Mutator Tests (Task 2.6)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_unicode_category_rand_mutator_produces_result() {
+        let (map_ptr, _map) = make_coverage_map(256);
+        let (mut state, _feedback, _objective) = make_state_and_feedback(map_ptr, 256);
+        state.set_max_size(4096);
+
+        let original = b"hello123".to_vec();
+        let input = BytesInput::new(original.clone());
+        let metadata = UnicodeIdentificationMetadata::new(&original);
+        let mut unicode_input: UnicodeInput = (input, metadata);
+
+        let mut mutator = UnicodeCategoryRandMutator;
+        let result = mutator.mutate(&mut state, &mut unicode_input).unwrap();
+        if result == MutationResult::Mutated {
+            assert_ne!(
+                unicode_input.0.as_ref() as &Vec<u8>,
+                &original,
+                "Mutated result should differ from original input"
+            );
+        }
+    }
+
+    #[test]
+    fn test_unicode_subcategory_rand_mutator_produces_result() {
+        let (map_ptr, _map) = make_coverage_map(256);
+        let (mut state, _feedback, _objective) = make_state_and_feedback(map_ptr, 256);
+        state.set_max_size(4096);
+
+        let original = b"HELLO".to_vec();
+        let input = BytesInput::new(original.clone());
+        let metadata = UnicodeIdentificationMetadata::new(&original);
+        let mut unicode_input: UnicodeInput = (input, metadata);
+
+        let mut mutator = UnicodeSubcategoryRandMutator;
+        let result = mutator.mutate(&mut state, &mut unicode_input).unwrap();
+        if result == MutationResult::Mutated {
+            assert_ne!(
+                unicode_input.0.as_ref() as &Vec<u8>,
+                &original,
+                "Mutated result should differ from original input"
+            );
+        }
+    }
+
+    #[test]
+    fn test_unicode_category_token_replace_skipped_when_no_tokens() {
+        let (map_ptr, _map) = make_coverage_map(256);
+        let (mut state, _feedback, _objective) = make_state_and_feedback(map_ptr, 256);
+        state.set_max_size(4096);
+        // No Tokens metadata added — mutator should skip.
+
+        let input = BytesInput::new(b"hello".to_vec());
+        let metadata = UnicodeIdentificationMetadata::new(b"hello");
+        let mut unicode_input: UnicodeInput = (input, metadata);
+
+        let mut mutator = UnicodeCategoryTokenReplaceMutator;
+        let result = mutator.mutate(&mut state, &mut unicode_input).unwrap();
+        assert_eq!(
+            result,
+            MutationResult::Skipped,
+            "should skip when no tokens available"
+        );
+    }
+
+    #[test]
+    fn test_unicode_subcategory_token_replace_skipped_when_no_tokens() {
+        let (map_ptr, _map) = make_coverage_map(256);
+        let (mut state, _feedback, _objective) = make_state_and_feedback(map_ptr, 256);
+        state.set_max_size(4096);
+
+        let input = BytesInput::new(b"hello".to_vec());
+        let metadata = UnicodeIdentificationMetadata::new(b"hello");
+        let mut unicode_input: UnicodeInput = (input, metadata);
+
+        let mut mutator = UnicodeSubcategoryTokenReplaceMutator;
+        let result = mutator.mutate(&mut state, &mut unicode_input).unwrap();
+        assert_eq!(
+            result,
+            MutationResult::Skipped,
+            "should skip when no tokens available"
+        );
+    }
+
+    #[test]
+    fn test_unicode_mutator_skipped_on_empty_input() {
+        let (map_ptr, _map) = make_coverage_map(256);
+        let (mut state, _feedback, _objective) = make_state_and_feedback(map_ptr, 256);
+        state.set_max_size(4096);
+
+        let input = BytesInput::new(vec![]);
+        let metadata = UnicodeIdentificationMetadata::new(b"");
+        let mut unicode_input: UnicodeInput = (input, metadata);
+
+        let mut mutator = UnicodeCategoryRandMutator;
+        let result = mutator.mutate(&mut state, &mut unicode_input).unwrap();
+        assert_eq!(
+            result,
+            MutationResult::Skipped,
+            "should skip on empty input"
+        );
+    }
+
+    #[test]
+    fn test_unicode_mutator_skipped_on_no_utf8_region() {
+        let (map_ptr, _map) = make_coverage_map(256);
+        let (mut state, _feedback, _objective) = make_state_and_feedback(map_ptr, 256);
+        state.set_max_size(4096);
+
+        let raw = vec![0xFF, 0xFE, 0xFD];
+        let input = BytesInput::new(raw.clone());
+        let metadata = UnicodeIdentificationMetadata::new(&raw);
+        let mut unicode_input: UnicodeInput = (input, metadata);
+
+        let mut mutator = UnicodeCategoryRandMutator;
+        let result = mutator.mutate(&mut state, &mut unicode_input).unwrap();
+        assert_eq!(
+            result,
+            MutationResult::Skipped,
+            "should skip when no UTF-8 region"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Unicode Configuration Tests (Task 3.5)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_unicode_explicit_enable_through_constructor() {
+        let coverage_map: Buffer = vec![0u8; 256].into();
+        let fuzzer = Fuzzer::new(
+            coverage_map,
+            Some(FuzzerConfig {
+                max_input_len: None,
+                seed: None,
+                grimoire: None,
+                unicode: Some(true),
+            }),
+        )
+        .unwrap();
+        assert!(
+            fuzzer.unicode_enabled,
+            "unicode should be enabled when config.unicode = Some(true)"
+        );
+    }
+
+    #[test]
+    fn test_unicode_explicit_disable_through_constructor() {
+        let coverage_map: Buffer = vec![0u8; 256].into();
+        let fuzzer = Fuzzer::new(
+            coverage_map,
+            Some(FuzzerConfig {
+                max_input_len: None,
+                seed: None,
+                grimoire: None,
+                unicode: Some(false),
+            }),
+        )
+        .unwrap();
+        assert!(
+            !fuzzer.unicode_enabled,
+            "unicode should be disabled when config.unicode = Some(false)"
+        );
+    }
+
+    #[test]
+    fn test_unicode_and_grimoire_independent_explicit_control() {
+        // Grimoire disabled, unicode enabled.
+        let coverage_map: Buffer = vec![0u8; 256].into();
+        let fuzzer = Fuzzer::new(
+            coverage_map,
+            Some(FuzzerConfig {
+                max_input_len: None,
+                seed: None,
+                grimoire: Some(false),
+                unicode: Some(true),
+            }),
+        )
+        .unwrap();
+        assert!(!fuzzer.grimoire_enabled, "grimoire should be disabled");
+        assert!(fuzzer.unicode_enabled, "unicode should be enabled");
+        assert!(
+            fuzzer.deferred_detection_count.is_none(),
+            "no deferred detection when both explicitly configured"
+        );
+    }
+
+    #[test]
+    fn test_deferred_detection_resolves_both_features() {
+        cmplog::disable();
+        cmplog::drain();
+
+        let mut fuzzer = make_test_fuzzer(256);
+        cmplog::enable();
+
+        // Both grimoire and unicode start disabled with deferred detection.
+        assert!(!fuzzer.grimoire_enabled);
+        assert!(!fuzzer.unicode_enabled);
+        assert_eq!(fuzzer.deferred_detection_count, Some(0));
+
+        // Add UTF-8 seeds so auto-seed skip count is bypassed and the corpus
+        // contains enough UTF-8 entries for the scan to succeed.
+        fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+
+        // Add 12 known UTF-8 corpus entries directly (bypassing havoc mutation
+        // which may produce non-UTF-8 output). This simulates 10+ interesting
+        // inputs that are valid UTF-8.
+        for i in 0u16..12 {
+            let content = format!("interesting_input_{i}");
+            let mut testcase = Testcase::new(BytesInput::new(content.into_bytes()));
+            testcase.add_metadata(MapNoveltiesMetadata::new(vec![50 + i as usize]));
+            let mut sched_meta = SchedulerTestcaseMetadata::new(0);
+            sched_meta.set_n_fuzz_entry(0);
+            testcase.add_metadata(sched_meta);
+            *testcase.exec_time_mut() = Some(Duration::from_micros(100));
+            let id = fuzzer.state.corpus_mut().add(testcase).unwrap();
+            fuzzer.scheduler.on_add(&mut fuzzer.state, id).unwrap();
+        }
+
+        // Simulate 10 main-loop interesting inputs to trigger deferred threshold.
+        // (The deferred count tracks report_result Interesting calls, not corpus additions.)
+        for i in 0u8..10 {
+            let _ = fuzzer.get_next_input().unwrap();
+            unsafe {
+                *fuzzer.map_ptr.add(70 + i as usize) = 1;
+            }
+            let result = fuzzer.report_result(ExitKind::Ok, 50_000.0).unwrap();
+            assert_eq!(result, IterationResult::Interesting);
+            // Calibrate.
+            for _ in 0..3 {
+                unsafe {
+                    *fuzzer.map_ptr.add(70 + i as usize) = 1;
+                }
+                let needs_more = fuzzer.calibrate_run(50_000.0).unwrap();
+                if !needs_more {
+                    break;
+                }
+            }
+            fuzzer.calibrate_finish().unwrap();
+        }
+
+        // After 10 interesting inputs, deferred detection should resolve.
+        assert!(
+            fuzzer.deferred_detection_count.is_none(),
+            "deferred detection should be resolved"
+        );
+        // The corpus has majority UTF-8 entries (seeds + manually added entries),
+        // so both should be enabled.
+        assert!(
+            fuzzer.grimoire_enabled,
+            "grimoire should be enabled after deferred detection"
+        );
+        assert!(
+            fuzzer.unicode_enabled,
+            "unicode should be enabled after deferred detection"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_shared_deferred_threshold_with_one_feature_explicit() {
+        // Grimoire explicitly enabled, unicode auto-detect.
+        let coverage_map: Buffer = vec![0u8; 256].into();
+        let fuzzer = Fuzzer::new(
+            coverage_map,
+            Some(FuzzerConfig {
+                max_input_len: None,
+                seed: None,
+                grimoire: Some(true),
+                unicode: None,
+            }),
+        )
+        .unwrap();
+        assert!(fuzzer.grimoire_enabled, "grimoire explicitly enabled");
+        assert!(
+            !fuzzer.unicode_enabled,
+            "unicode starts disabled (pending deferred)"
+        );
+        assert!(
+            fuzzer.deferred_detection_count.is_some(),
+            "deferred detection should be active for unicode"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Unicode Stage Helper
+    // -----------------------------------------------------------------------
+
+    /// Create a fuzzer with a UTF-8 corpus entry ready for unicode stage testing.
+    fn make_fuzzer_with_unicode_entry(map_size: usize, input: &[u8]) -> (Fuzzer, CorpusId) {
+        cmplog::disable();
+        cmplog::drain();
+
+        let mut fuzzer = make_test_fuzzer(map_size);
+        fuzzer.unicode_enabled = true;
+        fuzzer.deferred_detection_count = None;
+        cmplog::enable();
+
+        // Add a seed so scheduler works.
+        fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+
+        // Add a corpus entry (UTF-8 input).
+        let mut testcase = Testcase::new(BytesInput::new(input.to_vec()));
+        testcase.add_metadata(MapNoveltiesMetadata::new(vec![10]));
+        let mut sched_meta = SchedulerTestcaseMetadata::new(0);
+        sched_meta.set_n_fuzz_entry(0);
+        testcase.add_metadata(sched_meta);
+        *testcase.exec_time_mut() = Some(Duration::from_micros(100));
+
+        let corpus_id = fuzzer.state.corpus_mut().add(testcase).unwrap();
+        fuzzer
+            .scheduler
+            .on_add(&mut fuzzer.state, corpus_id)
+            .unwrap();
+
+        // Establish coverage history.
+        unsafe {
+            *fuzzer.map_ptr.add(10) = 1;
+        }
+        {
+            let observer = unsafe {
+                StdMapObserver::from_mut_ptr(EDGES_OBSERVER_NAME, fuzzer.map_ptr, fuzzer.map_len)
+            };
+            let observers = tuple_list!(observer);
+            let mut mgr = NopEventManager::new();
+            let bytes_input = BytesInput::new(input.to_vec());
+            let _ = fuzzer.feedback.is_interesting(
+                &mut fuzzer.state,
+                &mut mgr,
+                &bytes_input,
+                &observers,
+                &LibaflExitKind::Ok,
+            );
+        }
+        unsafe {
+            std::ptr::write_bytes(fuzzer.map_ptr, 0, fuzzer.map_len);
+        }
+
+        (fuzzer, corpus_id)
+    }
+
+    // -----------------------------------------------------------------------
+    // Unicode Stage Tests (Tasks 4.6)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_begin_unicode_returns_some_for_utf8_entry() {
+        let (mut fuzzer, corpus_id) = make_fuzzer_with_unicode_entry(256, b"hello world");
+        let result = fuzzer.begin_unicode(corpus_id).unwrap();
+        assert!(
+            result.is_some(),
+            "begin_unicode should return Some for UTF-8 entry"
+        );
+        assert!(
+            matches!(fuzzer.stage_state, StageState::Unicode { .. }),
+            "stage should be Unicode"
+        );
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_begin_unicode_returns_none_when_disabled() {
+        let (mut fuzzer, corpus_id) = make_fuzzer_with_unicode_entry(256, b"hello world");
+        fuzzer.unicode_enabled = false;
+        let result = fuzzer.begin_unicode(corpus_id).unwrap();
+        assert!(
+            result.is_none(),
+            "begin_unicode should return None when disabled"
+        );
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_begin_unicode_returns_none_for_non_utf8_entry() {
+        let non_utf8 = vec![0xFF, 0xFE, 0xFD, 0xFC, 0xFB];
+        let (mut fuzzer, corpus_id) = make_fuzzer_with_unicode_entry(256, &non_utf8);
+        let result = fuzzer.begin_unicode(corpus_id).unwrap();
+        assert!(
+            result.is_none(),
+            "begin_unicode should return None for non-UTF-8 entry"
+        );
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_unicode_stage_iteration_counting() {
+        let (mut fuzzer, corpus_id) = make_fuzzer_with_unicode_entry(256, b"hello world");
+        let first = fuzzer.begin_unicode(corpus_id).unwrap();
+        assert!(first.is_some());
+
+        // Force max_iterations to 3.
+        if let StageState::Unicode {
+            corpus_id,
+            iteration,
+            ..
+        } = fuzzer.stage_state
+        {
+            fuzzer.stage_state = StageState::Unicode {
+                corpus_id,
+                iteration,
+                max_iterations: 3,
+            };
+        }
+
+        // Advance through 3 iterations.
+        let second = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        assert!(second.is_some(), "iteration 1 should produce next");
+
+        let third = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        assert!(third.is_some(), "iteration 2 should produce next");
+
+        let done = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        assert!(done.is_none(), "iteration 3 should complete the stage");
+        assert!(
+            matches!(fuzzer.stage_state, StageState::None),
+            "stage should transition to None"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_unicode_stage_non_cumulative_mutations() {
+        let input = b"hello world test";
+        let (mut fuzzer, corpus_id) = make_fuzzer_with_unicode_entry(256, input);
+        let first = fuzzer.begin_unicode(corpus_id).unwrap();
+        assert!(first.is_some());
+
+        // Force to 2 iterations.
+        if let StageState::Unicode {
+            corpus_id,
+            iteration,
+            ..
+        } = fuzzer.stage_state
+        {
+            fuzzer.stage_state = StageState::Unicode {
+                corpus_id,
+                iteration,
+                max_iterations: 2,
+            };
+        }
+
+        // Advance — the original corpus entry should be preserved (non-cumulative).
+        let second = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        assert!(second.is_some());
+
+        // Verify original corpus entry is not modified.
+        let tc = fuzzer.state.corpus().get(corpus_id).unwrap();
+        let tc_ref = tc.borrow();
+        let original_input = tc_ref.input().as_ref().unwrap();
+        let original_bytes: &[u8] = original_input.as_ref();
+        assert_eq!(
+            original_bytes, input,
+            "original corpus entry should be unchanged"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_unicode_stage_cmplog_drained() {
+        let (mut fuzzer, corpus_id) = make_fuzzer_with_unicode_entry(256, b"hello world");
+        let first = fuzzer.begin_unicode(corpus_id).unwrap();
+        assert!(first.is_some());
+
+        // Force to 2 iterations.
+        if let StageState::Unicode {
+            corpus_id,
+            iteration,
+            ..
+        } = fuzzer.stage_state
+        {
+            fuzzer.stage_state = StageState::Unicode {
+                corpus_id,
+                iteration,
+                max_iterations: 2,
+            };
+        }
+
+        // Push some CmpLog entries before advancing.
+        cmplog::push(CmpValues::U8((1, 2, false)));
+
+        let _ = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+
+        // CmpLog should be drained.
+        let drained = cmplog::drain();
+        assert!(
+            drained.is_empty(),
+            "CmpLog should be empty after unicode advance"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_unicode_stage_abort_transitions_to_none() {
+        let (mut fuzzer, corpus_id) = make_fuzzer_with_unicode_entry(256, b"hello world");
+        let first = fuzzer.begin_unicode(corpus_id).unwrap();
+        assert!(first.is_some());
+
+        let execs_before = fuzzer.total_execs;
+        fuzzer.abort_stage(ExitKind::Crash).unwrap();
+
+        assert!(
+            matches!(fuzzer.stage_state, StageState::None),
+            "stage should be None after abort"
+        );
+        assert_eq!(
+            fuzzer.total_execs,
+            execs_before + 1,
+            "abort should increment total_execs"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_unicode_stage_max_input_length_enforcement() {
+        let input = b"hello world";
+        let (mut fuzzer, corpus_id) = make_fuzzer_with_unicode_entry(256, input);
+        fuzzer.max_input_len = 5; // Restrict to 5 bytes.
+        let result = fuzzer.begin_unicode(corpus_id).unwrap();
+        if let Some(buf) = result {
+            assert!(
+                buf.len() <= 5,
+                "output should be truncated to max_input_len"
+            );
+        }
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_unicode_stage_metadata_cached_on_testcase() {
+        let (mut fuzzer, corpus_id) = make_fuzzer_with_unicode_entry(256, b"hello world");
+        let _ = fuzzer.begin_unicode(corpus_id).unwrap();
+
+        // Verify metadata was cached.
+        let tc = fuzzer.state.corpus().get(corpus_id).unwrap();
+        let tc_ref = tc.borrow();
+        assert!(
+            tc_ref.has_metadata::<UnicodeIdentificationMetadata>(),
+            "unicode metadata should be cached on testcase"
+        );
+
+        cmplog::disable();
+    }
+
+    // -----------------------------------------------------------------------
+    // Pipeline Integration Tests (Tasks 5.1-5.7)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_pipeline_i2s_to_unicode_grimoire_disabled() {
+        // I2S → Unicode → None (grimoire disabled, unicode enabled).
+        cmplog::disable();
+        cmplog::drain();
+
+        let mut fuzzer = make_test_fuzzer(256);
+        fuzzer.unicode_enabled = true;
+        fuzzer.deferred_detection_count = None;
+        cmplog::enable();
+
+        fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+
+        let _ = fuzzer.get_next_input().unwrap();
+        unsafe {
+            *fuzzer.map_ptr.add(42) = 1;
+        }
+        cmplog::push(CmpValues::Bytes((
+            make_cmplog_bytes(b"hello"),
+            make_cmplog_bytes(b"world"),
+        )));
+        let result = fuzzer.report_result(ExitKind::Ok, 50_000.0).unwrap();
+        assert_eq!(result, IterationResult::Interesting);
+
+        // Calibrate.
+        for _ in 0..3 {
+            unsafe {
+                *fuzzer.map_ptr.add(42) = 1;
+            }
+            let needs_more = fuzzer.calibrate_run(50_000.0).unwrap();
+            if !needs_more {
+                break;
+            }
+        }
+        fuzzer.calibrate_finish().unwrap();
+
+        // beginStage should start I2S.
+        let first = fuzzer.begin_stage().unwrap();
+        assert!(first.is_some());
+        assert!(matches!(fuzzer.stage_state, StageState::I2S { .. }));
+
+        // Force I2S to single iteration.
+        if let StageState::I2S {
+            corpus_id,
+            iteration,
+            ..
+        } = fuzzer.stage_state
+        {
+            fuzzer.stage_state = StageState::I2S {
+                corpus_id,
+                iteration,
+                max_iterations: 1,
+            };
+        }
+
+        // Advance I2S — should transition to Unicode (grimoire disabled).
+        let after_i2s = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        assert!(
+            after_i2s.is_some(),
+            "should transition to unicode after I2S"
+        );
+        assert!(
+            matches!(fuzzer.stage_state, StageState::Unicode { .. }),
+            "stage should be Unicode after I2S completion"
+        );
+
+        // Force unicode to single iteration and advance — should complete.
+        if let StageState::Unicode {
+            corpus_id,
+            iteration,
+            ..
+        } = fuzzer.stage_state
+        {
+            fuzzer.stage_state = StageState::Unicode {
+                corpus_id,
+                iteration,
+                max_iterations: 1,
+            };
+        }
+
+        let after_unicode = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        assert!(
+            after_unicode.is_none(),
+            "unicode should complete and return None"
+        );
+        assert!(matches!(fuzzer.stage_state, StageState::None));
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_pipeline_grimoire_to_unicode() {
+        // Grimoire → Unicode → None (both enabled).
+        let (mut fuzzer, corpus_id) = make_fuzzer_with_grimoire_entry(256, b"fn foo() {}");
+        fuzzer.unicode_enabled = true;
+
+        let first = fuzzer.begin_grimoire(corpus_id).unwrap();
+        assert!(first.is_some());
+
+        // Force Grimoire to single iteration.
+        if let StageState::Grimoire {
+            corpus_id,
+            iteration,
+            ..
+        } = fuzzer.stage_state
+        {
+            fuzzer.stage_state = StageState::Grimoire {
+                corpus_id,
+                iteration,
+                max_iterations: 1,
+            };
+        }
+
+        // Advance Grimoire — should transition to Unicode.
+        let after_grimoire = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        assert!(
+            after_grimoire.is_some(),
+            "should transition to unicode after Grimoire"
+        );
+        assert!(
+            matches!(fuzzer.stage_state, StageState::Unicode { .. }),
+            "stage should be Unicode after Grimoire completion"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_pipeline_unicode_disabled_existing_transitions_unchanged() {
+        // With unicode disabled, Grimoire → None (no unicode fallthrough).
+        let (mut fuzzer, corpus_id) = make_fuzzer_with_grimoire_entry(256, b"fn foo() {}");
+        assert!(!fuzzer.unicode_enabled);
+
+        let first = fuzzer.begin_grimoire(corpus_id).unwrap();
+        assert!(first.is_some());
+
+        // Force Grimoire to single iteration.
+        if let StageState::Grimoire {
+            corpus_id,
+            iteration,
+            ..
+        } = fuzzer.stage_state
+        {
+            fuzzer.stage_state = StageState::Grimoire {
+                corpus_id,
+                iteration,
+                max_iterations: 1,
+            };
+        }
+
+        let after_grimoire = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        assert!(
+            after_grimoire.is_none(),
+            "should return None when unicode disabled"
+        );
+        assert!(matches!(fuzzer.stage_state, StageState::None));
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_pipeline_unicode_only_begin_no_cmplog() {
+        // No CmpLog, Grimoire not applicable, unicode enabled → direct to Unicode.
+        let (mut fuzzer, corpus_id) = make_fuzzer_with_unicode_entry(256, b"hello world");
+
+        // Set up for beginStage: set last_interesting_corpus_id directly.
+        fuzzer.last_interesting_corpus_id = Some(corpus_id);
+        fuzzer.stage_state = StageState::None;
+
+        // Ensure no CmpLog data.
+        fuzzer
+            .state
+            .metadata_map_mut()
+            .insert(CmpValuesMetadata::new());
+
+        let result = fuzzer.begin_stage().unwrap();
+        assert!(result.is_some(), "should begin unicode stage directly");
+        assert!(
+            matches!(fuzzer.stage_state, StageState::Unicode { .. }),
+            "stage should be Unicode"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_pipeline_grimoire_enabled_but_not_applicable_transitions_to_unicode() {
+        // Grimoire enabled, but entry doesn't qualify for generalization and has no
+        // GeneralizedInputMetadata → should fall through to Unicode.
+        cmplog::disable();
+        cmplog::drain();
+
+        let mut fuzzer = make_test_fuzzer(256);
+        fuzzer.grimoire_enabled = true;
+        fuzzer.unicode_enabled = true;
+        fuzzer.deferred_detection_count = None;
+        cmplog::enable();
+
+        fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+
+        // Add a corpus entry that does NOT have GeneralizedInputMetadata
+        // and does NOT qualify for generalization (no MapNoveltiesMetadata).
+        let mut testcase = Testcase::new(BytesInput::new(b"hello utf8 test".to_vec()));
+        let mut sched_meta = SchedulerTestcaseMetadata::new(0);
+        sched_meta.set_n_fuzz_entry(0);
+        testcase.add_metadata(sched_meta);
+        *testcase.exec_time_mut() = Some(Duration::from_micros(100));
+
+        let corpus_id = fuzzer.state.corpus_mut().add(testcase).unwrap();
+        fuzzer
+            .scheduler
+            .on_add(&mut fuzzer.state, corpus_id)
+            .unwrap();
+
+        // Set up for beginStage.
+        fuzzer.last_interesting_corpus_id = Some(corpus_id);
+
+        // Ensure no CmpLog data.
+        fuzzer
+            .state
+            .metadata_map_mut()
+            .insert(CmpValuesMetadata::new());
+
+        let result = fuzzer.begin_stage().unwrap();
+        assert!(
+            result.is_some(),
+            "should fall through to unicode when grimoire not applicable"
+        );
+        assert!(
+            matches!(fuzzer.stage_state, StageState::Unicode { .. }),
+            "stage should be Unicode"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_pipeline_generalization_failure_transitions_to_none_not_unicode() {
+        // Generalization failure → None (not Unicode).
+        // Unstable inputs produce unreliable coverage.
+        let input = b"ab";
+        let novelty_indices = vec![10];
+        let (mut fuzzer, corpus_id) =
+            make_fuzzer_with_generalization_entry(256, input, &novelty_indices);
+        fuzzer.unicode_enabled = true;
+
+        // Begin generalization.
+        let first = fuzzer.begin_generalization(corpus_id).unwrap();
+        assert!(first.is_some());
+        assert!(matches!(
+            fuzzer.stage_state,
+            StageState::Generalization { .. }
+        ));
+
+        // Simulate verification failure by NOT writing the expected coverage.
+        // advance_generalization will see missing novel coverage → fail.
+        let result = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+
+        // The generalization verification failed, so it should transition to None.
+        assert!(
+            result.is_none(),
+            "generalization failure should transition to None, not Unicode"
+        );
+        assert!(matches!(fuzzer.stage_state, StageState::None));
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_finalize_generalization_falls_through_to_unicode() {
+        // When grimoire is disabled mid-flight, finalize_generalization must
+        // fall through to Unicode instead of returning None.
+        let input = b"fn foo() { return 42; }";
+        let novelty_indices = vec![10, 20];
+        let (mut fuzzer, corpus_id) =
+            make_fuzzer_with_generalization_entry(256, input, &novelty_indices);
+        fuzzer.unicode_enabled = true;
+
+        // Begin generalization.
+        let first = fuzzer.begin_generalization(corpus_id).unwrap();
+        assert!(first.is_some());
+        assert!(matches!(
+            fuzzer.stage_state,
+            StageState::Generalization { .. }
+        ));
+
+        // Disable grimoire mid-flight so finalize_generalization can't start Grimoire.
+        fuzzer.grimoire_enabled = false;
+
+        // Drive generalization to completion.
+        let mut count = 0;
+        loop {
+            unsafe {
+                for &idx in &novelty_indices {
+                    *fuzzer.map_ptr.add(idx) = 1;
+                }
+            }
+            let next = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+            match &fuzzer.stage_state {
+                StageState::Unicode { .. } => {
+                    assert!(
+                        next.is_some(),
+                        "Unicode transition should return a candidate"
+                    );
+                    break;
+                }
+                StageState::None if next.is_none() => {
+                    panic!(
+                        "finalize_generalization returned None — should have fallen through to Unicode"
+                    );
+                }
+                _ => {}
+            }
+            count += 1;
+            assert!(
+                count <= 200,
+                "should complete generalization within 200 iterations"
+            );
+        }
+
+        assert!(
+            matches!(fuzzer.stage_state, StageState::Unicode { .. }),
+            "stage should have transitioned to Unicode after generalization"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_pipeline_full_four_stage_lifecycle() {
+        // I2S → Generalization → Grimoire → Unicode → None.
+        // This is the most comprehensive pipeline test.
+        let input = b"fn foo() { return 42; }";
+        let novelty_indices = vec![10, 20];
+        let (mut fuzzer, corpus_id) =
+            make_fuzzer_with_generalization_entry(256, input, &novelty_indices);
+        fuzzer.unicode_enabled = true;
+
+        // Manually add CmpValuesMetadata with data to trigger I2S.
+        fuzzer.state.metadata_map_mut().insert(CmpValuesMetadata {
+            list: vec![CmpValues::Bytes((
+                make_cmplog_bytes(b"foo"),
+                make_cmplog_bytes(b"bar"),
+            ))],
+        });
+
+        fuzzer.last_interesting_corpus_id = Some(corpus_id);
+
+        // beginStage should start I2S (CmpLog data present).
+        let first = fuzzer.begin_stage().unwrap();
+        assert!(first.is_some());
+        assert!(matches!(fuzzer.stage_state, StageState::I2S { .. }));
+
+        // Force I2S to single iteration.
+        if let StageState::I2S {
+            corpus_id,
+            iteration,
+            ..
+        } = fuzzer.stage_state
+        {
+            fuzzer.stage_state = StageState::I2S {
+                corpus_id,
+                iteration,
+                max_iterations: 1,
+            };
+        }
+
+        // Advance I2S — should transition to Generalization.
+        // Write expected coverage for generalization verification.
+        unsafe {
+            for &idx in &novelty_indices {
+                *fuzzer.map_ptr.add(idx) = 1;
+            }
+        }
+        let after_i2s = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        assert!(
+            after_i2s.is_some(),
+            "should transition from I2S to Generalization"
+        );
+        assert!(
+            matches!(fuzzer.stage_state, StageState::Generalization { .. }),
+            "stage should be Generalization"
+        );
+
+        // Run through generalization to completion.
+        loop {
+            // Write expected coverage for each generalization candidate.
+            unsafe {
+                for &idx in &novelty_indices {
+                    *fuzzer.map_ptr.add(idx) = 1;
+                }
+            }
+            let next = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+            if next.is_none() {
+                // Generalization complete or Grimoire started.
+                break;
+            }
+            // If we transitioned to Grimoire or Unicode, we're done with generalization.
+            match &fuzzer.stage_state {
+                StageState::Grimoire { .. } | StageState::Unicode { .. } => break,
+                _ => continue,
+            }
+        }
+
+        // After generalization, we should be in Grimoire or Unicode.
+        // (Depends on whether generalization produced metadata.)
+        match &fuzzer.stage_state {
+            StageState::Grimoire { .. } => {
+                // Force Grimoire to single iteration.
+                if let StageState::Grimoire {
+                    corpus_id,
+                    iteration,
+                    ..
+                } = fuzzer.stage_state
+                {
+                    fuzzer.stage_state = StageState::Grimoire {
+                        corpus_id,
+                        iteration,
+                        max_iterations: 1,
+                    };
+                }
+
+                let after_grimoire = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+                // Should transition to Unicode.
+                if after_grimoire.is_some() {
+                    assert!(
+                        matches!(fuzzer.stage_state, StageState::Unicode { .. }),
+                        "should transition from Grimoire to Unicode"
+                    );
+
+                    // Force unicode to single iteration.
+                    if let StageState::Unicode {
+                        corpus_id,
+                        iteration,
+                        ..
+                    } = fuzzer.stage_state
+                    {
+                        fuzzer.stage_state = StageState::Unicode {
+                            corpus_id,
+                            iteration,
+                            max_iterations: 1,
+                        };
+                    }
+
+                    let after_unicode = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+                    assert!(after_unicode.is_none(), "pipeline should complete");
+                }
+            }
+            StageState::Unicode { .. } => {
+                // Generalization skipped to Unicode directly.
+                if let StageState::Unicode {
+                    corpus_id,
+                    iteration,
+                    ..
+                } = fuzzer.stage_state
+                {
+                    fuzzer.stage_state = StageState::Unicode {
+                        corpus_id,
+                        iteration,
+                        max_iterations: 1,
+                    };
+                }
+                let after_unicode = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+                assert!(after_unicode.is_none(), "pipeline should complete");
+            }
+            StageState::None => {
+                // Generalization may have failed (input unstable) — that's ok
+                // for this test; the key is that the pipeline didn't crash.
+            }
+            _ => panic!("unexpected stage state after generalization"),
+        }
+
+        assert!(
+            matches!(fuzzer.stage_state, StageState::None),
+            "pipeline should end in None"
+        );
+
+        cmplog::disable();
+    }
+
+    // -----------------------------------------------------------------------
+    // Unicode Auto-Detection Integration Tests (Task 6.1-6.2)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_unicode_stage_skipped_when_no_valid_utf8_regions() {
+        // Entry with no valid UTF-8 → begin_unicode returns None.
+        let non_utf8 = vec![0xFF, 0xFE, 0xFD, 0xFC, 0xFB];
+        let (mut fuzzer, corpus_id) = make_fuzzer_with_unicode_entry(256, &non_utf8);
+
+        // Set up for beginStage.
+        fuzzer.last_interesting_corpus_id = Some(corpus_id);
+
+        // Ensure no CmpLog data.
+        fuzzer
+            .state
+            .metadata_map_mut()
+            .insert(CmpValuesMetadata::new());
+
+        let result = fuzzer.begin_stage().unwrap();
+        assert!(
+            result.is_none(),
+            "should return None when no valid UTF-8 regions"
+        );
+        assert!(matches!(fuzzer.stage_state, StageState::None));
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_unicode_enabled_drives_stage_transitions() {
+        // When unicode is enabled, pipeline transitions should reach Unicode stage.
+        let (mut fuzzer, corpus_id) = make_fuzzer_with_unicode_entry(256, b"test input");
+
+        // Simulate beginStage with no CmpLog and no grimoire.
+        fuzzer.last_interesting_corpus_id = Some(corpus_id);
+        fuzzer
+            .state
+            .metadata_map_mut()
+            .insert(CmpValuesMetadata::new());
+
+        let result = fuzzer.begin_stage().unwrap();
+        assert!(result.is_some(), "unicode stage should start");
+        assert!(matches!(fuzzer.stage_state, StageState::Unicode { .. }));
+
+        // When unicode is disabled, same entry should not start stage.
+        if let StageState::Unicode {
+            corpus_id: _,
+            iteration: _,
+            max_iterations: _,
+        } = fuzzer.stage_state
+        {
+            fuzzer.stage_state = StageState::None;
+        }
+        fuzzer.unicode_enabled = false;
+        fuzzer.last_interesting_corpus_id = Some(corpus_id);
+
+        let result2 = fuzzer.begin_stage().unwrap();
+        assert!(
+            result2.is_none(),
+            "should return None when unicode disabled"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_unicode_stage_exec_counter_increments() {
+        let (mut fuzzer, corpus_id) = make_fuzzer_with_unicode_entry(256, b"hello world");
+        let first = fuzzer.begin_unicode(corpus_id).unwrap();
+        assert!(first.is_some());
+
+        // Force to 2 iterations.
+        if let StageState::Unicode {
+            corpus_id,
+            iteration,
+            ..
+        } = fuzzer.stage_state
+        {
+            fuzzer.stage_state = StageState::Unicode {
+                corpus_id,
+                iteration,
+                max_iterations: 2,
+            };
+        }
+
+        let execs_before = fuzzer.total_execs;
+        let _ = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        assert_eq!(
+            fuzzer.total_execs,
+            execs_before + 1,
+            "advance should increment total_execs"
+        );
+
+        let _ = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        assert_eq!(
+            fuzzer.total_execs,
+            execs_before + 2,
+            "second advance should increment total_execs"
+        );
 
         cmplog::disable();
     }

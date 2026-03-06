@@ -214,6 +214,70 @@ describe("config", () => {
       expect("grimoire" in opts).toBe(false);
     });
 
+    it("parses unicode: true", () => {
+      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        unicode: true,
+      });
+      expect(getCliOptions()).toEqual({ unicode: true });
+    });
+
+    it("parses unicode: false", () => {
+      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        unicode: false,
+      });
+      expect(getCliOptions()).toEqual({ unicode: false });
+    });
+
+    it("ignores non-boolean unicode values and warns on stderr", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+          unicode: "true",
+          runs: 100,
+        });
+        const opts = getCliOptions();
+        expect(opts).toEqual({ runs: 100 });
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toContain("ignoring non-boolean");
+        expect(chunks[0]).toContain("unicode");
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+
+    it("silently omits unicode: null", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+          unicode: null,
+          runs: 100,
+        });
+        const opts = getCliOptions();
+        expect(opts).toEqual({ runs: 100 });
+        expect(chunks.length).toBe(0);
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+
+    it("omits unicode when key is absent from input", () => {
+      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({ runs: 100 });
+      const opts = getCliOptions();
+      expect("unicode" in opts).toBe(false);
+    });
+
     it("rejects grimoire: 1 as non-boolean and warns", () => {
       const chunks: string[] = [];
       const originalWrite = process.stderr.write;
