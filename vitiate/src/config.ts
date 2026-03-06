@@ -20,6 +20,11 @@ export interface FuzzOptions {
   minimizeBudget?: number;
   /** Wall-clock time limit in ms for crash minimization. Default: 5,000. */
   minimizeTimeLimitMs?: number;
+  /**
+   * Grimoire structure-aware fuzzing control.
+   * `true` = force enable, `false` = force disable, absent = auto-detect from corpus UTF-8 content.
+   */
+  grimoire?: boolean;
 }
 
 export interface FuzzDefaults extends FuzzOptions {
@@ -58,7 +63,7 @@ export function isFuzzingMode(): boolean {
 
 function validateFuzzOptions(obj: Record<string, unknown>): FuzzOptions {
   const valid: FuzzOptions = {};
-  const keys: (keyof FuzzOptions)[] = [
+  const numericKeys: (keyof Omit<FuzzOptions, "grimoire">)[] = [
     "maxLen",
     "timeoutMs",
     "maxTotalTimeMs",
@@ -67,7 +72,7 @@ function validateFuzzOptions(obj: Record<string, unknown>): FuzzOptions {
     "minimizeBudget",
     "minimizeTimeLimitMs",
   ];
-  for (const key of keys) {
+  for (const key of numericKeys) {
     if (key in obj) {
       const val = obj[key];
       if (typeof val === "number" && Number.isFinite(val)) {
@@ -85,6 +90,17 @@ function validateFuzzOptions(obj: Record<string, unknown>): FuzzOptions {
         );
       }
     }
+  }
+  if ("grimoire" in obj && typeof obj["grimoire"] === "boolean") {
+    valid.grimoire = obj["grimoire"];
+  } else if (
+    "grimoire" in obj &&
+    obj["grimoire"] !== undefined &&
+    obj["grimoire"] !== null
+  ) {
+    process.stderr.write(
+      `vitiate: warning: ignoring non-boolean VITIATE_FUZZ_OPTIONS.grimoire: ${JSON.stringify(obj["grimoire"])}\n`,
+    );
   }
   return valid;
 }

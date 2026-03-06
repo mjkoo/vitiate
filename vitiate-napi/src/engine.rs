@@ -6,9 +6,14 @@ use libafl::events::NopEventManager;
 use libafl::executors::ExitKind as LibaflExitKind;
 use libafl::feedbacks::map::MapFeedbackMetadata;
 use libafl::feedbacks::{
-    CrashFeedback, Feedback, MaxMapFeedback, StateInitializer, TimeoutFeedback,
+    CrashFeedback, Feedback, MapNoveltiesMetadata, MaxMapFeedback, StateInitializer,
+    TimeoutFeedback,
 };
-use libafl::inputs::{BytesInput, HasMutatorBytes, ResizableMutator};
+use libafl::inputs::{BytesInput, GeneralizedInputMetadata, HasMutatorBytes, ResizableMutator};
+use libafl::mutators::grimoire::{
+    GrimoireExtensionMutator, GrimoireRandomDeleteMutator, GrimoireRecursiveReplacementMutator,
+    GrimoireStringReplacementMutator,
+};
 use libafl::mutators::token_mutations::{I2SRandReplace, TokenInsert, TokenReplace};
 use libafl::mutators::{
     HavocMutationsType, HavocScheduledMutator, MutationResult, Mutator, Tokens, havoc_mutations,
@@ -50,6 +55,34 @@ const CALIBRATION_STAGE_MAX: usize = 8;
 /// Nominal execution time assigned to seeds (not calibrated).
 const SEED_EXEC_TIME: Duration = Duration::from_millis(1);
 
+/// Number of interesting main-loop inputs before deferred Grimoire auto-detection fires.
+const GRIMOIRE_DEFERRED_THRESHOLD: usize = 10;
+
+/// Maximum power-of-two stacked mutations per Grimoire iteration (2^3 = 8 max).
+const GRIMOIRE_MAX_STACK_POW: usize = 3;
+
+/// Maximum random iteration count for I2S and Grimoire stages (selected uniformly from 1..=N).
+const STAGE_MAX_ITERATIONS: usize = 128;
+
+/// Maximum input size for generalization. Inputs exceeding this are skipped.
+const MAX_GENERALIZED_LEN: usize = 8192;
+
+/// Offset values for the offset-based gap-finding passes.
+const GENERALIZATION_OFFSETS: [usize; 5] = [255, 127, 63, 31, 0];
+
+/// Delimiter characters for delimiter-based gap-finding passes.
+const GENERALIZATION_DELIMITERS: [u8; 7] = [b'.', b';', b',', b'\n', b'\r', b'#', b' '];
+
+/// Bracket pairs for bracket-based gap-finding passes: (open, close).
+const GENERALIZATION_BRACKETS: [(u8, u8); 6] = [
+    (b'(', b')'),
+    (b'[', b']'),
+    (b'{', b'}'),
+    (b'<', b'>'),
+    (b'\'', b'\''),
+    (b'"', b'"'),
+];
+
 /// Minimum number of observations (appearances in CmpLog entries across all
 /// `report_result` calls) before a token candidate is promoted into the mutation
 /// dictionary. A token appearing in multiple `CmpValues::Bytes` entries within
@@ -84,6 +117,20 @@ type FuzzerScheduler = ProbabilitySamplingScheduler<CorpusPowerTestcaseScore>;
 type TokensMutationsType = (TokenInsert, (TokenReplace, ()));
 type FuzzerMutationsType = <HavocMutationsType as Merge<TokensMutationsType>>::MergeResult;
 type FuzzerMutator = HavocScheduledMutator<FuzzerMutationsType>;
+type GrimoireMutationsType = (
+    GrimoireExtensionMutator<BytesInput>,
+    (
+        GrimoireRecursiveReplacementMutator<BytesInput>,
+        (
+            GrimoireStringReplacementMutator<BytesInput>,
+            (
+                GrimoireRandomDeleteMutator<BytesInput>,
+                (GrimoireRandomDeleteMutator<BytesInput>, ()),
+            ),
+        ),
+    ),
+);
+type GrimoireMutator = HavocScheduledMutator<GrimoireMutationsType>;
 type FuzzerState =
     StdState<InMemoryCorpus<BytesInput>, BytesInput, StdRand, InMemoryCorpus<BytesInput>>;
 
@@ -385,6 +432,19 @@ pub struct Fuzzer {
     /// The most recently generated stage input, stored so that `advance_stage()`
     /// can add it to the corpus if coverage evaluation deems it interesting.
     last_stage_input: Option<Vec<u8>>,
+    /// Grimoire scheduled mutator operating on `GeneralizedInputMetadata`.
+    grimoire_mutator: GrimoireMutator,
+    /// Whether Grimoire structure-aware fuzzing is enabled. Determined by
+    /// auto-detection (corpus UTF-8 scanning) or explicit override.
+    grimoire_enabled: bool,
+    /// Count of interesting inputs found via `report_result()` for deferred
+    /// Grimoire detection. `None` means detection is already resolved (not deferred).
+    /// Stage-found entries do NOT count toward this threshold.
+    grimoire_deferred_count: Option<usize>,
+    /// Number of auto-seeded corpus entries (from `DEFAULT_SEEDS`). Used by
+    /// `scan_corpus_utf8` to skip auto-seeds when performing deferred Grimoire
+    /// detection — auto-seeds are all valid UTF-8 and would bias the vote.
+    auto_seed_count: usize,
 }
 
 // SAFETY: `Fuzzer` contains `*mut u8` which is `!Send`. napi-rs requires `Send`
@@ -442,6 +502,33 @@ fn extract_tokens_from_cmplog(entries: &[CmpValues]) -> Vec<Vec<u8>> {
     tokens
 }
 
+/// Phases within the generalization algorithm. Each phase corresponds to a
+/// type of gap-finding pass that ablates portions of the input and checks
+/// whether novel coverage indices survive.
+#[derive(Debug)]
+enum GeneralizationPhase {
+    /// Initial stability check: execute the original input unmodified.
+    Verify,
+    /// Offset-based gap-finding. `level` indexes into `GENERALIZATION_OFFSETS`,
+    /// `_pos` tracks the current payload position (used for state inspection/debugging).
+    Offset { level: u8, _pos: usize },
+    /// Delimiter-based gap-finding. `index` indexes into `GENERALIZATION_DELIMITERS`,
+    /// `_pos` tracks the current payload position (used for state inspection/debugging).
+    Delimiter { index: u8, _pos: usize },
+    /// Bracket-based gap-finding. `pair_index` indexes into `GENERALIZATION_BRACKETS`.
+    /// `index` is the outer-loop cursor (forward scan for openers).
+    /// `start` is the effective opener position (inner-loop start, collapses after each closer).
+    /// `end` is the backward-scan position (inner-loop cursor for closers).
+    /// `endings` counts closers found for the current opener.
+    Bracket {
+        pair_index: u8,
+        index: usize,
+        start: usize,
+        end: usize,
+        endings: usize,
+    },
+}
+
 /// Tracks the lifecycle of a multi-execution stage (I2S, Grimoire, etc.).
 /// Designed for extensibility — future stages add new variants.
 enum StageState {
@@ -449,6 +536,24 @@ enum StageState {
     None,
     /// I2S mutational stage in progress.
     I2S {
+        corpus_id: CorpusId,
+        iteration: usize,
+        max_iterations: usize,
+    },
+    /// Generalization stage: identifies structural vs gap bytes in a corpus entry.
+    Generalization {
+        corpus_id: CorpusId,
+        /// Novel coverage map indices to verify during gap-finding.
+        novelties: Vec<usize>,
+        /// Working buffer: `Some(byte)` = structural/untested, `None` = gap.
+        payload: Vec<Option<u8>>,
+        /// Current phase within the generalization algorithm.
+        phase: GeneralizationPhase,
+        /// Byte range `[start, end)` removed in the current candidate.
+        candidate_range: Option<(usize, usize)>,
+    },
+    /// Grimoire mutational stage: structure-aware mutations using GeneralizedInputMetadata.
+    Grimoire {
         corpus_id: CorpusId,
         iteration: usize,
         max_iterations: usize,
@@ -474,6 +579,7 @@ impl Fuzzer {
             .and_then(|c| c.max_input_len)
             .unwrap_or(DEFAULT_MAX_INPUT_LEN);
         let seed = config.as_ref().and_then(|c| c.seed);
+        let grimoire_override = config.as_ref().and_then(|c| c.grimoire);
 
         let map_ptr = coverage_map.as_mut_ptr();
         let map_len = coverage_map.len();
@@ -513,6 +619,18 @@ impl Fuzzer {
         let scheduler = ProbabilitySamplingScheduler::new();
         let mutator = HavocScheduledMutator::new(havoc_mutations().merge(tokens_mutations()));
         let i2s_mutator = I2SSpliceReplace::new();
+        let grimoire_mutator = HavocScheduledMutator::with_max_stack_pow(
+            tuple_list!(
+                GrimoireExtensionMutator::new(),
+                GrimoireRecursiveReplacementMutator::new(),
+                GrimoireStringReplacementMutator::new(),
+                // Two delete mutators: matches LibAFL's default grimoire mutations,
+                // which intentionally double-weights deletions.
+                GrimoireRandomDeleteMutator::new(),
+                GrimoireRandomDeleteMutator::new(),
+            ),
+            GRIMOIRE_MAX_STACK_POW,
+        );
 
         // Drop the temporary observer - feedback only holds a name-based Handle.
         drop(temp_observer);
@@ -526,6 +644,22 @@ impl Fuzzer {
 
         // Initialize power scheduling metadata with FAST strategy.
         state.add_metadata(SchedulerMetadata::new(Some(PowerSchedule::fast())));
+
+        // Grimoire auto-detection: scan corpus for UTF-8 content.
+        let (grimoire_enabled, grimoire_deferred_count) = match grimoire_override {
+            Some(explicit) => (explicit, None),
+            None => {
+                if state.corpus().count() == 0 {
+                    // Empty corpus: defer detection until 10 interesting inputs.
+                    (false, Some(0))
+                } else {
+                    // Currently unreachable: state is freshly constructed with an empty
+                    // corpus. Retained as a defensive fallback if future changes introduce
+                    // pre-populated state (e.g., serialized corpus loading).
+                    (Self::scan_corpus_utf8(&state, 0), None)
+                }
+            }
+        };
 
         Ok(Self {
             state,
@@ -556,6 +690,10 @@ impl Fuzzer {
             stage_state: StageState::None,
             last_interesting_corpus_id: None,
             last_stage_input: None,
+            grimoire_mutator,
+            grimoire_enabled,
+            grimoire_deferred_count,
+            auto_seed_count: 0,
         })
     }
 
@@ -605,6 +743,7 @@ impl Fuzzer {
                     .map_err(|e| Error::from_reason(format!("Failed to notify scheduler: {e}")))?;
                 set_n_fuzz_entry_for_corpus_id(&self.state, id)?;
             }
+            self.auto_seed_count = DEFAULT_SEEDS.len();
         }
 
         // Select a corpus entry and clone its input.
@@ -703,6 +842,17 @@ impl Fuzzer {
 
             // Store for beginStage() — consumed after calibration completes.
             self.last_interesting_corpus_id = Some(corpus_id);
+
+            // Deferred Grimoire detection: count interesting inputs from the
+            // main loop (not stage-found). After threshold, scan corpus for UTF-8.
+            if let Some(count) = self.grimoire_deferred_count.as_mut() {
+                *count += 1;
+                if *count >= GRIMOIRE_DEFERRED_THRESHOLD {
+                    self.grimoire_enabled =
+                        Self::scan_corpus_utf8(&self.state, self.auto_seed_count);
+                    self.grimoire_deferred_count = None;
+                }
+            }
 
             IterationResult::Interesting
         } else {
@@ -914,11 +1064,14 @@ impl Fuzzer {
         Ok(())
     }
 
-    /// Initiate an I2S mutational stage for the most recently calibrated corpus entry.
+    /// Initiate a mutational stage for the most recently calibrated corpus entry.
     ///
-    /// Returns the first I2S-mutated input as a `Buffer`, or `null` if preconditions
-    /// are not met (no active stage allowed, no pending interesting corpus entry, or
-    /// empty CmpValuesMetadata).
+    /// Dispatches to I2S (when CmpLog data is available), Generalization, or Grimoire
+    /// (when Grimoire is enabled). Returns the first stage-mutated input as a `Buffer`,
+    /// or `null` if any of the following apply:
+    /// - A stage is already active
+    /// - No interesting corpus entry is pending
+    /// - No applicable stage exists for the entry
     #[napi]
     pub fn begin_stage(&mut self) -> Result<Option<Buffer>> {
         // Precondition: no stage currently active.
@@ -940,15 +1093,25 @@ impl Fuzzer {
             .get::<CmpValuesMetadata>()
             .is_some_and(|m| !m.list.is_empty());
         if !has_cmp_data {
+            // I2S skipped — try generalization or Grimoire.
+            if self.grimoire_enabled {
+                if let Some(buf) = self.begin_generalization(corpus_id)? {
+                    return Ok(Some(buf));
+                }
+                // Generalization skipped — try Grimoire directly (pre-existing metadata).
+                if let Some(buf) = self.begin_grimoire(corpus_id)? {
+                    return Ok(Some(buf));
+                }
+            }
             return Ok(None);
         }
 
-        // Select random iteration count 1-128.
-        // SAFETY of unwrap: NonZero::new(128) is guaranteed non-zero.
+        // Select random iteration count 1..=STAGE_MAX_ITERATIONS.
+        // SAFETY of unwrap: STAGE_MAX_ITERATIONS is a non-zero constant.
         let max_iterations = self
             .state
             .rand_mut()
-            .below(core::num::NonZero::new(128).unwrap())
+            .below(core::num::NonZero::new(STAGE_MAX_ITERATIONS).unwrap())
             + 1;
 
         // Clone the corpus entry and apply I2S mutation.
@@ -982,7 +1145,7 @@ impl Fuzzer {
 
     /// Process the result of a stage execution and return the next candidate input.
     ///
-    /// Returns the next I2S-mutated input as a `Buffer`, or `null` if the stage is
+    /// Returns the next stage-mutated input as a `Buffer`, or `null` if the stage is
     /// complete (iterations exhausted) or no stage is active.
     #[napi]
     pub fn advance_stage(
@@ -990,35 +1153,59 @@ impl Fuzzer {
         _exit_kind: ExitKind,
         exec_time_ns: f64,
     ) -> Result<Option<Buffer>> {
+        match &self.stage_state {
+            StageState::None => return Ok(None),
+            StageState::Generalization { .. } => {
+                return self.advance_generalization(exec_time_ns);
+            }
+            StageState::Grimoire { .. } => {
+                return self.advance_grimoire(exec_time_ns);
+            }
+            StageState::I2S { .. } => {}
+        }
+
         let (corpus_id, iteration, max_iterations) = match self.stage_state {
             StageState::I2S {
                 corpus_id,
                 iteration,
                 max_iterations,
             } => (corpus_id, iteration, max_iterations),
-            StageState::None => return Ok(None),
+            _ => unreachable!(),
         };
 
         // Drain and discard CmpLog accumulator (do not update CmpValuesMetadata
         // or promote tokens — stage CmpLog data is noise from I2S-mutated inputs).
         let _ = crate::cmplog::drain();
 
-        // Evaluate coverage using the shared helper.
+        // Reset stage state before the fallible evaluate_coverage call. On error,
+        // the stage is cleanly abandoned (no zombie state). On success, stage_state
+        // is overwritten below with the next iteration or StageState::None.
+        self.stage_state = StageState::None;
         let stage_input = self
             .last_stage_input
             .take()
             .ok_or_else(|| Error::from_reason("advanceStage: no stashed stage input"))?;
-        let _eval =
-            self.evaluate_coverage(&stage_input, exec_time_ns, LibaflExitKind::Ok, corpus_id)?;
-
-        // Increment counters.
+        // The target was invoked — count the execution before the fallible
+        // evaluate_coverage call so counters stay accurate on error.
         self.total_execs += 1;
         *self.state.executions_mut() += 1;
 
+        let _eval =
+            self.evaluate_coverage(&stage_input, exec_time_ns, LibaflExitKind::Ok, corpus_id)?;
+
         let next_iteration = iteration + 1;
         if next_iteration >= max_iterations {
-            // Stage complete.
-            self.stage_state = StageState::None;
+            // I2S stage complete — try transitioning to Generalization or Grimoire.
+            // stage_state is already StageState::None (reset before evaluate_coverage above).
+            if self.grimoire_enabled {
+                if let Some(buf) = self.begin_generalization(corpus_id)? {
+                    return Ok(Some(buf));
+                }
+                // Generalization skipped — try Grimoire (pre-existing metadata).
+                if let Some(buf) = self.begin_grimoire(corpus_id)? {
+                    return Ok(Some(buf));
+                }
+            }
             return Ok(None);
         }
 
@@ -1052,14 +1239,28 @@ impl Fuzzer {
 
     /// Cleanly terminate the current stage without evaluating the final execution's
     /// coverage. No-op if no stage is active.
+    ///
+    /// If the exit kind is Crash or Timeout, the current stage input is recorded
+    /// as a solution (crash artifact writing is handled by JS, but this ensures
+    /// `solution_count` and `FuzzerStats` reflect stage-found crashes).
+    ///
+    /// Errors if the internal solutions corpus fails to accept the entry.
     #[napi]
-    pub fn abort_stage(&mut self, _exit_kind: ExitKind) {
+    pub fn abort_stage(&mut self, exit_kind: ExitKind) -> Result<()> {
         if matches!(self.stage_state, StageState::None) {
-            return;
+            return Ok(());
         }
 
         // Drain and discard CmpLog accumulator.
         let _ = crate::cmplog::drain();
+
+        // Take the stage input into a local before cleanup — we may need it
+        // for solution recording below.
+        let stage_input = self.last_stage_input.take();
+
+        // Reset stage state before the fallible add() call. On error, the
+        // stage is cleanly abandoned (no zombie state).
+        self.stage_state = StageState::None;
 
         // Zero the coverage map (may contain partial/corrupt data from the
         // crashed execution).
@@ -1073,11 +1274,20 @@ impl Fuzzer {
         self.total_execs += 1;
         *self.state.executions_mut() += 1;
 
-        // Discard the stashed stage input.
-        self.last_stage_input = None;
+        // Record crash/timeout as a solution. This is the only fallible
+        // operation — all cleanup is already done above.
+        if matches!(exit_kind, ExitKind::Crash | ExitKind::Timeout)
+            && let Some(input_bytes) = stage_input
+        {
+            let testcase = Testcase::new(BytesInput::new(input_bytes));
+            self.state
+                .solutions_mut()
+                .add(testcase)
+                .map_err(|e| Error::from_reason(format!("Failed to add solution: {e}")))?;
+            self.solution_count += 1;
+        }
 
-        // Reset stage state.
-        self.stage_state = StageState::None;
+        Ok(())
     }
 
     #[napi(getter)]
@@ -1115,6 +1325,69 @@ impl Fuzzer {
 }
 
 impl Fuzzer {
+    /// Scan corpus entries for UTF-8 content, skipping the first `skip_count`
+    /// entries (used to exclude auto-seeds from deferred detection).
+    /// Returns `true` if `utf8_count > non_utf8_count` (strictly greater than).
+    ///
+    /// Assumes `InMemoryCorpus` yields IDs in insertion order, so `.skip(skip_count)`
+    /// correctly skips the first N entries (the auto-seeds).
+    fn scan_corpus_utf8(state: &FuzzerState, skip_count: usize) -> bool {
+        let mut utf8_count: usize = 0;
+        let mut non_utf8_count: usize = 0;
+        for id in state.corpus().ids().skip(skip_count) {
+            if let Ok(entry) = state.corpus().get(id) {
+                let tc = entry.borrow();
+                if let Some(input) = tc.input() {
+                    let bytes: &[u8] = input.as_ref();
+                    if std::str::from_utf8(bytes).is_ok() {
+                        utf8_count += 1;
+                    } else {
+                        non_utf8_count += 1;
+                    }
+                }
+            }
+        }
+        utf8_count > non_utf8_count
+    }
+
+    /// Compute which coverage map indices are newly maximized compared to the
+    /// feedback's internal history. Called BEFORE `is_interesting()` so the
+    /// history hasn't been updated yet. Returns indices where `map[i] > history[i]`.
+    fn compute_novel_indices(&self) -> Vec<usize> {
+        let history = self
+            .state
+            .named_metadata_map()
+            .get::<MapFeedbackMetadata<u8>>(EDGES_OBSERVER_NAME);
+
+        let Some(history_meta) = history else {
+            // No history yet — every nonzero map entry is novel.
+            // SAFETY: map_ptr is valid for map_len bytes.
+            let map = unsafe { std::slice::from_raw_parts(self.map_ptr, self.map_len) };
+            return map
+                .iter()
+                .enumerate()
+                .filter(|&(_, v)| *v > 0)
+                .map(|(i, _)| i)
+                .collect();
+        };
+
+        // SAFETY: map_ptr is valid for map_len bytes.
+        let map = unsafe { std::slice::from_raw_parts(self.map_ptr, self.map_len) };
+        let history_map = &history_meta.history_map;
+
+        // History map may be shorter than coverage map (e.g., before first
+        // is_interesting() call initializes it). Indices beyond history length
+        // have an implicit history value of 0.
+        let mut novel = Vec::new();
+        for (i, &map_val) in map.iter().enumerate() {
+            let hist_val = history_map.get(i).copied().unwrap_or(0);
+            if map_val > hist_val {
+                novel.push(i);
+            }
+        }
+        novel
+    }
+
     /// Shared coverage evaluation logic used by both `report_result()` and
     /// `advance_stage()`. Masks unstable edges, evaluates objective and feedback,
     /// adds to corpus if interesting, and zeroes the coverage map.
@@ -1190,6 +1463,10 @@ impl Fuzzer {
                     corpus_id: None,
                 }
             } else {
+                // Compute novel indices BEFORE calling is_interesting(), which
+                // updates the feedback's internal history. Novel = map[i] > history[i].
+                let novel_indices = self.compute_novel_indices();
+
                 let is_interesting = self
                     .feedback
                     .is_interesting(
@@ -1208,6 +1485,9 @@ impl Fuzzer {
                     self.feedback
                         .append_metadata(&mut self.state, &mut mgr, &observers, &mut testcase)
                         .map_err(|e| Error::from_reason(format!("Append metadata failed: {e}")))?;
+
+                    // Store novel indices on the testcase for generalization.
+                    testcase.add_metadata(MapNoveltiesMetadata::new(novel_indices));
 
                     // Drop observers before reading the raw map pointer to avoid aliasing.
                     drop(observers);
@@ -1281,6 +1561,738 @@ impl Fuzzer {
 
         Ok(result)
     }
+
+    /// Construct a candidate `BytesInput` from the payload with the given range removed.
+    /// Concatenates all `Some(byte)` values from `payload[..start]` and `payload[end..]`,
+    /// skipping all `None` (gap) positions.
+    fn build_generalization_candidate(payload: &[Option<u8>], start: usize, end: usize) -> Vec<u8> {
+        debug_assert!(
+            start <= end && end <= payload.len(),
+            "build_generalization_candidate: invalid range {start}..{end} for payload len {}",
+            payload.len()
+        );
+        let mut candidate = Vec::new();
+        for &slot in &payload[..start] {
+            if let Some(b) = slot {
+                candidate.push(b);
+            }
+        }
+        for &slot in &payload[end..] {
+            if let Some(b) = slot {
+                candidate.push(b);
+            }
+        }
+        candidate
+    }
+
+    /// Remove consecutive `None` entries from the payload, leaving only a single
+    /// `None` to represent each contiguous gap region. O(n) via `retain`.
+    fn trim_payload(payload: &mut Vec<Option<u8>>) {
+        let mut previous_was_none = false;
+        payload.retain(|item| {
+            let dominated = item.is_none() && previous_was_none;
+            previous_was_none = item.is_none();
+            !dominated
+        });
+    }
+
+    /// Convert a payload (`Vec<Option<u8>>`) to `GeneralizedInputMetadata`.
+    ///
+    /// Rules:
+    /// - Contiguous `Some(byte)` runs become `GeneralizedItem::Bytes(Vec<u8>)`.
+    /// - Each `None` becomes `GeneralizedItem::Gap`.
+    /// - Leading `Gap` is prepended if first element is not `None`.
+    /// - Trailing `Gap` is appended if last element is not `None`.
+    fn payload_to_generalized(payload: &[Option<u8>]) -> GeneralizedInputMetadata {
+        GeneralizedInputMetadata::generalized_from_options(payload)
+    }
+
+    /// Check whether all novelty indices are nonzero in the current coverage map.
+    fn check_novelties_survived(&self, novelties: &[usize]) -> bool {
+        // SAFETY: map_ptr is valid for map_len bytes, backed by _coverage_map Buffer.
+        let map = unsafe { std::slice::from_raw_parts(self.map_ptr, self.map_len) };
+        novelties
+            .iter()
+            .all(|&idx| idx < self.map_len && map[idx] > 0)
+    }
+
+    /// Begin the generalization stage for a corpus entry.
+    ///
+    /// Returns the first candidate (the original input for verification),
+    /// or `None` if preconditions are not met.
+    fn begin_generalization(&mut self, corpus_id: CorpusId) -> Result<Option<Buffer>> {
+        if !self.grimoire_enabled {
+            return Ok(None);
+        }
+
+        // Check skipping conditions on the testcase.
+        let tc = self
+            .state
+            .corpus()
+            .get(corpus_id)
+            .map_err(|e| Error::from_reason(format!("Failed to get corpus entry: {e}")))?;
+        let tc_ref = tc.borrow();
+
+        // Already generalized?
+        if tc_ref.has_metadata::<GeneralizedInputMetadata>() {
+            return Ok(None);
+        }
+
+        // Has novelty metadata with non-empty list?
+        let novelties = match tc_ref.metadata::<MapNoveltiesMetadata>() {
+            Ok(meta) if !meta.list.is_empty() => meta.list.clone(),
+            _ => return Ok(None),
+        };
+
+        // Get input bytes.
+        let input_bytes: Vec<u8> = tc_ref
+            .input()
+            .as_ref()
+            .ok_or_else(|| Error::from_reason("Corpus entry has no input"))?
+            .as_ref()
+            .to_vec();
+
+        drop(tc_ref);
+        let _ = tc;
+
+        // Size limit.
+        if input_bytes.len() > MAX_GENERALIZED_LEN {
+            return Ok(None);
+        }
+
+        // Build initial payload (all bytes are structural/untested).
+        let payload: Vec<Option<u8>> = input_bytes.iter().map(|&b| Some(b)).collect();
+
+        // First candidate is the original input (verification phase).
+        let candidate = input_bytes.clone();
+        self.last_stage_input = Some(candidate.clone());
+
+        self.stage_state = StageState::Generalization {
+            corpus_id,
+            novelties,
+            payload,
+            phase: GeneralizationPhase::Verify,
+            candidate_range: None,
+        };
+
+        Ok(Some(Buffer::from(candidate)))
+    }
+
+    /// Advance the generalization stage after a target execution.
+    ///
+    /// Reads the coverage map, decides gap/structural for the current candidate,
+    /// advances to the next phase/position, constructs the next candidate.
+    /// Returns `None` when generalization is complete.
+    fn advance_generalization(&mut self, exec_time_ns: f64) -> Result<Option<Buffer>> {
+        // Drain CmpLog (discard — generalization doesn't use CmpLog data).
+        let _ = crate::cmplog::drain();
+
+        // Extract state (we'll put it back or replace it).
+        let (corpus_id, novelties, mut payload, phase, candidate_range) =
+            match std::mem::replace(&mut self.stage_state, StageState::None) {
+                StageState::Generalization {
+                    corpus_id,
+                    novelties,
+                    payload,
+                    phase,
+                    candidate_range,
+                } => (corpus_id, novelties, payload, phase, candidate_range),
+                other => {
+                    self.stage_state = other;
+                    return Ok(None);
+                }
+            };
+
+        let novelties_survived = self.check_novelties_survived(&novelties);
+
+        // The target was invoked — count the execution before the fallible
+        // evaluate_coverage call so counters stay accurate on error.
+        self.total_execs += 1;
+        *self.state.executions_mut() += 1;
+
+        // Evaluate coverage for corpus addition during gap-finding (not verification).
+        // Stage state was consumed by mem::replace above. If evaluate_coverage
+        // fails, the in-progress generalization is cleanly abandoned.
+        if !matches!(phase, GeneralizationPhase::Verify) {
+            if let Some(stage_input) = self.last_stage_input.take() {
+                let _eval = self.evaluate_coverage(
+                    &stage_input,
+                    exec_time_ns,
+                    LibaflExitKind::Ok,
+                    corpus_id,
+                )?;
+            }
+        } else {
+            self.last_stage_input = None;
+            // Zero coverage map — Verify doesn't call evaluate_coverage (which does its own zero).
+            // SAFETY: map_ptr is valid for map_len bytes, backed by _coverage_map Buffer.
+            unsafe {
+                std::ptr::write_bytes(self.map_ptr, 0, self.map_len);
+            }
+        }
+
+        match phase {
+            GeneralizationPhase::Verify => {
+                if !novelties_survived {
+                    // Verification failed — unstable input. Abort generalization.
+                    self.stage_state = StageState::None;
+                    return Ok(None);
+                }
+                // Verification passed — begin offset-based gap-finding.
+                let next_phase = GeneralizationPhase::Offset { level: 0, _pos: 0 };
+                self.generate_next_candidate(corpus_id, novelties, payload, next_phase)
+            }
+            GeneralizationPhase::Offset { level, _pos: _ } => {
+                // Process result of previous candidate.
+                if novelties_survived && let Some((start, end)) = candidate_range {
+                    for i in start..end {
+                        if i < payload.len() {
+                            payload[i] = None;
+                        }
+                    }
+                }
+
+                // Advance position.
+                let offset = GENERALIZATION_OFFSETS[level as usize];
+                let next_pos = candidate_range.map_or(0, |(_, e)| e);
+                if next_pos >= payload.len() {
+                    // Pass complete — trim and move to next level or delimiter phase.
+                    Self::trim_payload(&mut payload);
+                    let next_phase = if (level + 1) < GENERALIZATION_OFFSETS.len() as u8 {
+                        GeneralizationPhase::Offset {
+                            level: level + 1,
+                            _pos: 0,
+                        }
+                    } else {
+                        GeneralizationPhase::Delimiter { index: 0, _pos: 0 }
+                    };
+                    return self.generate_next_candidate(corpus_id, novelties, payload, next_phase);
+                }
+
+                // Compute next range.
+                let start = next_pos;
+                let end = std::cmp::min(start + 1 + offset, payload.len());
+                let candidate = Self::build_generalization_candidate(&payload, start, end);
+                self.last_stage_input = Some(candidate.clone());
+
+                self.stage_state = StageState::Generalization {
+                    corpus_id,
+                    novelties,
+                    payload,
+                    phase: GeneralizationPhase::Offset { level, _pos: start },
+                    candidate_range: Some((start, end)),
+                };
+
+                Ok(Some(Buffer::from(candidate)))
+            }
+            GeneralizationPhase::Delimiter { index, _pos: _ } => {
+                // Process result of previous candidate.
+                if novelties_survived && let Some((start, end)) = candidate_range {
+                    for i in start..end {
+                        if i < payload.len() {
+                            payload[i] = None;
+                        }
+                    }
+                }
+
+                let next_pos = candidate_range.map_or(0, |(_, e)| e);
+                if next_pos >= payload.len() {
+                    // Pass complete — trim and move to next delimiter or bracket phase.
+                    Self::trim_payload(&mut payload);
+                    let next_phase = if (index + 1) < GENERALIZATION_DELIMITERS.len() as u8 {
+                        GeneralizationPhase::Delimiter {
+                            index: index + 1,
+                            _pos: 0,
+                        }
+                    } else {
+                        GeneralizationPhase::Bracket {
+                            pair_index: 0,
+                            index: 0,
+                            start: 0,
+                            end: 0,
+                            endings: 0,
+                        }
+                    };
+                    return self.generate_next_candidate(corpus_id, novelties, payload, next_phase);
+                }
+
+                // Find next delimiter from next_pos.
+                let delimiter = GENERALIZATION_DELIMITERS[index as usize];
+                let start = next_pos;
+                let delim_pos = payload[start..]
+                    .iter()
+                    .position(|&slot| slot == Some(delimiter));
+                let end = match delim_pos {
+                    Some(rel_pos) => start + rel_pos + 1,
+                    None => payload.len(),
+                };
+
+                let candidate = Self::build_generalization_candidate(&payload, start, end);
+                self.last_stage_input = Some(candidate.clone());
+
+                self.stage_state = StageState::Generalization {
+                    corpus_id,
+                    novelties,
+                    payload,
+                    phase: GeneralizationPhase::Delimiter { index, _pos: start },
+                    candidate_range: Some((start, end)),
+                };
+
+                Ok(Some(Buffer::from(candidate)))
+            }
+            GeneralizationPhase::Bracket {
+                pair_index,
+                index: outer_index,
+                // `start` is unused here; the inner scan resumes from `bracket_end`, not the opener.
+                start: _bracket_start,
+                end: bracket_end,
+                endings,
+            } => {
+                // Process result of previous candidate: mark gaps if survived.
+                if let Some((cr_start, cr_end)) = candidate_range
+                    && novelties_survived
+                {
+                    for i in cr_start..cr_end {
+                        if i < payload.len() {
+                            payload[i] = None;
+                        }
+                    }
+                }
+
+                // After yielding a candidate, advance inner-loop state per LibAFL:
+                //   start = end (collapse inner window)
+                //   end -= 1 (move backward scan inward)
+                //   index += 1 (outer loop progress)
+                if candidate_range.is_some() {
+                    let new_start = bracket_end;
+                    let new_end = bracket_end.saturating_sub(1);
+                    let new_index = outer_index + 1;
+                    self.continue_bracket_inner_scan(
+                        corpus_id, novelties, payload, pair_index, new_index, new_start, new_end,
+                        endings,
+                    )
+                } else {
+                    // First entry into bracket phase — start scanning.
+                    self.find_next_bracket_opener(
+                        corpus_id,
+                        novelties,
+                        payload,
+                        pair_index,
+                        outer_index,
+                    )
+                }
+            }
+        }
+    }
+
+    /// Generate the next candidate for the current generalization phase.
+    /// Handles the entry point into each new phase (finding the first valid candidate).
+    fn generate_next_candidate(
+        &mut self,
+        corpus_id: CorpusId,
+        novelties: Vec<usize>,
+        payload: Vec<Option<u8>>,
+        phase: GeneralizationPhase,
+    ) -> Result<Option<Buffer>> {
+        match phase {
+            GeneralizationPhase::Offset { level, _pos: _ } => {
+                let offset = GENERALIZATION_OFFSETS[level as usize];
+                let start = 0;
+                if start >= payload.len() {
+                    // Empty payload — skip to next phase.
+                    return self
+                        .advance_to_next_offset_or_delimiter(corpus_id, novelties, payload, level);
+                }
+                let end = std::cmp::min(start + 1 + offset, payload.len());
+                let candidate = Self::build_generalization_candidate(&payload, start, end);
+                self.last_stage_input = Some(candidate.clone());
+
+                self.stage_state = StageState::Generalization {
+                    corpus_id,
+                    novelties,
+                    payload,
+                    phase: GeneralizationPhase::Offset { level, _pos: start },
+                    candidate_range: Some((start, end)),
+                };
+
+                Ok(Some(Buffer::from(candidate)))
+            }
+            GeneralizationPhase::Delimiter { index, _pos: _ } => {
+                let delimiter = GENERALIZATION_DELIMITERS[index as usize];
+                let start = 0;
+                if start >= payload.len() {
+                    return self.advance_to_next_delimiter_or_bracket(
+                        corpus_id, novelties, payload, index,
+                    );
+                }
+                let delim_pos = payload.iter().position(|&slot| slot == Some(delimiter));
+                let end = match delim_pos {
+                    Some(rel_pos) => rel_pos + 1,
+                    None => payload.len(),
+                };
+
+                let candidate = Self::build_generalization_candidate(&payload, start, end);
+                self.last_stage_input = Some(candidate.clone());
+
+                self.stage_state = StageState::Generalization {
+                    corpus_id,
+                    novelties,
+                    payload,
+                    phase: GeneralizationPhase::Delimiter { index, _pos: start },
+                    candidate_range: Some((start, end)),
+                };
+
+                Ok(Some(Buffer::from(candidate)))
+            }
+            GeneralizationPhase::Bracket { pair_index, .. } => {
+                if pair_index as usize >= GENERALIZATION_BRACKETS.len() {
+                    // All bracket passes done — finalize.
+                    return self.finalize_generalization(corpus_id, &payload);
+                }
+                // Start bracket scanning from index=0.
+                self.find_next_bracket_opener(corpus_id, novelties, payload, pair_index, 0)
+            }
+            GeneralizationPhase::Verify => {
+                // Should not reach here from generate_next_candidate.
+                self.stage_state = StageState::None;
+                Ok(None)
+            }
+        }
+    }
+
+    fn advance_to_next_offset_or_delimiter(
+        &mut self,
+        corpus_id: CorpusId,
+        novelties: Vec<usize>,
+        mut payload: Vec<Option<u8>>,
+        current_level: u8,
+    ) -> Result<Option<Buffer>> {
+        Self::trim_payload(&mut payload);
+        if (current_level + 1) < GENERALIZATION_OFFSETS.len() as u8 {
+            self.generate_next_candidate(
+                corpus_id,
+                novelties,
+                payload,
+                GeneralizationPhase::Offset {
+                    level: current_level + 1,
+                    _pos: 0,
+                },
+            )
+        } else {
+            self.generate_next_candidate(
+                corpus_id,
+                novelties,
+                payload,
+                GeneralizationPhase::Delimiter { index: 0, _pos: 0 },
+            )
+        }
+    }
+
+    fn advance_to_next_delimiter_or_bracket(
+        &mut self,
+        corpus_id: CorpusId,
+        novelties: Vec<usize>,
+        mut payload: Vec<Option<u8>>,
+        current_index: u8,
+    ) -> Result<Option<Buffer>> {
+        Self::trim_payload(&mut payload);
+        if (current_index + 1) < GENERALIZATION_DELIMITERS.len() as u8 {
+            self.generate_next_candidate(
+                corpus_id,
+                novelties,
+                payload,
+                GeneralizationPhase::Delimiter {
+                    index: current_index + 1,
+                    _pos: 0,
+                },
+            )
+        } else {
+            self.generate_next_candidate(
+                corpus_id,
+                novelties,
+                payload,
+                GeneralizationPhase::Bracket {
+                    pair_index: 0,
+                    index: 0,
+                    start: 0,
+                    end: 0,
+                    endings: 0,
+                },
+            )
+        }
+    }
+
+    /// Outer loop of bracket-based gap-finding: scan forward from `index` for
+    /// an opening bracket, then set up the inner backward scan for closers.
+    ///
+    /// Note: recursion depth is bounded by `MAX_GENERALIZED_LEN` (8192 bytes) and the number
+    /// of bracket types (6). The worst-case depth is safe for the default 8 MB stack.
+    fn find_next_bracket_opener(
+        &mut self,
+        corpus_id: CorpusId,
+        novelties: Vec<usize>,
+        payload: Vec<Option<u8>>,
+        pair_index: u8,
+        mut index: usize,
+    ) -> Result<Option<Buffer>> {
+        if pair_index as usize >= GENERALIZATION_BRACKETS.len() {
+            return self.finalize_generalization(corpus_id, &payload);
+        }
+
+        let (open_char, _close_char) = GENERALIZATION_BRACKETS[pair_index as usize];
+
+        // Scan forward for the next opener.
+        while index < payload.len() && payload[index] != Some(open_char) {
+            index += 1;
+        }
+        if index >= payload.len() {
+            // No more openers for this pair — advance to next pair.
+            return self.advance_to_next_bracket_pair(corpus_id, novelties, payload, pair_index);
+        }
+
+        // Found an opener at `index`. Set up inner backward scan.
+        // LibAFL: start = index, end = payload.len() - 1 (or start if empty).
+        // SAFETY of payload.len() - 1: index < payload.len() was verified above,
+        // so payload is guaranteed non-empty.
+        debug_assert!(
+            !payload.is_empty(),
+            "payload must be non-empty when an opener was found"
+        );
+        let start = index;
+        let end = payload.len() - 1;
+
+        self.continue_bracket_inner_scan(
+            corpus_id, novelties, payload, pair_index, index, start, end, 0,
+        )
+    }
+
+    /// Inner loop of bracket-based gap-finding: scan backward from `end` for
+    /// a closing bracket. Yields a candidate when found, or advances to the
+    /// next opener/pair when exhausted.
+    #[allow(clippy::too_many_arguments)]
+    fn continue_bracket_inner_scan(
+        &mut self,
+        corpus_id: CorpusId,
+        novelties: Vec<usize>,
+        mut payload: Vec<Option<u8>>,
+        pair_index: u8,
+        index: usize,
+        start: usize,
+        mut end: usize,
+        mut endings: usize,
+    ) -> Result<Option<Buffer>> {
+        if payload.is_empty() {
+            return self.advance_to_next_bracket_pair(corpus_id, novelties, payload, pair_index);
+        }
+
+        let (_open_char, close_char) = GENERALIZATION_BRACKETS[pair_index as usize];
+
+        // Scan backward from `end` looking for a closer.
+        while end > start {
+            if payload[end] == Some(close_char) {
+                endings += 1;
+                // Found a closer — yield candidate from start..end (exclusive of endpoints
+                // to match LibAFL behavior: the opener and closer themselves are kept).
+                let candidate = Self::build_generalization_candidate(&payload, start + 1, end);
+                self.last_stage_input = Some(candidate.clone());
+
+                self.stage_state = StageState::Generalization {
+                    corpus_id,
+                    novelties,
+                    payload,
+                    phase: GeneralizationPhase::Bracket {
+                        pair_index,
+                        index,
+                        start,
+                        end,
+                        endings,
+                    },
+                    candidate_range: Some((start + 1, end)),
+                };
+
+                return Ok(Some(Buffer::from(candidate)));
+            }
+            end -= 1;
+        }
+
+        // Inner scan exhausted for this opener.
+        if endings > 0 {
+            // We found at least one closer — the outer loop advances past this opener.
+            // The outer loop advances `index` by 1 per opener (not per backward-scan step
+            // as in the spec). This may revisit positions but does not affect correctness.
+            Self::trim_payload(&mut payload);
+            self.find_next_bracket_opener(corpus_id, novelties, payload, pair_index, index + 1)
+        } else {
+            // No closer found at all for this opener — advance to next pair.
+            self.advance_to_next_bracket_pair(corpus_id, novelties, payload, pair_index)
+        }
+    }
+
+    /// Trim the payload and advance to the next bracket pair, or finalize
+    /// if all bracket pairs have been processed.
+    fn advance_to_next_bracket_pair(
+        &mut self,
+        corpus_id: CorpusId,
+        novelties: Vec<usize>,
+        mut payload: Vec<Option<u8>>,
+        pair_index: u8,
+    ) -> Result<Option<Buffer>> {
+        Self::trim_payload(&mut payload);
+        self.generate_next_candidate(
+            corpus_id,
+            novelties,
+            payload,
+            GeneralizationPhase::Bracket {
+                pair_index: pair_index + 1,
+                index: 0,
+                start: 0,
+                end: 0,
+                endings: 0,
+            },
+        )
+    }
+
+    /// Finalize the generalization stage: convert payload to `GeneralizedInputMetadata`
+    /// and store it on the testcase.
+    fn finalize_generalization(
+        &mut self,
+        corpus_id: CorpusId,
+        payload: &[Option<u8>],
+    ) -> Result<Option<Buffer>> {
+        let metadata = Self::payload_to_generalized(payload);
+
+        let mut tc = self
+            .state
+            .corpus()
+            .get(corpus_id)
+            .map_err(|e| Error::from_reason(format!("Failed to get corpus entry: {e}")))?
+            .borrow_mut();
+        tc.add_metadata(metadata);
+        drop(tc);
+
+        // Transition to Grimoire stage (entry now has GeneralizedInputMetadata).
+        self.stage_state = StageState::None;
+        self.begin_grimoire(corpus_id)
+    }
+
+    /// Begin the Grimoire mutational stage for a corpus entry that has
+    /// `GeneralizedInputMetadata`. Returns the first mutated input, or `None`
+    /// if the entry has no metadata.
+    fn begin_grimoire(&mut self, corpus_id: CorpusId) -> Result<Option<Buffer>> {
+        if !self.grimoire_enabled {
+            return Ok(None);
+        }
+
+        // Check that the entry has GeneralizedInputMetadata.
+        let has_metadata = self
+            .state
+            .corpus()
+            .get(corpus_id)
+            .map_err(|e| Error::from_reason(format!("Failed to get corpus entry: {e}")))?
+            .borrow()
+            .has_metadata::<GeneralizedInputMetadata>();
+        if !has_metadata {
+            return Ok(None);
+        }
+
+        // Select random iteration count 1..=STAGE_MAX_ITERATIONS.
+        // SAFETY of unwrap: STAGE_MAX_ITERATIONS is a non-zero constant.
+        let max_iterations = self
+            .state
+            .rand_mut()
+            .below(core::num::NonZero::new(STAGE_MAX_ITERATIONS).unwrap())
+            + 1;
+
+        // Generate first mutated input.
+        let bytes = self.grimoire_mutate_one(corpus_id)?;
+
+        self.last_stage_input = Some(bytes.clone());
+        self.stage_state = StageState::Grimoire {
+            corpus_id,
+            iteration: 0,
+            max_iterations,
+        };
+
+        Ok(Some(Buffer::from(bytes)))
+    }
+
+    /// Advance the Grimoire stage after a target execution.
+    fn advance_grimoire(&mut self, exec_time_ns: f64) -> Result<Option<Buffer>> {
+        let (corpus_id, iteration, max_iterations) = match self.stage_state {
+            StageState::Grimoire {
+                corpus_id,
+                iteration,
+                max_iterations,
+            } => (corpus_id, iteration, max_iterations),
+            _ => return Ok(None),
+        };
+
+        // Drain CmpLog (discard — Grimoire doesn't use CmpLog data).
+        let _ = crate::cmplog::drain();
+
+        // Reset stage state before the fallible evaluate_coverage call. On error,
+        // the stage is cleanly abandoned (no zombie state). On success, stage_state
+        // is overwritten below with the next iteration or StageState::None.
+        self.stage_state = StageState::None;
+        let stage_input = self
+            .last_stage_input
+            .take()
+            .ok_or_else(|| Error::from_reason("advanceGrimoire: no stashed stage input"))?;
+
+        // The target was invoked — count the execution before the fallible
+        // evaluate_coverage call so counters stay accurate on error.
+        self.total_execs += 1;
+        *self.state.executions_mut() += 1;
+
+        let _eval =
+            self.evaluate_coverage(&stage_input, exec_time_ns, LibaflExitKind::Ok, corpus_id)?;
+
+        let next_iteration = iteration + 1;
+        if next_iteration >= max_iterations {
+            // stage_state is already StageState::None (reset before evaluate_coverage above).
+            return Ok(None);
+        }
+
+        // Generate next Grimoire candidate.
+        let bytes = self.grimoire_mutate_one(corpus_id)?;
+        self.last_stage_input = Some(bytes.clone());
+
+        self.stage_state = StageState::Grimoire {
+            corpus_id,
+            iteration: next_iteration,
+            max_iterations,
+        };
+
+        Ok(Some(Buffer::from(bytes)))
+    }
+
+    /// Clone GeneralizedInputMetadata from a corpus entry, apply the Grimoire
+    /// scheduled mutator, convert to bytes, and enforce max_input_len.
+    fn grimoire_mutate_one(&mut self, corpus_id: CorpusId) -> Result<Vec<u8>> {
+        // Clone the GeneralizedInputMetadata from the corpus entry.
+        let mut metadata = self
+            .state
+            .corpus()
+            .get(corpus_id)
+            .map_err(|e| Error::from_reason(format!("Failed to get corpus entry: {e}")))?
+            .borrow()
+            .metadata::<GeneralizedInputMetadata>()
+            .map_err(|e| Error::from_reason(format!("Missing GeneralizedInputMetadata: {e}")))?
+            .clone();
+
+        // Apply Grimoire mutator. Skipped results still produce the unmutated
+        // metadata for execution.
+        let _ = self
+            .grimoire_mutator
+            .mutate(&mut self.state, &mut metadata)
+            .map_err(|e| Error::from_reason(format!("Grimoire mutation failed: {e}")))?;
+
+        // Convert to bytes and truncate.
+        let mut bytes = metadata.generalized_to_bytes();
+        bytes.truncate(self.max_input_len as usize);
+
+        Ok(bytes)
+    }
 }
 
 impl Drop for Fuzzer {
@@ -1293,6 +2305,7 @@ impl Drop for Fuzzer {
 mod tests {
     use super::*;
     use crate::cmplog;
+    use libafl::inputs::GeneralizedItem;
     use libafl::observers::MapObserver;
     use libafl::observers::cmp::{CmpValues, CmpValuesMetadata, CmplogBytes};
     use libafl::schedulers::TestcaseScore;
@@ -1623,15 +2636,26 @@ mod tests {
         let id = state.corpus_mut().add(testcase).unwrap();
         scheduler.on_add(&mut state, id).unwrap();
 
-        // Generate multiple inputs and verify they respect max_input_len.
+        // Generate multiple inputs and verify truncation enforces max_input_len.
+        let mut saw_oversized = false;
         for _ in 0..100 {
             let corpus_id = scheduler.next(&mut state).unwrap();
             let mut input = state.corpus().cloned_input_for_id(corpus_id).unwrap();
             let _ = mutator.mutate(&mut state, &mut input).unwrap();
-            let mut bytes: Vec<u8> = input.into();
-            bytes.truncate(max_input_len as usize);
-            assert!(bytes.len() <= max_input_len as usize);
+            let bytes: Vec<u8> = input.into();
+            if bytes.len() > max_input_len as usize {
+                saw_oversized = true;
+            }
+            // Simulate the truncation step that the engine performs.
+            let truncated = &bytes[..std::cmp::min(bytes.len(), max_input_len as usize)];
+            assert!(truncated.len() <= max_input_len as usize);
         }
+        // The seed is 256 bytes and max_input_len is 128 — at least some mutations
+        // should produce inputs exceeding the limit (proving truncation is needed).
+        assert!(
+            saw_oversized,
+            "mutator should produce at least one input exceeding max_input_len"
+        );
     }
 
     // === CmpLog integration tests ===
@@ -2849,6 +3873,18 @@ mod tests {
         let scheduler = ProbabilitySamplingScheduler::new();
         let mutator = HavocScheduledMutator::new(havoc_mutations().merge(tokens_mutations()));
         let i2s_mutator = I2SSpliceReplace::new();
+        let grimoire_mutator = HavocScheduledMutator::with_max_stack_pow(
+            tuple_list!(
+                GrimoireExtensionMutator::new(),
+                GrimoireRecursiveReplacementMutator::new(),
+                GrimoireStringReplacementMutator::new(),
+                // Two delete mutators: matches LibAFL's default grimoire mutations,
+                // which intentionally double-weights deletions.
+                GrimoireRandomDeleteMutator::new(),
+                GrimoireRandomDeleteMutator::new(),
+            ),
+            GRIMOIRE_MAX_STACK_POW,
+        );
 
         drop(temp_observer);
 
@@ -2864,6 +3900,7 @@ mod tests {
             timeout_objective,
             mutator,
             i2s_mutator,
+            grimoire_mutator,
             map_ptr,
             map_len,
             _coverage_map: coverage_map,
@@ -2885,6 +3922,9 @@ mod tests {
             stage_state: StageState::None,
             last_interesting_corpus_id: None,
             last_stage_input: None,
+            grimoire_enabled: false,
+            grimoire_deferred_count: Some(0),
+            auto_seed_count: 0,
         }
     }
 
@@ -3729,7 +4769,7 @@ mod tests {
         let state_execs_before = *fuzzer.state.executions();
 
         // abortStage with no active stage should be a no-op.
-        fuzzer.abort_stage(ExitKind::Crash);
+        fuzzer.abort_stage(ExitKind::Crash).unwrap();
 
         assert_eq!(
             fuzzer.total_execs, total_execs_before,
@@ -3744,6 +4784,2057 @@ mod tests {
             matches!(fuzzer.stage_state, StageState::None),
             "stage should remain None"
         );
+
+        cmplog::disable();
+    }
+
+    // === MapNoveltiesMetadata tracking tests (task 2.1) ===
+
+    #[test]
+    fn test_novelty_indices_recorded_for_interesting_input() {
+        // When an input triggers new coverage, MapNoveltiesMetadata should be
+        // stored on the testcase containing exactly the newly-maximized indices.
+        let mut fuzzer = make_test_fuzzer(256);
+        fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+
+        let _input = fuzzer.get_next_input().unwrap();
+
+        // Write novel coverage at indices 42 and 100.
+        unsafe {
+            *fuzzer.map_ptr.add(42) = 1;
+            *fuzzer.map_ptr.add(100) = 3;
+        }
+
+        let result = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
+        assert!(matches!(result, IterationResult::Interesting));
+
+        let corpus_id = fuzzer
+            .calibration_corpus_id
+            .expect("should have calibration_corpus_id");
+        let tc = fuzzer.state.corpus().get(corpus_id).unwrap().borrow();
+        let novelties = tc
+            .metadata::<MapNoveltiesMetadata>()
+            .expect("interesting input should have MapNoveltiesMetadata");
+        let mut indices = novelties.list.clone();
+        indices.sort();
+        assert_eq!(
+            indices,
+            vec![42, 100],
+            "novelty metadata should contain exactly the newly-maximized indices"
+        );
+    }
+
+    #[test]
+    fn test_no_novelty_metadata_for_non_interesting_input() {
+        // Non-interesting inputs are not added to corpus, so no metadata stored.
+        let mut fuzzer = make_test_fuzzer(256);
+        fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+
+        let _input = fuzzer.get_next_input().unwrap();
+        // No novel coverage written to the map.
+        let result = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
+        assert!(matches!(result, IterationResult::None));
+        // Corpus should still have only the seed — no entry added.
+        assert_eq!(
+            fuzzer.state.corpus().count(),
+            1,
+            "no corpus entry should be added for non-interesting input"
+        );
+    }
+
+    #[test]
+    fn test_novelty_only_newly_maximized_not_all_covered() {
+        // When input covers indices that already have equal-or-higher history values,
+        // only the truly-novel (newly maximized) indices should be in MapNoveltiesMetadata.
+        let mut fuzzer = make_test_fuzzer(256);
+        fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+
+        // First iteration: establish coverage at indices 10 and 20.
+        let _input = fuzzer.get_next_input().unwrap();
+        unsafe {
+            *fuzzer.map_ptr.add(10) = 1;
+            *fuzzer.map_ptr.add(20) = 1;
+        }
+        let result = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
+        assert!(matches!(result, IterationResult::Interesting));
+        fuzzer.calibrate_finish().unwrap();
+
+        // Second iteration: cover indices 10, 20 (same), plus new index 30.
+        // Also: index 20 now has value 5 (higher than history's 1) → novel.
+        let _input = fuzzer.get_next_input().unwrap();
+        unsafe {
+            *fuzzer.map_ptr.add(10) = 1; // same as history, NOT novel
+            *fuzzer.map_ptr.add(20) = 5; // higher than history (1), IS novel
+            *fuzzer.map_ptr.add(30) = 1; // new index, IS novel
+        }
+        let result = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
+        assert!(matches!(result, IterationResult::Interesting));
+
+        let corpus_id = fuzzer
+            .calibration_corpus_id
+            .expect("should have calibration_corpus_id");
+        let tc = fuzzer.state.corpus().get(corpus_id).unwrap().borrow();
+        let novelties = tc
+            .metadata::<MapNoveltiesMetadata>()
+            .expect("should have MapNoveltiesMetadata");
+        let mut indices = novelties.list.clone();
+        indices.sort();
+        // Index 10 is NOT novel (same as history), indices 20 and 30 ARE novel.
+        assert_eq!(
+            indices,
+            vec![20, 30],
+            "only newly-maximized indices should be in novelties, not all covered"
+        );
+    }
+
+    #[test]
+    fn test_novelty_metadata_stored_during_stage_execution() {
+        // When a stage execution (e.g., I2S) triggers new coverage and the input
+        // is added to the corpus, it should also have MapNoveltiesMetadata.
+        cmplog::disable();
+        cmplog::drain();
+
+        let mut fuzzer = make_test_fuzzer(256);
+        cmplog::enable();
+        fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+
+        // Trigger an interesting input so we can start a stage.
+        let _input = fuzzer.get_next_input().unwrap();
+        unsafe {
+            *fuzzer.map_ptr.add(10) = 1;
+        }
+        cmplog::push(CmpValues::Bytes((
+            make_cmplog_bytes(b"seed"),
+            make_cmplog_bytes(b"test"),
+        )));
+        let result = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
+        assert!(matches!(result, IterationResult::Interesting));
+        fuzzer.calibrate_finish().unwrap();
+
+        // Begin stage.
+        let stage_input = fuzzer.begin_stage().unwrap();
+        assert!(stage_input.is_some(), "stage should start");
+
+        // Write novel coverage at a new index during stage execution.
+        unsafe {
+            *fuzzer.map_ptr.add(50) = 1;
+        }
+
+        let corpus_count_before = fuzzer.state.corpus().count();
+        let _next = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+
+        // The stage execution should have found new coverage and added a corpus entry.
+        let corpus_count_after = fuzzer.state.corpus().count();
+        assert!(
+            corpus_count_after > corpus_count_before,
+            "stage should have added a new corpus entry"
+        );
+
+        // Find the new entry (the last one added).
+        let new_id = CorpusId::from(corpus_count_after - 1);
+        let tc = fuzzer.state.corpus().get(new_id).unwrap().borrow();
+        assert!(
+            tc.metadata::<MapNoveltiesMetadata>().is_ok(),
+            "stage-found corpus entry should have MapNoveltiesMetadata"
+        );
+
+        cmplog::disable();
+    }
+
+    // === Grimoire auto-detection tests (task 3.1) ===
+
+    #[test]
+    fn test_grimoire_majority_utf8_enables() {
+        // Corpus with 8 UTF-8 and 2 non-UTF-8 inputs → enabled.
+        let (map_ptr, _map) = make_coverage_map(256);
+        let (mut state, ..) = make_state_and_feedback(map_ptr, 256);
+
+        for i in 0..8 {
+            let tc = Testcase::new(BytesInput::new(format!("text_{i}").into_bytes()));
+            state.corpus_mut().add(tc).unwrap();
+        }
+        for _ in 0..2 {
+            let tc = Testcase::new(BytesInput::new(vec![0xFF, 0xFE, 0x80, 0x81]));
+            state.corpus_mut().add(tc).unwrap();
+        }
+
+        assert!(Fuzzer::scan_corpus_utf8(&state, 0));
+    }
+
+    #[test]
+    fn test_grimoire_majority_non_utf8_disables() {
+        let (map_ptr, _map) = make_coverage_map(256);
+        let (mut state, ..) = make_state_and_feedback(map_ptr, 256);
+
+        for _ in 0..3 {
+            let tc = Testcase::new(BytesInput::new(b"text".to_vec()));
+            state.corpus_mut().add(tc).unwrap();
+        }
+        for _ in 0..7 {
+            let tc = Testcase::new(BytesInput::new(vec![0xFF, 0xFE, 0x80]));
+            state.corpus_mut().add(tc).unwrap();
+        }
+
+        assert!(!Fuzzer::scan_corpus_utf8(&state, 0));
+    }
+
+    #[test]
+    fn test_grimoire_equal_counts_disables() {
+        let (map_ptr, _map) = make_coverage_map(256);
+        let (mut state, ..) = make_state_and_feedback(map_ptr, 256);
+
+        for _ in 0..5 {
+            let tc = Testcase::new(BytesInput::new(b"text".to_vec()));
+            state.corpus_mut().add(tc).unwrap();
+        }
+        for _ in 0..5 {
+            let tc = Testcase::new(BytesInput::new(vec![0xFF, 0xFE]));
+            state.corpus_mut().add(tc).unwrap();
+        }
+
+        assert!(
+            !Fuzzer::scan_corpus_utf8(&state, 0),
+            "equal counts should disable (strictly greater-than required)"
+        );
+    }
+
+    #[test]
+    fn test_scan_corpus_utf8_skip_all_returns_false() {
+        let (map_ptr, _map) = make_coverage_map(256);
+        let (mut state, ..) = make_state_and_feedback(map_ptr, 256);
+        for _ in 0..3 {
+            state
+                .corpus_mut()
+                .add(Testcase::new(BytesInput::new(b"text".to_vec())))
+                .unwrap();
+        }
+        // skip_count == count → false
+        assert!(
+            !Fuzzer::scan_corpus_utf8(&state, 3),
+            "skipping all entries should return false"
+        );
+        // skip_count > count → false
+        assert!(
+            !Fuzzer::scan_corpus_utf8(&state, 100),
+            "skipping beyond corpus size should return false"
+        );
+    }
+
+    #[test]
+    fn test_grimoire_explicit_override_bypasses_scanning() {
+        // Explicit `grimoire: false` should prevent deferred detection from
+        // enabling Grimoire, even after GRIMOIRE_DEFERRED_THRESHOLD interesting
+        // UTF-8 inputs arrive via report_result.
+        cmplog::disable();
+        cmplog::drain();
+        let mut fuzzer = make_test_fuzzer(256);
+        // Simulate explicit override: grimoire disabled, no deferred tracking.
+        fuzzer.grimoire_enabled = false;
+        fuzzer.grimoire_deferred_count = None;
+        cmplog::enable();
+
+        assert!(
+            fuzzer.grimoire_deferred_count.is_none(),
+            "explicit override should set deferred_count to None"
+        );
+
+        fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+        let seed_id = CorpusId::from(0usize);
+        for i in 0..GRIMOIRE_DEFERRED_THRESHOLD {
+            fuzzer.last_input = Some(BytesInput::new(format!("utf8_input_{i}").into_bytes()));
+            fuzzer.last_corpus_id = Some(seed_id);
+            unsafe {
+                *fuzzer.map_ptr.add(i + 10) = 1;
+            }
+            let result = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
+            assert!(matches!(result, IterationResult::Interesting));
+            fuzzer.calibrate_finish().unwrap();
+        }
+
+        assert!(
+            !fuzzer.grimoire_enabled,
+            "explicit false override should not be overridden by deferred detection"
+        );
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_grimoire_empty_corpus_defers_detection() {
+        let fuzzer = make_test_fuzzer(256);
+
+        // Empty corpus with no override → deferred.
+        assert!(!fuzzer.grimoire_enabled);
+        assert_eq!(fuzzer.grimoire_deferred_count, Some(0));
+    }
+
+    #[test]
+    fn test_grimoire_deferred_triggers_after_10_interesting() {
+        cmplog::disable();
+        cmplog::drain();
+        let mut fuzzer = make_test_fuzzer(256);
+        cmplog::enable();
+        fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+
+        // Generate GRIMOIRE_DEFERRED_THRESHOLD interesting inputs with controlled UTF-8 content.
+        // We bypass get_next_input to avoid havoc producing non-UTF-8 bytes.
+        let seed_id = CorpusId::from(0usize);
+        for i in 0..GRIMOIRE_DEFERRED_THRESHOLD {
+            fuzzer.last_input = Some(BytesInput::new(format!("utf8_input_{i}").into_bytes()));
+            fuzzer.last_corpus_id = Some(seed_id);
+            unsafe {
+                *fuzzer.map_ptr.add(i + 10) = 1;
+            }
+            let result = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
+            assert!(
+                matches!(result, IterationResult::Interesting),
+                "iteration {i} should be interesting"
+            );
+            fuzzer.calibrate_finish().unwrap();
+        }
+
+        // After GRIMOIRE_DEFERRED_THRESHOLD interesting UTF-8 inputs, Grimoire should be enabled.
+        assert!(
+            fuzzer.grimoire_enabled,
+            "should be enabled after GRIMOIRE_DEFERRED_THRESHOLD UTF-8 inputs"
+        );
+        assert!(
+            fuzzer.grimoire_deferred_count.is_none(),
+            "deferred count should be consumed"
+        );
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_grimoire_deferred_ignores_stage_found_entries() {
+        cmplog::disable();
+        cmplog::drain();
+        let mut fuzzer = make_test_fuzzer(256);
+        cmplog::enable();
+        fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+
+        // One interesting input via main loop → deferred count = 1.
+        // Push CmpLog data so begin_stage has I2S entries to work with.
+        let seed_id = CorpusId::from(0usize);
+        fuzzer.last_input = Some(BytesInput::new(b"utf8_main".to_vec()));
+        fuzzer.last_corpus_id = Some(seed_id);
+        unsafe {
+            *fuzzer.map_ptr.add(50) = 1;
+        }
+        cmplog::push(CmpValues::Bytes((
+            make_cmplog_bytes(b"hello"),
+            make_cmplog_bytes(b"world"),
+        )));
+        let result = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
+        assert!(matches!(result, IterationResult::Interesting));
+        assert_eq!(fuzzer.grimoire_deferred_count, Some(1));
+
+        // Calibrate to completion.
+        loop {
+            unsafe {
+                *fuzzer.map_ptr.add(50) = 1;
+            }
+            if !fuzzer.calibrate_run(50_000.0).unwrap() {
+                break;
+            }
+        }
+        fuzzer.calibrate_finish().unwrap();
+
+        // Begin I2S stage (CmpLog data was drained into state by report_result).
+        let stage_buf = fuzzer.begin_stage().unwrap();
+        assert!(stage_buf.is_some(), "stage should start");
+
+        // Novel coverage during stage advance.
+        unsafe {
+            *fuzzer.map_ptr.add(80) = 1;
+        }
+        let _advance = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+
+        // Deferred count must still be 1 — stage-found entries don't count.
+        assert_eq!(
+            fuzzer.grimoire_deferred_count,
+            Some(1),
+            "stage-found entries should not increment deferred count"
+        );
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_grimoire_deferred_excludes_default_seeds() {
+        // When deferred detection fires, scan_corpus_utf8 should skip the
+        // auto-seeds (all valid UTF-8) so only user-found inputs influence the vote.
+        let mut fuzzer = make_test_fuzzer(256);
+        for seed in DEFAULT_SEEDS {
+            let mut testcase = Testcase::new(BytesInput::new(seed.to_vec()));
+            testcase.set_exec_time(SEED_EXEC_TIME);
+            let mut sched_meta = SchedulerTestcaseMetadata::new(0);
+            sched_meta.set_cycle_and_time((SEED_EXEC_TIME, 1));
+            testcase.add_metadata(sched_meta);
+            let id = fuzzer.state.corpus_mut().add(testcase).unwrap();
+            fuzzer.scheduler.on_add(&mut fuzzer.state, id).unwrap();
+            set_n_fuzz_entry_for_corpus_id(&fuzzer.state, id).unwrap();
+        }
+        fuzzer.auto_seed_count = DEFAULT_SEEDS.len();
+
+        // Add only non-UTF-8 interesting inputs.
+        for i in 0u8..4 {
+            let tc = Testcase::new(BytesInput::new(vec![0xFF, 0xFE, 0x80, i]));
+            fuzzer.state.corpus_mut().add(tc).unwrap();
+        }
+
+        // Without skipping: 6 UTF-8 seeds + 0 UTF-8 user vs 4 non-UTF-8 → enabled (wrong).
+        assert!(
+            Fuzzer::scan_corpus_utf8(&fuzzer.state, 0),
+            "without skipping, default seeds cause false positive"
+        );
+
+        // With skipping: 0 UTF-8 user vs 4 non-UTF-8 → disabled (correct).
+        assert!(
+            !Fuzzer::scan_corpus_utf8(&fuzzer.state, fuzzer.auto_seed_count),
+            "with skipping, only user inputs are counted"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Generalization stage tests
+    // -----------------------------------------------------------------------
+
+    /// Create a fuzzer with grimoire enabled and a corpus entry at the given
+    /// novelty map indices. Returns (fuzzer, corpus_id).
+    fn make_fuzzer_with_generalization_entry(
+        map_size: usize,
+        input: &[u8],
+        novelty_indices: &[usize],
+    ) -> (Fuzzer, CorpusId) {
+        cmplog::disable();
+        cmplog::drain();
+
+        let mut fuzzer = make_test_fuzzer(map_size);
+        fuzzer.grimoire_enabled = true;
+        fuzzer.grimoire_deferred_count = None;
+        cmplog::enable();
+
+        // Add a seed so the scheduler has something.
+        fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+
+        // Manually add a corpus entry with the given input and novelty metadata.
+        let mut testcase = Testcase::new(BytesInput::new(input.to_vec()));
+        testcase.add_metadata(MapNoveltiesMetadata::new(novelty_indices.to_vec()));
+
+        // We need to add scheduler metadata too.
+        let mut sched_meta = SchedulerTestcaseMetadata::new(0);
+        sched_meta.set_n_fuzz_entry(0);
+        testcase.add_metadata(sched_meta);
+        *testcase.exec_time_mut() = Some(Duration::from_micros(100));
+
+        let corpus_id = fuzzer.state.corpus_mut().add(testcase).unwrap();
+        fuzzer
+            .scheduler
+            .on_add(&mut fuzzer.state, corpus_id)
+            .unwrap();
+
+        // Also need to make sure the feedback history knows about these indices
+        // so they're recognized as "known" coverage.
+        // Write coverage at novelty indices and evaluate to establish history.
+        for &idx in novelty_indices {
+            unsafe {
+                *fuzzer.map_ptr.add(idx) = 1;
+            }
+        }
+        {
+            let observer = unsafe {
+                StdMapObserver::from_mut_ptr(EDGES_OBSERVER_NAME, fuzzer.map_ptr, fuzzer.map_len)
+            };
+            let observers = tuple_list!(observer);
+            let mut mgr = NopEventManager::new();
+            let bytes_input = BytesInput::new(input.to_vec());
+            // This call updates the feedback's history map.
+            let _ = fuzzer.feedback.is_interesting(
+                &mut fuzzer.state,
+                &mut mgr,
+                &bytes_input,
+                &observers,
+                &LibaflExitKind::Ok,
+            );
+        }
+        // Zero the map.
+        unsafe {
+            std::ptr::write_bytes(fuzzer.map_ptr, 0, fuzzer.map_len);
+        }
+
+        (fuzzer, corpus_id)
+    }
+
+    #[test]
+    fn test_generalization_skipped_when_grimoire_disabled() {
+        let (mut fuzzer, corpus_id) =
+            make_fuzzer_with_generalization_entry(256, b"fn foo() {}", &[10, 20]);
+        fuzzer.grimoire_enabled = false;
+
+        let result = fuzzer.begin_generalization(corpus_id).unwrap();
+        assert!(
+            result.is_none(),
+            "generalization should be skipped when Grimoire disabled"
+        );
+        assert!(matches!(fuzzer.stage_state, StageState::None));
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_generalization_skipped_for_large_input() {
+        let large_input = vec![b'A'; MAX_GENERALIZED_LEN + 1];
+        let (mut fuzzer, corpus_id) =
+            make_fuzzer_with_generalization_entry(256, &large_input, &[10]);
+
+        let result = fuzzer.begin_generalization(corpus_id).unwrap();
+        assert!(
+            result.is_none(),
+            "generalization should be skipped for input > MAX_GENERALIZED_LEN"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_generalization_skipped_when_no_novelties() {
+        cmplog::disable();
+        cmplog::drain();
+
+        let mut fuzzer = make_test_fuzzer(256);
+        fuzzer.grimoire_enabled = true;
+        fuzzer.grimoire_deferred_count = None;
+        cmplog::enable();
+
+        // Add a corpus entry WITHOUT MapNoveltiesMetadata.
+        let testcase = Testcase::new(BytesInput::new(b"test".to_vec()));
+        let corpus_id = fuzzer.state.corpus_mut().add(testcase).unwrap();
+
+        let result = fuzzer.begin_generalization(corpus_id).unwrap();
+        assert!(
+            result.is_none(),
+            "generalization should be skipped without novelties"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_generalization_skipped_when_already_generalized() {
+        let (mut fuzzer, corpus_id) =
+            make_fuzzer_with_generalization_entry(256, b"fn foo() {}", &[10, 20]);
+
+        // Manually add GeneralizedInputMetadata to simulate prior generalization.
+        let payload: Vec<Option<u8>> = b"fn foo() {}".iter().map(|&b| Some(b)).collect();
+        let meta = Fuzzer::payload_to_generalized(&payload);
+        fuzzer
+            .state
+            .corpus()
+            .get(corpus_id)
+            .unwrap()
+            .borrow_mut()
+            .add_metadata(meta);
+
+        let result = fuzzer.begin_generalization(corpus_id).unwrap();
+        assert!(
+            result.is_none(),
+            "generalization should be skipped when already generalized"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_generalization_verification_succeeds() {
+        let input = b"fn foo() {}";
+        let novelty_indices = vec![10, 20];
+        let (mut fuzzer, corpus_id) =
+            make_fuzzer_with_generalization_entry(256, input, &novelty_indices);
+
+        // Begin generalization — should return the original input for verification.
+        let first = fuzzer.begin_generalization(corpus_id).unwrap();
+        assert!(first.is_some(), "should return verification candidate");
+        let candidate: Vec<u8> = first.unwrap().to_vec();
+        assert_eq!(
+            candidate, input,
+            "verification candidate should be the original input"
+        );
+        assert!(matches!(
+            fuzzer.stage_state,
+            StageState::Generalization {
+                phase: GeneralizationPhase::Verify,
+                ..
+            }
+        ));
+
+        // Simulate target execution: set novelty indices in coverage map.
+        for &idx in &novelty_indices {
+            unsafe {
+                *fuzzer.map_ptr.add(idx) = 1;
+            }
+        }
+
+        // Advance — verification should pass and produce next candidate.
+        let next = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        assert!(
+            next.is_some(),
+            "should produce first gap-finding candidate after verification passes"
+        );
+        // Should now be in Offset phase.
+        assert!(matches!(
+            fuzzer.stage_state,
+            StageState::Generalization {
+                phase: GeneralizationPhase::Offset { .. },
+                ..
+            }
+        ));
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_generalization_verification_fails() {
+        let input = b"fn foo() {}";
+        let novelty_indices = vec![10, 20];
+        let (mut fuzzer, corpus_id) =
+            make_fuzzer_with_generalization_entry(256, input, &novelty_indices);
+
+        let first = fuzzer.begin_generalization(corpus_id).unwrap();
+        assert!(first.is_some());
+
+        // Simulate execution where one novelty index is zero (unstable).
+        unsafe {
+            *fuzzer.map_ptr.add(10) = 1;
+            // index 20 is left at 0 — verification fails.
+        }
+
+        let next = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        assert!(
+            next.is_none(),
+            "verification failure should abort generalization"
+        );
+        assert!(matches!(fuzzer.stage_state, StageState::None));
+
+        // Verify no GeneralizedInputMetadata was stored.
+        let tc = fuzzer.state.corpus().get(corpus_id).unwrap().borrow();
+        assert!(
+            !tc.has_metadata::<GeneralizedInputMetadata>(),
+            "no metadata should be stored on verification failure"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_generalization_offset_marks_gaps() {
+        // Use a small input so offset-0 pass tests each byte individually.
+        let input = b"ab";
+        let novelty_indices = vec![10];
+        let (mut fuzzer, corpus_id) =
+            make_fuzzer_with_generalization_entry(256, input, &novelty_indices);
+
+        // Begin generalization.
+        let first = fuzzer.begin_generalization(corpus_id).unwrap();
+        assert!(first.is_some());
+
+        // Disable Grimoire after starting generalization so finalize_generalization
+        // doesn't transition to Grimoire stage (this test isolates generalization).
+        fuzzer.grimoire_enabled = false;
+
+        // Verification: set novelty index.
+        unsafe {
+            *fuzzer.map_ptr.add(10) = 1;
+        }
+        let next = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        assert!(next.is_some(), "should produce first offset candidate");
+
+        // We're now in offset phase. The first pass has offset=255.
+        // For a 2-byte input: start=0, end=min(0+1+255, 2)=2.
+        // Candidate removes bytes [0, 2) = entire input → empty candidate.
+        // Simulate novelties surviving (meaning entire input can be gapped).
+        unsafe {
+            *fuzzer.map_ptr.add(10) = 1;
+        }
+        let _next = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        // Since end (2) >= payload.len() (2), this pass is done. Trim + next level.
+        // After marking [0, 2) as gaps, payload = [None, None].
+        // After trimming, payload = [None].
+        // Continue through remaining offset levels and delimiter passes.
+        // Eventually generalization completes.
+
+        // Drive to completion — keep advancing until None.
+        let mut exec_count = 2; // verification + first offset candidate
+        while let Some(_buf) = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap() {
+            exec_count += 1;
+            // Set novelties for all subsequent candidates.
+            unsafe {
+                *fuzzer.map_ptr.add(10) = 1;
+            }
+            if exec_count > 100 {
+                panic!("generalization should complete within reasonable iterations");
+            }
+        }
+
+        // Verify metadata was stored.
+        let tc = fuzzer.state.corpus().get(corpus_id).unwrap().borrow();
+        assert!(
+            tc.has_metadata::<GeneralizedInputMetadata>(),
+            "GeneralizedInputMetadata should be stored after generalization completes"
+        );
+        let meta = tc.metadata::<GeneralizedInputMetadata>().unwrap();
+        // The entire input was gapped, so metadata should be just [Gap].
+        // (Leading and trailing gaps merged with the single gap.)
+        assert!(
+            meta.generalized().contains(&GeneralizedItem::Gap),
+            "metadata should contain Gap items"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_generalization_offset_preserves_structural() {
+        // 4-byte input. We'll make the first offset-255 candidate fail (novelties don't survive),
+        // meaning those bytes are structural.
+        let input = b"test";
+        let novelty_indices = vec![10];
+        let (mut fuzzer, corpus_id) =
+            make_fuzzer_with_generalization_entry(256, input, &novelty_indices);
+
+        let first = fuzzer.begin_generalization(corpus_id).unwrap();
+        assert!(first.is_some());
+
+        // Disable Grimoire after starting generalization so finalize_generalization
+        // doesn't transition to Grimoire stage (this test isolates generalization).
+        fuzzer.grimoire_enabled = false;
+
+        // Verification: pass.
+        unsafe {
+            *fuzzer.map_ptr.add(10) = 1;
+        }
+        let next = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        assert!(next.is_some());
+
+        // First offset-255 candidate removes [0, 4) from 4-byte input.
+        // Simulate novelties NOT surviving → bytes are structural.
+        // (Don't set the novelty index → it stays 0.)
+        let _next = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        // Pass complete (end=4 >= payload.len=4). Move to next offset level.
+        // Continue — all candidates also fail novelties.
+        let mut exec_count = 3;
+        loop {
+            let candidate = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+            if candidate.is_none() {
+                break;
+            }
+            exec_count += 1;
+            // Don't set novelty index — all candidates fail.
+            if exec_count > 200 {
+                panic!("generalization should complete within reasonable iterations");
+            }
+        }
+
+        // Verify metadata was stored (even if everything is structural).
+        let tc = fuzzer.state.corpus().get(corpus_id).unwrap().borrow();
+        assert!(
+            tc.has_metadata::<GeneralizedInputMetadata>(),
+            "GeneralizedInputMetadata should be stored even when all bytes are structural"
+        );
+        let meta = tc.metadata::<GeneralizedInputMetadata>().unwrap();
+        // All bytes are structural, so metadata should be [Gap, Bytes(b"test"), Gap].
+        let items = meta.generalized();
+        assert_eq!(
+            items.first(),
+            Some(&GeneralizedItem::Gap),
+            "should have leading gap"
+        );
+        assert_eq!(
+            items.last(),
+            Some(&GeneralizedItem::Gap),
+            "should have trailing gap"
+        );
+        assert!(
+            items
+                .iter()
+                .any(|item| matches!(item, GeneralizedItem::Bytes(b) if b == b"test")),
+            "should have the original bytes as structural"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_generalization_execution_counting() {
+        let input = b"ab";
+        let novelty_indices = vec![10];
+        let (mut fuzzer, corpus_id) =
+            make_fuzzer_with_generalization_entry(256, input, &novelty_indices);
+
+        let total_before = fuzzer.total_execs;
+        let state_execs_before = *fuzzer.state.executions();
+
+        let _first = fuzzer.begin_generalization(corpus_id).unwrap();
+
+        // Disable Grimoire after starting generalization so finalize_generalization
+        // doesn't transition to Grimoire stage (this test isolates generalization).
+        fuzzer.grimoire_enabled = false;
+
+        // Verification.
+        unsafe {
+            *fuzzer.map_ptr.add(10) = 1;
+        }
+        let _ = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        assert_eq!(
+            fuzzer.total_execs,
+            total_before + 1,
+            "verification should count"
+        );
+        assert_eq!(
+            *fuzzer.state.executions(),
+            state_execs_before + 1,
+            "state.executions should increment"
+        );
+
+        // Drive to completion, counting all executions.
+        let mut advance_count = 1;
+        loop {
+            unsafe {
+                *fuzzer.map_ptr.add(10) = 1;
+            }
+            let candidate = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+            advance_count += 1;
+            if candidate.is_none() {
+                break;
+            }
+            if advance_count > 100 {
+                panic!("should complete within reasonable iterations");
+            }
+        }
+
+        assert_eq!(
+            fuzzer.total_execs,
+            total_before + advance_count as u64,
+            "total_execs should match number of advance calls"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_generalization_cmplog_drained() {
+        let input = b"fn foo() {}";
+        let novelty_indices = vec![10];
+        let (mut fuzzer, corpus_id) =
+            make_fuzzer_with_generalization_entry(256, input, &novelty_indices);
+
+        let _first = fuzzer.begin_generalization(corpus_id).unwrap();
+
+        // Push CmpLog entries (simulating target execution producing CmpLog data).
+        cmplog::push(CmpValues::Bytes((
+            make_cmplog_bytes(b"test"),
+            make_cmplog_bytes(b"data"),
+        )));
+
+        // Set novelties for verification pass.
+        unsafe {
+            *fuzzer.map_ptr.add(10) = 1;
+        }
+        let _ = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+
+        // Verify CmpLog was drained.
+        let drained = cmplog::drain();
+        assert!(
+            drained.is_empty(),
+            "CmpLog should be drained by advance_stage during generalization"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_generalization_output_format() {
+        // Test that payload_to_generalized produces correct format.
+        // Payload: [None, Some(b'f'), Some(b'n'), None, Some(b'('), Some(b')'), None]
+        let payload = vec![
+            None,
+            Some(b'f'),
+            Some(b'n'),
+            None,
+            Some(b'('),
+            Some(b')'),
+            None,
+        ];
+        let meta = Fuzzer::payload_to_generalized(&payload);
+        let items = meta.generalized();
+        assert_eq!(
+            items,
+            &[
+                GeneralizedItem::Gap,
+                GeneralizedItem::Bytes(b"fn".to_vec()),
+                GeneralizedItem::Gap,
+                GeneralizedItem::Bytes(b"()".to_vec()),
+                GeneralizedItem::Gap,
+            ],
+            "should produce [Gap, Bytes(fn), Gap, Bytes(()), Gap]"
+        );
+    }
+
+    #[test]
+    fn test_generalization_output_leading_trailing_gaps() {
+        // Payload starts and ends with Some — should get leading/trailing gaps.
+        let payload = vec![Some(b'a'), Some(b'b')];
+        let meta = Fuzzer::payload_to_generalized(&payload);
+        let items = meta.generalized();
+        assert_eq!(
+            items.first(),
+            Some(&GeneralizedItem::Gap),
+            "must have leading gap"
+        );
+        assert_eq!(
+            items.last(),
+            Some(&GeneralizedItem::Gap),
+            "must have trailing gap"
+        );
+        assert_eq!(
+            items,
+            &[
+                GeneralizedItem::Gap,
+                GeneralizedItem::Bytes(b"ab".to_vec()),
+                GeneralizedItem::Gap,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_trim_payload_removes_consecutive_gaps() {
+        let mut payload = vec![None, None, Some(b'a'), None, None, None, Some(b'b'), None];
+        Fuzzer::trim_payload(&mut payload);
+        assert_eq!(
+            payload,
+            vec![None, Some(b'a'), None, Some(b'b'), None],
+            "consecutive None entries should be collapsed to single None"
+        );
+    }
+
+    #[test]
+    fn test_build_generalization_candidate() {
+        let payload = vec![
+            Some(b'a'),
+            Some(b'b'),
+            None,
+            Some(b'c'),
+            Some(b'd'),
+            Some(b'e'),
+        ];
+        // Remove range [1, 4) — removes Some(b'b'), None, Some(b'c').
+        let candidate = Fuzzer::build_generalization_candidate(&payload, 1, 4);
+        // payload[..1] = [Some(b'a')] → [b'a']
+        // payload[4..] = [Some(b'd'), Some(b'e')] → [b'd', b'e']
+        // None values in either portion are skipped.
+        assert_eq!(candidate, b"ade");
+    }
+
+    #[test]
+    fn test_build_candidate_skips_gaps() {
+        let payload = vec![None, Some(b'a'), Some(b'b'), None, Some(b'c')];
+        // Remove range [1, 3) — removes Some(b'a'), Some(b'b').
+        let candidate = Fuzzer::build_generalization_candidate(&payload, 1, 3);
+        // payload[..1] = [None] → skipped
+        // payload[3..] = [None, Some(b'c')] → [b'c']
+        assert_eq!(candidate, b"c");
+    }
+
+    #[test]
+    fn test_generalization_delimiter_gap_finding() {
+        // Use "line1\nline2" and test that the delimiter pass can split on \n.
+        let input = b"line1\nline2";
+        let novelty_indices = vec![10];
+        let (mut fuzzer, corpus_id) =
+            make_fuzzer_with_generalization_entry(256, input, &novelty_indices);
+
+        let _first = fuzzer.begin_generalization(corpus_id).unwrap();
+
+        // Disable Grimoire after starting generalization so finalize_generalization
+        // doesn't transition to Grimoire stage (this test isolates generalization).
+        fuzzer.grimoire_enabled = false;
+
+        // Verification pass.
+        unsafe {
+            *fuzzer.map_ptr.add(10) = 1;
+        }
+        let _ = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+
+        // Drive through all offset passes — don't set novelty (all fail, bytes stay structural).
+        let mut count = 0;
+        loop {
+            let candidate = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+            count += 1;
+            if candidate.is_none() {
+                break;
+            }
+            // Check if we're now in delimiter phase.
+            if matches!(
+                fuzzer.stage_state,
+                StageState::Generalization {
+                    phase: GeneralizationPhase::Delimiter { .. },
+                    ..
+                }
+            ) {
+                break;
+            }
+            if count > 200 {
+                panic!("should reach delimiter phase");
+            }
+        }
+
+        // Now we're in delimiter phase. For the newline delimiter (index 3),
+        // the first candidate removes from pos=0 to \n+1 position.
+        // Drive through delimiter passes, setting novelties to survive on the \n pass.
+        // This is complex to test precisely since we'd need to identify which pass
+        // has the \n delimiter. Instead, just verify the pipeline completes.
+        loop {
+            unsafe {
+                *fuzzer.map_ptr.add(10) = 1;
+            }
+            let candidate = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+            count += 1;
+            if candidate.is_none() {
+                break;
+            }
+            if count > 500 {
+                panic!("should complete generalization");
+            }
+        }
+
+        // Verify metadata was stored and contains Gap entries.
+        let tc = fuzzer.state.corpus().get(corpus_id).unwrap().borrow();
+        let metadata = tc
+            .metadata::<GeneralizedInputMetadata>()
+            .expect("GeneralizedInputMetadata should be stored");
+        // With all novelties surviving through delimiter passes, the metadata should
+        // contain at least one Gap entry (delimiters become gap boundaries).
+        let has_gaps = metadata
+            .generalized()
+            .iter()
+            .any(|item| matches!(item, GeneralizedItem::Gap));
+        assert!(
+            has_gaps,
+            "delimiter-based generalization should produce gaps when novelties survive"
+        );
+
+        cmplog::disable();
+    }
+
+    // -----------------------------------------------------------------------
+    // Grimoire mutational stage tests
+    // -----------------------------------------------------------------------
+
+    /// Create a fuzzer with a corpus entry that has GeneralizedInputMetadata,
+    /// ready for the Grimoire stage.
+    fn make_fuzzer_with_grimoire_entry(map_size: usize, input: &[u8]) -> (Fuzzer, CorpusId) {
+        cmplog::disable();
+        cmplog::drain();
+
+        let mut fuzzer = make_test_fuzzer(map_size);
+        fuzzer.grimoire_enabled = true;
+        fuzzer.grimoire_deferred_count = None;
+        cmplog::enable();
+
+        // Add a seed so scheduler works.
+        fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+
+        // Add a corpus entry with GeneralizedInputMetadata.
+        let mut testcase = Testcase::new(BytesInput::new(input.to_vec()));
+        testcase.add_metadata(MapNoveltiesMetadata::new(vec![10]));
+        let mut sched_meta = SchedulerTestcaseMetadata::new(0);
+        sched_meta.set_n_fuzz_entry(0);
+        testcase.add_metadata(sched_meta);
+        *testcase.exec_time_mut() = Some(Duration::from_micros(100));
+
+        // Create a simple GeneralizedInputMetadata.
+        let payload: Vec<Option<u8>> = input.iter().map(|&b| Some(b)).collect();
+        testcase.add_metadata(Fuzzer::payload_to_generalized(&payload));
+
+        let corpus_id = fuzzer.state.corpus_mut().add(testcase).unwrap();
+        fuzzer
+            .scheduler
+            .on_add(&mut fuzzer.state, corpus_id)
+            .unwrap();
+
+        // Establish coverage history.
+        unsafe {
+            *fuzzer.map_ptr.add(10) = 1;
+        }
+        {
+            let observer = unsafe {
+                StdMapObserver::from_mut_ptr(EDGES_OBSERVER_NAME, fuzzer.map_ptr, fuzzer.map_len)
+            };
+            let observers = tuple_list!(observer);
+            let mut mgr = NopEventManager::new();
+            let bytes_input = BytesInput::new(input.to_vec());
+            let _ = fuzzer.feedback.is_interesting(
+                &mut fuzzer.state,
+                &mut mgr,
+                &bytes_input,
+                &observers,
+                &LibaflExitKind::Ok,
+            );
+        }
+        unsafe {
+            std::ptr::write_bytes(fuzzer.map_ptr, 0, fuzzer.map_len);
+        }
+
+        (fuzzer, corpus_id)
+    }
+
+    #[test]
+    fn test_grimoire_stage_begins_with_metadata() {
+        let (mut fuzzer, corpus_id) = make_fuzzer_with_grimoire_entry(256, b"fn foo() {}");
+
+        let first = fuzzer.begin_grimoire(corpus_id).unwrap();
+        assert!(
+            first.is_some(),
+            "begin_grimoire should return Some when metadata exists"
+        );
+        assert!(
+            matches!(fuzzer.stage_state, StageState::Grimoire { .. }),
+            "stage should be Grimoire"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_grimoire_stage_skipped_without_metadata() {
+        cmplog::disable();
+        cmplog::drain();
+
+        let mut fuzzer = make_test_fuzzer(256);
+        fuzzer.grimoire_enabled = true;
+        fuzzer.grimoire_deferred_count = None;
+        cmplog::enable();
+
+        // Add a corpus entry WITHOUT GeneralizedInputMetadata.
+        let testcase = Testcase::new(BytesInput::new(b"test".to_vec()));
+        let corpus_id = fuzzer.state.corpus_mut().add(testcase).unwrap();
+
+        let result = fuzzer.begin_grimoire(corpus_id).unwrap();
+        assert!(
+            result.is_none(),
+            "begin_grimoire should return None without metadata"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_grimoire_stage_skipped_when_disabled() {
+        let (mut fuzzer, corpus_id) = make_fuzzer_with_grimoire_entry(256, b"fn foo() {}");
+        fuzzer.grimoire_enabled = false;
+
+        let result = fuzzer.begin_grimoire(corpus_id).unwrap();
+        assert!(
+            result.is_none(),
+            "begin_grimoire should return None when Grimoire disabled"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_grimoire_stage_completes_after_iterations() {
+        let (mut fuzzer, corpus_id) = make_fuzzer_with_grimoire_entry(256, b"fn foo() {}");
+
+        let first = fuzzer.begin_grimoire(corpus_id).unwrap();
+        assert!(first.is_some());
+
+        // Force max_iterations to 3 for deterministic testing.
+        if let StageState::Grimoire {
+            corpus_id,
+            iteration,
+            ..
+        } = fuzzer.stage_state
+        {
+            fuzzer.stage_state = StageState::Grimoire {
+                corpus_id,
+                iteration,
+                max_iterations: 3,
+            };
+        }
+
+        // Advance through 3 iterations.
+        let second = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        assert!(second.is_some(), "iteration 1 should produce next");
+
+        let third = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        assert!(third.is_some(), "iteration 2 should produce next");
+
+        let done = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        assert!(done.is_none(), "iteration 3 should complete the stage");
+        assert!(matches!(fuzzer.stage_state, StageState::None));
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_grimoire_execution_counting() {
+        let (mut fuzzer, corpus_id) = make_fuzzer_with_grimoire_entry(256, b"fn foo() {}");
+
+        let total_before = fuzzer.total_execs;
+
+        let _first = fuzzer.begin_grimoire(corpus_id).unwrap();
+
+        // Force max_iterations to 2.
+        if let StageState::Grimoire {
+            corpus_id,
+            iteration,
+            ..
+        } = fuzzer.stage_state
+        {
+            fuzzer.stage_state = StageState::Grimoire {
+                corpus_id,
+                iteration,
+                max_iterations: 2,
+            };
+        }
+
+        let _ = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        assert_eq!(fuzzer.total_execs, total_before + 1);
+
+        let _ = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        assert_eq!(fuzzer.total_execs, total_before + 2);
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_grimoire_cmplog_drained() {
+        let (mut fuzzer, corpus_id) = make_fuzzer_with_grimoire_entry(256, b"fn foo() {}");
+
+        let _first = fuzzer.begin_grimoire(corpus_id).unwrap();
+
+        // Push CmpLog entries simulating target execution.
+        cmplog::push(CmpValues::Bytes((
+            make_cmplog_bytes(b"grimoire_test"),
+            make_cmplog_bytes(b"grimoire_data"),
+        )));
+
+        let _ = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+
+        // CmpLog should be drained.
+        let drained = cmplog::drain();
+        assert!(
+            drained.is_empty(),
+            "CmpLog should be drained during Grimoire stage"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_grimoire_max_input_len_enforced() {
+        let (mut fuzzer, corpus_id) = make_fuzzer_with_grimoire_entry(256, b"fn foo() {}");
+        fuzzer.max_input_len = 5;
+
+        let first = fuzzer.begin_grimoire(corpus_id).unwrap();
+        assert!(first.is_some());
+
+        // The output should be truncated to max_input_len.
+        let bytes: Vec<u8> = first.unwrap().to_vec();
+        assert!(
+            bytes.len() <= 5,
+            "output should be truncated to max_input_len"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_grimoire_non_cumulative_mutations() {
+        let input = b"fn foo() {}";
+        let (mut fuzzer, corpus_id) = make_fuzzer_with_grimoire_entry(256, input);
+
+        let _first = fuzzer.begin_grimoire(corpus_id).unwrap();
+
+        // Force max_iterations to 5.
+        if let StageState::Grimoire {
+            corpus_id,
+            iteration,
+            ..
+        } = fuzzer.stage_state
+        {
+            fuzzer.stage_state = StageState::Grimoire {
+                corpus_id,
+                iteration,
+                max_iterations: 5,
+            };
+        }
+
+        // Advance through iterations. The corpus entry's metadata should
+        // remain unchanged (each iteration clones independently).
+        for _ in 0..4 {
+            let next = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+            if next.is_none() {
+                break;
+            }
+            // Verify the corpus entry's metadata is still the original.
+            let tc = fuzzer.state.corpus().get(corpus_id).unwrap().borrow();
+            let meta = tc.metadata::<GeneralizedInputMetadata>().unwrap();
+            let original_bytes = meta.generalized_to_bytes();
+            assert_eq!(
+                original_bytes,
+                input.to_vec(),
+                "corpus entry metadata should not be modified by mutations"
+            );
+        }
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_grimoire_abort_transitions_to_none() {
+        let (mut fuzzer, corpus_id) = make_fuzzer_with_grimoire_entry(256, b"fn foo() {}");
+
+        let _first = fuzzer.begin_grimoire(corpus_id).unwrap();
+        assert!(matches!(fuzzer.stage_state, StageState::Grimoire { .. }));
+
+        let total_before = fuzzer.total_execs;
+        fuzzer.abort_stage(ExitKind::Crash).unwrap();
+
+        assert!(matches!(fuzzer.stage_state, StageState::None));
+        assert_eq!(
+            fuzzer.total_execs,
+            total_before + 1,
+            "abort should increment total_execs by 1"
+        );
+
+        cmplog::disable();
+    }
+
+    // -----------------------------------------------------------------------
+    // Stage pipeline orchestration tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_pipeline_i2s_to_generalization_to_grimoire_to_none() {
+        // Full pipeline: I2S (1 iteration) → Generalization → Grimoire → None.
+        let mut fuzzer = make_fuzzer_ready_for_stage(256);
+        fuzzer.grimoire_enabled = true;
+        fuzzer.grimoire_deferred_count = None;
+
+        // begin_stage starts I2S (CmpLog data exists from make_fuzzer_ready_for_stage).
+        let first = fuzzer.begin_stage().unwrap();
+        assert!(first.is_some());
+        assert!(matches!(fuzzer.stage_state, StageState::I2S { .. }));
+
+        // Force max_iterations = 1 so I2S completes on next advance.
+        if let StageState::I2S { corpus_id, .. } = fuzzer.stage_state {
+            fuzzer.stage_state = StageState::I2S {
+                corpus_id,
+                iteration: 0,
+                max_iterations: 1,
+            };
+        }
+
+        // Advance I2S → should transition to Generalization (Grimoire enabled, input qualifies).
+        // Set coverage for the novelty index so evaluate_coverage works.
+        unsafe {
+            *fuzzer.map_ptr.add(42) = 1;
+        }
+        let next = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        assert!(
+            next.is_some(),
+            "should transition from I2S to Generalization"
+        );
+        assert!(
+            matches!(fuzzer.stage_state, StageState::Generalization { .. }),
+            "stage state should be Generalization after I2S completes"
+        );
+
+        // Drive through generalization: verification + gap-finding.
+        // Verification: set novelty index so it passes.
+        unsafe {
+            *fuzzer.map_ptr.add(42) = 1;
+        }
+        let next = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        assert!(
+            next.is_some(),
+            "should produce gap-finding candidate after verification"
+        );
+
+        // Drive through remaining generalization phases until Grimoire starts.
+        let mut count = 0;
+        loop {
+            unsafe {
+                *fuzzer.map_ptr.add(42) = 1;
+            }
+            let candidate = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+            count += 1;
+            if matches!(fuzzer.stage_state, StageState::Grimoire { .. }) {
+                assert!(
+                    candidate.is_some(),
+                    "Grimoire transition should return a candidate"
+                );
+                break;
+            }
+            if candidate.is_none() {
+                panic!("generalization should transition to Grimoire, not None");
+            }
+            assert!(
+                count <= 200,
+                "should complete generalization within 200 iterations"
+            );
+        }
+
+        // Drive through Grimoire until completion.
+        // Force max_iterations = 1 so Grimoire completes on next advance.
+        if let StageState::Grimoire { corpus_id, .. } = fuzzer.stage_state {
+            fuzzer.stage_state = StageState::Grimoire {
+                corpus_id,
+                iteration: 0,
+                max_iterations: 1,
+            };
+        }
+        let next = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        assert!(next.is_none(), "Grimoire should complete and return None");
+        assert!(matches!(fuzzer.stage_state, StageState::None));
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_pipeline_i2s_to_grimoire_preexisting_metadata() {
+        // I2S → Grimoire (generalization skipped because entry already has GeneralizedInputMetadata).
+        let (mut fuzzer, corpus_id) = make_fuzzer_with_grimoire_entry(256, b"fn foo() {}");
+
+        // Set up CmpLog data so I2S starts.
+        let cmp_entries = vec![CmpValues::Bytes((
+            make_cmplog_bytes(b"hello"),
+            make_cmplog_bytes(b"world"),
+        ))];
+        fuzzer
+            .state
+            .metadata_map_mut()
+            .insert(CmpValuesMetadata { list: cmp_entries });
+        fuzzer.last_interesting_corpus_id = Some(corpus_id);
+
+        let first = fuzzer.begin_stage().unwrap();
+        assert!(first.is_some());
+        assert!(matches!(fuzzer.stage_state, StageState::I2S { .. }));
+
+        // Force I2S to complete in one iteration.
+        if let StageState::I2S { corpus_id, .. } = fuzzer.stage_state {
+            fuzzer.stage_state = StageState::I2S {
+                corpus_id,
+                iteration: 0,
+                max_iterations: 1,
+            };
+        }
+
+        // Advance → should skip generalization (already has metadata) and go to Grimoire.
+        let next = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        assert!(next.is_some(), "should transition to Grimoire");
+        assert!(
+            matches!(fuzzer.stage_state, StageState::Grimoire { .. }),
+            "should be in Grimoire stage (generalization skipped)"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_pipeline_i2s_to_none_grimoire_disabled() {
+        // I2S → None (Grimoire disabled).
+        let mut fuzzer = make_fuzzer_ready_for_stage(256);
+        fuzzer.grimoire_enabled = false;
+
+        let first = fuzzer.begin_stage().unwrap();
+        assert!(first.is_some());
+        assert!(matches!(fuzzer.stage_state, StageState::I2S { .. }));
+
+        // Force I2S to complete.
+        if let StageState::I2S { corpus_id, .. } = fuzzer.stage_state {
+            fuzzer.stage_state = StageState::I2S {
+                corpus_id,
+                iteration: 0,
+                max_iterations: 1,
+            };
+        }
+
+        let next = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        assert!(next.is_none(), "should return None when Grimoire disabled");
+        assert!(matches!(fuzzer.stage_state, StageState::None));
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_pipeline_none_to_generalization_no_cmplog() {
+        // No CmpLog → Generalization (Grimoire enabled, input qualifies).
+        let (mut fuzzer, corpus_id) = make_fuzzer_with_generalization_entry(256, b"hello", &[10]);
+
+        // Ensure CmpValuesMetadata is empty (no CmpLog data).
+        fuzzer
+            .state
+            .metadata_map_mut()
+            .insert(CmpValuesMetadata { list: vec![] });
+        fuzzer.last_interesting_corpus_id = Some(corpus_id);
+
+        let first = fuzzer.begin_stage().unwrap();
+        assert!(
+            first.is_some(),
+            "should start Generalization when no CmpLog data"
+        );
+        assert!(
+            matches!(fuzzer.stage_state, StageState::Generalization { .. }),
+            "should be in Generalization stage"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_pipeline_none_to_grimoire_no_cmplog_preexisting_metadata() {
+        // No CmpLog → Grimoire (Grimoire enabled, pre-existing GeneralizedInputMetadata).
+        let (mut fuzzer, corpus_id) = make_fuzzer_with_grimoire_entry(256, b"fn foo() {}");
+
+        // Ensure CmpValuesMetadata is empty.
+        fuzzer
+            .state
+            .metadata_map_mut()
+            .insert(CmpValuesMetadata { list: vec![] });
+        fuzzer.last_interesting_corpus_id = Some(corpus_id);
+
+        let first = fuzzer.begin_stage().unwrap();
+        assert!(
+            first.is_some(),
+            "should start Grimoire when no CmpLog data and metadata exists"
+        );
+        assert!(
+            matches!(fuzzer.stage_state, StageState::Grimoire { .. }),
+            "should be in Grimoire stage"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_pipeline_generalization_fail_to_none() {
+        // Generalization verification fails → None.
+        let (mut fuzzer, corpus_id) = make_fuzzer_with_generalization_entry(256, b"hello", &[10]);
+
+        let first = fuzzer.begin_generalization(corpus_id).unwrap();
+        assert!(first.is_some());
+
+        // Disable Grimoire so if verification fails, we go to None (not Grimoire).
+        fuzzer.grimoire_enabled = false;
+
+        // Verification: DON'T set novelty index → verification fails.
+        let next = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        assert!(next.is_none(), "verification failure should return None");
+        assert!(matches!(fuzzer.stage_state, StageState::None));
+
+        // Verify no GeneralizedInputMetadata was stored.
+        let tc = fuzzer.state.corpus().get(corpus_id).unwrap().borrow();
+        assert!(
+            !tc.has_metadata::<GeneralizedInputMetadata>(),
+            "should not store metadata when verification fails"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_pipeline_abort_from_generalization() {
+        let (mut fuzzer, corpus_id) = make_fuzzer_with_generalization_entry(256, b"hello", &[10]);
+
+        let _first = fuzzer.begin_generalization(corpus_id).unwrap();
+        assert!(matches!(
+            fuzzer.stage_state,
+            StageState::Generalization { .. }
+        ));
+
+        let total_before = fuzzer.total_execs;
+        fuzzer.abort_stage(ExitKind::Crash).unwrap();
+
+        assert!(matches!(fuzzer.stage_state, StageState::None));
+        assert_eq!(fuzzer.total_execs, total_before + 1);
+
+        // Verify no GeneralizedInputMetadata was stored.
+        let tc = fuzzer.state.corpus().get(corpus_id).unwrap().borrow();
+        assert!(!tc.has_metadata::<GeneralizedInputMetadata>());
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_pipeline_abort_from_grimoire() {
+        let (mut fuzzer, corpus_id) = make_fuzzer_with_grimoire_entry(256, b"fn foo() {}");
+
+        let _first = fuzzer.begin_grimoire(corpus_id).unwrap();
+        assert!(matches!(fuzzer.stage_state, StageState::Grimoire { .. }));
+
+        let total_before = fuzzer.total_execs;
+        fuzzer.abort_stage(ExitKind::Timeout).unwrap();
+
+        assert!(matches!(fuzzer.stage_state, StageState::None));
+        assert_eq!(fuzzer.total_execs, total_before + 1);
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_pipeline_abort_from_i2s() {
+        let mut fuzzer = make_fuzzer_ready_for_stage(256);
+
+        let _first = fuzzer.begin_stage().unwrap();
+        assert!(matches!(fuzzer.stage_state, StageState::I2S { .. }));
+
+        let total_before = fuzzer.total_execs;
+        fuzzer.abort_stage(ExitKind::Crash).unwrap();
+
+        assert!(matches!(fuzzer.stage_state, StageState::None));
+        assert_eq!(fuzzer.total_execs, total_before + 1);
+
+        cmplog::disable();
+    }
+
+    // -----------------------------------------------------------------------
+    // abort_stage solution recording tests (#14)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_abort_stage_records_crash_as_solution() {
+        let mut fuzzer = make_fuzzer_ready_for_stage(256);
+
+        let first = fuzzer.begin_stage().unwrap();
+        assert!(first.is_some(), "stage should start");
+
+        let solutions_before = fuzzer.solution_count;
+        let solutions_corpus_before = fuzzer.state.solutions().count();
+
+        fuzzer.abort_stage(ExitKind::Crash).unwrap();
+
+        assert_eq!(
+            fuzzer.solution_count,
+            solutions_before + 1,
+            "solution_count should increment on crash abort"
+        );
+        assert_eq!(
+            fuzzer.state.solutions().count(),
+            solutions_corpus_before + 1,
+            "solutions corpus should have the crash input"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_abort_stage_records_timeout_as_solution() {
+        let mut fuzzer = make_fuzzer_ready_for_stage(256);
+
+        let first = fuzzer.begin_stage().unwrap();
+        assert!(first.is_some(), "stage should start");
+
+        let solutions_before = fuzzer.solution_count;
+        let solutions_corpus_before = fuzzer.state.solutions().count();
+
+        fuzzer.abort_stage(ExitKind::Timeout).unwrap();
+
+        assert_eq!(
+            fuzzer.solution_count,
+            solutions_before + 1,
+            "solution_count should increment on timeout abort"
+        );
+        assert_eq!(
+            fuzzer.state.solutions().count(),
+            solutions_corpus_before + 1,
+            "solutions corpus should have the timeout input"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_abort_stage_ok_does_not_record_solution() {
+        let mut fuzzer = make_fuzzer_ready_for_stage(256);
+
+        let first = fuzzer.begin_stage().unwrap();
+        assert!(first.is_some(), "stage should start");
+
+        let solutions_before = fuzzer.solution_count;
+
+        fuzzer.abort_stage(ExitKind::Ok).unwrap();
+
+        assert_eq!(
+            fuzzer.solution_count, solutions_before,
+            "solution_count should not change on Ok abort"
+        );
+
+        cmplog::disable();
+    }
+
+    // -----------------------------------------------------------------------
+    // Grimoire override through constructor test (#5)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_grimoire_override_through_constructor() {
+        // When FuzzerConfig.grimoire = Some(true), grimoire_enabled should be true
+        // and grimoire_deferred_count should be None (already resolved).
+        let coverage_map: Buffer = vec![0u8; 256].into();
+        let fuzzer = Fuzzer::new(
+            coverage_map,
+            Some(FuzzerConfig {
+                max_input_len: None,
+                seed: None,
+                grimoire: Some(true),
+            }),
+        )
+        .unwrap();
+        assert!(
+            fuzzer.grimoire_enabled,
+            "grimoire_enabled should be true when config.grimoire = Some(true)"
+        );
+        assert!(
+            fuzzer.grimoire_deferred_count.is_none(),
+            "grimoire_deferred_count should be None when explicitly set"
+        );
+    }
+
+    #[test]
+    fn test_grimoire_override_disabled_through_constructor() {
+        let coverage_map: Buffer = vec![0u8; 256].into();
+        let fuzzer = Fuzzer::new(
+            coverage_map,
+            Some(FuzzerConfig {
+                max_input_len: None,
+                seed: None,
+                grimoire: Some(false),
+            }),
+        )
+        .unwrap();
+        assert!(
+            !fuzzer.grimoire_enabled,
+            "grimoire_enabled should be false when config.grimoire = Some(false)"
+        );
+        assert!(
+            fuzzer.grimoire_deferred_count.is_none(),
+            "grimoire_deferred_count should be None when explicitly set"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Generalization gap-finding adds to corpus test (#7)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_generalization_gap_finding_adds_to_corpus() {
+        // During an offset pass, new coverage at a previously-unseen index should
+        // cause the candidate to be added to the corpus with MapNoveltiesMetadata.
+        let input = b"abcdefgh";
+        let novelty_indices = vec![10];
+        let (mut fuzzer, corpus_id) =
+            make_fuzzer_with_generalization_entry(256, input, &novelty_indices);
+
+        let _first = fuzzer.begin_generalization(corpus_id).unwrap();
+        fuzzer.grimoire_enabled = false;
+
+        // Verification pass: set novelty so it passes.
+        unsafe {
+            *fuzzer.map_ptr.add(10) = 1;
+        }
+        let _ = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+
+        // We're now in offset phase. Set novel coverage at a NEW index (20)
+        // that the feedback hasn't seen before.
+        let corpus_count_before = fuzzer.state.corpus().count();
+        unsafe {
+            *fuzzer.map_ptr.add(20) = 1;
+        }
+        let _ = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        let corpus_count_after = fuzzer.state.corpus().count();
+
+        assert!(
+            corpus_count_after > corpus_count_before,
+            "gap-finding execution with novel coverage should add to corpus"
+        );
+
+        // Verify the new entry has MapNoveltiesMetadata.
+        let new_id = CorpusId::from(corpus_count_after - 1);
+        let tc = fuzzer.state.corpus().get(new_id).unwrap().borrow();
+        assert!(
+            tc.metadata::<MapNoveltiesMetadata>().is_ok(),
+            "gap-finding corpus entry should have MapNoveltiesMetadata"
+        );
+
+        // Verify that last_interesting_corpus_id is None — stage-found entries
+        // don't set this (only report_result does).
+        assert!(
+            fuzzer.last_interesting_corpus_id.is_none(),
+            "last_interesting_corpus_id should be None for stage-found entries"
+        );
+
+        cmplog::disable();
+    }
+
+    // -----------------------------------------------------------------------
+    // Bracket-based gap-finding tests (#4)
+    // -----------------------------------------------------------------------
+
+    /// Drive a fuzzer through Verify and all Offset/Delimiter phases to reach
+    /// the Bracket phase, with novelties surviving all phases.
+    fn advance_to_bracket_phase(fuzzer: &mut Fuzzer, novelty_indices: &[usize]) {
+        // Verification pass.
+        for &idx in novelty_indices {
+            unsafe {
+                *fuzzer.map_ptr.add(idx) = 1;
+            }
+        }
+        let _ = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+
+        // Drive through offset and delimiter phases.
+        let mut count = 0;
+        loop {
+            let candidate = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+            count += 1;
+            if candidate.is_none() {
+                break;
+            }
+            if matches!(
+                fuzzer.stage_state,
+                StageState::Generalization {
+                    phase: GeneralizationPhase::Bracket { .. },
+                    ..
+                }
+            ) {
+                return;
+            }
+            if count > 10_000 {
+                panic!(
+                    "should reach bracket phase within 10000 iterations (got {count} without entering bracket phase)"
+                );
+            }
+        }
+        panic!("generalization ended before reaching bracket phase");
+    }
+
+    #[test]
+    fn test_bracket_gaps_marked_on_novelty_survival() {
+        // Input with brackets: "(abc)". When novelties survive, the range between
+        // open and close bracket should be marked as gaps.
+        let input = b"(abc)";
+        let novelty_indices = vec![10];
+        let (mut fuzzer, corpus_id) =
+            make_fuzzer_with_generalization_entry(256, input, &novelty_indices);
+
+        let _first = fuzzer.begin_generalization(corpus_id).unwrap();
+        fuzzer.grimoire_enabled = false;
+
+        advance_to_bracket_phase(&mut fuzzer, &novelty_indices);
+
+        // We're now in bracket phase. Set novelties to survive.
+        let mut count = 0;
+        loop {
+            unsafe {
+                *fuzzer.map_ptr.add(10) = 1;
+            }
+            let candidate = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+            count += 1;
+            if candidate.is_none() {
+                break;
+            }
+            if count > 200 {
+                panic!("should complete bracket phase");
+            }
+        }
+
+        // Verify metadata was stored with gaps.
+        let tc = fuzzer.state.corpus().get(corpus_id).unwrap().borrow();
+        let metadata = tc
+            .metadata::<GeneralizedInputMetadata>()
+            .expect("should have GeneralizedInputMetadata");
+        let has_gaps = metadata
+            .generalized()
+            .iter()
+            .any(|item| matches!(item, GeneralizedItem::Gap));
+        assert!(
+            has_gaps,
+            "bracket-based generalization should produce gaps when novelties survive"
+        );
+
+        // Verify opener byte `(` is preserved (not gapped) — the candidate_range
+        // should exclude the opener position so it remains in a Bytes segment.
+        let opener_preserved = metadata
+            .generalized()
+            .iter()
+            .any(|item| matches!(item, GeneralizedItem::Bytes(b) if b.contains(&b'(')));
+        assert!(
+            opener_preserved,
+            "opener byte '(' should be preserved in generalized metadata, not gapped"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_bracket_no_gaps_when_novelties_fail() {
+        // Input with brackets: "(abc)". When novelties DON'T survive, no gaps
+        // should be added during bracket phase.
+        let input = b"(abc)";
+        let novelty_indices = vec![10];
+        let (mut fuzzer, corpus_id) =
+            make_fuzzer_with_generalization_entry(256, input, &novelty_indices);
+
+        let _first = fuzzer.begin_generalization(corpus_id).unwrap();
+        fuzzer.grimoire_enabled = false;
+
+        advance_to_bracket_phase(&mut fuzzer, &novelty_indices);
+
+        // Drive through bracket phase WITHOUT setting novelties (they fail).
+        let mut count = 0;
+        loop {
+            let candidate = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+            count += 1;
+            if candidate.is_none() {
+                break;
+            }
+            if count > 200 {
+                panic!("should complete bracket phase");
+            }
+        }
+
+        // Verify metadata was stored. Since all offset/delimiter phases failed too
+        // (no novelties set), there should be no internal gaps (only leading/trailing).
+        let tc = fuzzer.state.corpus().get(corpus_id).unwrap().borrow();
+        assert!(
+            tc.has_metadata::<GeneralizedInputMetadata>(),
+            "should have GeneralizedInputMetadata even without gaps"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_bracket_same_char_pairs() {
+        // Input with quotes: "'hello'". Same-character pairs should work.
+        let input = b"'hello'";
+        let novelty_indices = vec![10];
+        let (mut fuzzer, corpus_id) =
+            make_fuzzer_with_generalization_entry(256, input, &novelty_indices);
+
+        let _first = fuzzer.begin_generalization(corpus_id).unwrap();
+        fuzzer.grimoire_enabled = false;
+
+        advance_to_bracket_phase(&mut fuzzer, &novelty_indices);
+
+        // Drive through bracket phase with novelties surviving.
+        let mut count = 0;
+        loop {
+            unsafe {
+                *fuzzer.map_ptr.add(10) = 1;
+            }
+            let candidate = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+            count += 1;
+            if candidate.is_none() {
+                break;
+            }
+            if count > 200 {
+                panic!("should complete bracket phase for quote pairs");
+            }
+        }
+
+        let tc = fuzzer.state.corpus().get(corpus_id).unwrap().borrow();
+        assert!(
+            tc.has_metadata::<GeneralizedInputMetadata>(),
+            "same-char bracket pairs should produce metadata"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_bracket_no_closer_advances_to_next_pair() {
+        // Input with opener but no closer: "(abc". Should advance through all
+        // bracket pairs and finalize without getting stuck.
+        // Note: bracket scanning for inputs without closers completes within a
+        // single advance_stage call (no yielding), so we just drive the full
+        // generalization to completion and verify it doesn't hang.
+        let input = b"(abc";
+        let novelty_indices = vec![10];
+        let (mut fuzzer, corpus_id) =
+            make_fuzzer_with_generalization_entry(256, input, &novelty_indices);
+
+        let _first = fuzzer.begin_generalization(corpus_id).unwrap();
+        fuzzer.grimoire_enabled = false;
+
+        // Verification pass.
+        unsafe {
+            *fuzzer.map_ptr.add(10) = 1;
+        }
+        let _ = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+
+        // Drive through all phases to completion.
+        let mut count = 0;
+        loop {
+            let candidate = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+            count += 1;
+            if candidate.is_none() {
+                break;
+            }
+            if count > 500 {
+                panic!("should complete generalization when no closers exist");
+            }
+        }
+
+        let tc = fuzzer.state.corpus().get(corpus_id).unwrap().borrow();
+        assert!(
+            tc.has_metadata::<GeneralizedInputMetadata>(),
+            "should finalize even without matching closers"
+        );
+
+        cmplog::disable();
+    }
+
+    // -----------------------------------------------------------------------
+    // Grimoire spec 5.1 tests (#8)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_grimoire_iteration_advances_regardless_of_mutation_result() {
+        // Verify that the iteration counter advances on each advance_stage call,
+        // regardless of whether the underlying Grimoire mutator returns Mutated
+        // or Skipped.
+        let (mut fuzzer, corpus_id) = make_fuzzer_with_grimoire_entry(256, b"fn foo() {}");
+
+        let first = fuzzer.begin_grimoire(corpus_id).unwrap();
+        assert!(first.is_some(), "grimoire should start");
+
+        // The first Grimoire candidate was already generated by begin_grimoire.
+        // Advance the stage — regardless of whether the mutator skips or not,
+        // the iteration should progress.
+        let iteration_before = match fuzzer.stage_state {
+            StageState::Grimoire { iteration, .. } => iteration,
+            _ => panic!("should be in Grimoire state"),
+        };
+
+        let next = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        // The stage may return None if max_iterations was 1, or Some if there are
+        // more iterations. Either way, the iteration counter should have advanced.
+        match fuzzer.stage_state {
+            StageState::Grimoire { iteration, .. } => {
+                assert_eq!(
+                    iteration,
+                    iteration_before + 1,
+                    "iteration should advance even if mutation was skipped"
+                );
+            }
+            StageState::None => {
+                // Stage completed (max_iterations was 1) — that's fine, iteration
+                // counter was consumed. Verify next is None.
+                assert!(next.is_none(), "stage should be done");
+            }
+            _ => panic!("unexpected stage state"),
+        }
 
         cmplog::disable();
     }

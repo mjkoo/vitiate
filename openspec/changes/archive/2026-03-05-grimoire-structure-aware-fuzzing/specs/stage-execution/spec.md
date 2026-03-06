@@ -1,8 +1,6 @@
-## Purpose
+## MODIFIED Requirements
 
-Stage execution manages the multi-stage pipeline (I2S, Generalization, Grimoire) that runs after calibration for interesting inputs. This capability defines the protocol for beginning, advancing, and aborting stages, the state machine lifecycle, mutation semantics, and execution counting.
-
-## Requirements
+_These requirements supersede the corresponding requirements in the baseline `stage-execution` spec. The full procedural steps are restated here — they replace (not extend) the baseline's numbered steps for each method._
 
 ### Requirement: Begin stage after calibration
 

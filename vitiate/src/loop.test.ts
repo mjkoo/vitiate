@@ -59,7 +59,7 @@ describe("fuzz loop", () => {
       tmpDir,
       "trivial",
       "test.fuzz.ts",
-      { runs: 100 },
+      { runs: 100, grimoire: false },
     );
 
     expect(result.crashed).toBe(false);
@@ -116,6 +116,7 @@ describe("fuzz loop", () => {
       "test.fuzz.ts",
       {
         runs: 100,
+        grimoire: false,
       },
     );
 
@@ -373,6 +374,11 @@ describe("fuzz loop", () => {
     expect(result.totalExecs).toBeGreaterThan(0);
   });
 
+  // Tests below use `grimoire: false` to ensure deterministic totalExecs counts.
+  // Grimoire integration is tested at the engine level (Rust unit tests).
+  // A full TypeScript pipeline test for Grimoire-enabled fuzzing would be
+  // non-deterministic and belongs in fuzz-pipeline.test.ts if needed.
+
   it("runs calibration loop after interesting inputs", async () => {
     await setupFuzzingMode();
     let callCount = 0;
@@ -394,6 +400,7 @@ describe("fuzz loop", () => {
       "test.fuzz.ts",
       {
         runs: 50,
+        grimoire: false,
       },
     );
 
@@ -424,6 +431,7 @@ describe("fuzz loop", () => {
       "test.fuzz.ts",
       {
         runs: 50,
+        grimoire: false,
       },
     );
 
@@ -455,6 +463,7 @@ describe("fuzz loop", () => {
       {
         runs: 50,
         timeoutMs: 5000,
+        grimoire: false,
       },
     );
 
@@ -515,18 +524,17 @@ describe("fuzz loop", () => {
         tmpDir,
         "stage-execs",
         "test.fuzz.ts",
-        { runs: 50, timeoutMs: 5000 },
+        { runs: 50, timeoutMs: 5000, grimoire: false },
       );
 
       expect(result.crashed).toBe(false);
-      // Stage iterations increment totalExecs beyond the main-loop iteration count.
-      // Without stages (no CmpLog data), totalExecs === runs.
+      // I2S stage iterations increment totalExecs beyond the main-loop count.
       expect(result.totalExecs).toBeGreaterThan(50);
       // callCount additionally includes calibration re-runs.
       expect(callCount).toBeGreaterThan(result.totalExecs);
     });
 
-    it("skips I2S stage when no CmpLog data available", async () => {
+    it("no stages run when CmpLog data is absent and Grimoire is disabled", async () => {
       await setupFuzzingMode();
       let callCount = 0;
       const covMap = globalThis.__vitiate_cov as Buffer;
@@ -542,14 +550,14 @@ describe("fuzz loop", () => {
         tmpDir,
         "stage-no-cmp",
         "test.fuzz.ts",
-        { runs: 50 },
+        { runs: 50, grimoire: false },
       );
 
       expect(result.crashed).toBe(false);
-      // No CmpLog data → no stage → totalExecs equals runs exactly.
+      // Without CmpLog data (no I2S) and with Grimoire disabled, totalExecs === runs.
       expect(result.totalExecs).toBe(50);
-      // callCount > runs due to calibration re-runs only.
-      expect(callCount).toBeGreaterThan(50);
+      // callCount > totalExecs due to calibration re-runs.
+      expect(callCount).toBeGreaterThan(result.totalExecs);
     });
 
     it("writes crash artifact when target crashes during I2S stage", async () => {
@@ -581,7 +589,7 @@ describe("fuzz loop", () => {
         tmpDir,
         "stage-crash",
         "test.fuzz.ts",
-        { runs: 1_000_000, maxTotalTimeMs: 30_000 },
+        { runs: 1_000_000, maxTotalTimeMs: 30_000, grimoire: false },
       );
 
       expect(result.crashed).toBe(true);
@@ -613,7 +621,7 @@ describe("fuzz loop", () => {
         tmpDir,
         "stage-async",
         "test.fuzz.ts",
-        { runs: 50, timeoutMs: 5000 },
+        { runs: 50, timeoutMs: 5000, grimoire: false },
       );
 
       expect(result.crashed).toBe(false);
@@ -651,7 +659,12 @@ describe("fuzz loop", () => {
         tmpDir,
         "stage-timeout",
         "test.fuzz.ts",
-        { runs: 1_000_000, timeoutMs: 200, maxTotalTimeMs: 30_000 },
+        {
+          runs: 1_000_000,
+          timeoutMs: 200,
+          maxTotalTimeMs: 30_000,
+          grimoire: false,
+        },
       );
 
       expect(result.crashed).toBe(true);
@@ -689,7 +702,7 @@ describe("fuzz loop", () => {
         tmpDir,
         "stage-execs-abort",
         "test.fuzz.ts",
-        { runs: 1_000_000, maxTotalTimeMs: 30_000 },
+        { runs: 1_000_000, maxTotalTimeMs: 30_000, grimoire: false },
       );
 
       expect(result.crashed).toBe(true);
@@ -780,7 +793,7 @@ describe("fuzz loop", () => {
         tmpDir,
         "stage-no-wd",
         "test.fuzz.ts",
-        { runs: 50 },
+        { runs: 50, grimoire: false },
       );
 
       expect(result.crashed).toBe(false);
@@ -820,11 +833,11 @@ describe("fuzz loop", () => {
         tmpDir,
         "stage-cal-crash",
         "test.fuzz.ts",
-        { runs: 50 },
+        { runs: 50, grimoire: false },
       );
 
       expect(result.crashed).toBe(false);
-      // No stage ran despite CmpLog data being available (calibration crashed).
+      // No stage ran: calibration crashed before any stage could start.
       expect(result.totalExecs).toBe(50);
       // callCount > runs because of calibration attempts (even though they crash).
       expect(callCount).toBeGreaterThan(50);

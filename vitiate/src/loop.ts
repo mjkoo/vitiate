@@ -74,6 +74,9 @@ export async function runFuzzLoop(
   if (options.seed !== undefined) {
     fuzzerConfig.seed = options.seed;
   }
+  if (options.grimoire !== undefined) {
+    fuzzerConfig.grimoire = options.grimoire;
+  }
 
   const fuzzer = new Fuzzer(coverageMap, fuzzerConfig);
 
@@ -376,10 +379,10 @@ export async function runFuzzLoop(
             }
 
             if (stageExitKind !== ExitKind.Ok) {
-              // Crash or timeout during stage — abort and write artifact.
+              // Write artifact BEFORE abortStage — abortStage can throw if the
+              // solutions corpus add() fails, and artifact preservation is more
+              // important than internal stats bookkeeping.
               // Stage crashes are NOT minimized.
-              fuzzer.abortStage(stageExitKind);
-
               const artifactKind: ArtifactKind =
                 stageExitKind === ExitKind.Timeout ? "timeout" : "crash";
               const artifactPath = writeArtifact(
@@ -392,6 +395,17 @@ export async function runFuzzLoop(
                 stageCaughtError ?? new Error("unknown crash"),
                 artifactPath,
               );
+
+              try {
+                fuzzer.abortStage(stageExitKind);
+              } catch (abortError) {
+                // abortStage failure is non-fatal: the crash artifact is already
+                // written to disk. Internal stats bookkeeping is best-effort.
+                process.stderr.write(
+                  `vitiate: warning: abortStage failed after artifact was written: ${abortError instanceof Error ? abortError.message : String(abortError)}\n`,
+                );
+              }
+
               result = {
                 crashed: true,
                 error: stageCaughtError,

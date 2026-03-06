@@ -16,23 +16,32 @@ export declare class Fuzzer {
    */
   calibrateFinish(): void
   /**
-   * Initiate an I2S mutational stage for the most recently calibrated corpus entry.
+   * Initiate a mutational stage for the most recently calibrated corpus entry.
    *
-   * Returns the first I2S-mutated input as a `Buffer`, or `null` if preconditions
-   * are not met (no active stage allowed, no pending interesting corpus entry, or
-   * empty CmpValuesMetadata).
+   * Dispatches to I2S (when CmpLog data is available), Generalization, or Grimoire
+   * (when Grimoire is enabled). Returns the first stage-mutated input as a `Buffer`,
+   * or `null` if any of the following apply:
+   * - A stage is already active
+   * - No interesting corpus entry is pending
+   * - No applicable stage exists for the entry
    */
   beginStage(): Buffer | null
   /**
    * Process the result of a stage execution and return the next candidate input.
    *
-   * Returns the next I2S-mutated input as a `Buffer`, or `null` if the stage is
+   * Returns the next stage-mutated input as a `Buffer`, or `null` if the stage is
    * complete (iterations exhausted) or no stage is active.
    */
   advanceStage(exitKind: ExitKind, execTimeNs: number): Buffer | null
   /**
    * Cleanly terminate the current stage without evaluating the final execution's
    * coverage. No-op if no stage is active.
+   *
+   * If the exit kind is Crash or Timeout, the current stage input is recorded
+   * as a solution (crash artifact writing is handled by JS, but this ensures
+   * `solution_count` and `FuzzerStats` reflect stage-found crashes).
+   *
+   * Errors if the internal solutions corpus fails to accept the entry.
    */
   abortStage(exitKind: ExitKind): void
   get cmpLogEntryCount(): number
@@ -145,6 +154,11 @@ export declare const enum ExitKind {
 export interface FuzzerConfig {
   maxInputLen?: number
   seed?: number
+  /**
+   * Grimoire structure-aware fuzzing control.
+   * `true` = force enable, `false` = force disable, absent = auto-detect from corpus UTF-8 content.
+   */
+  grimoire?: boolean
 }
 
 export interface FuzzerStats {

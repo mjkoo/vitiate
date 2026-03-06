@@ -149,6 +149,90 @@ describe("config", () => {
       }
     });
 
+    it("parses grimoire: true", () => {
+      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        grimoire: true,
+      });
+      expect(getCliOptions()).toEqual({ grimoire: true });
+    });
+
+    it("parses grimoire: false", () => {
+      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        grimoire: false,
+      });
+      expect(getCliOptions()).toEqual({ grimoire: false });
+    });
+
+    it("ignores non-boolean grimoire values and warns on stderr", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+          grimoire: "true",
+          runs: 100,
+        });
+        const opts = getCliOptions();
+        expect(opts).toEqual({ runs: 100 });
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toContain("ignoring non-boolean");
+        expect(chunks[0]).toContain("grimoire");
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+
+    it("silently omits grimoire: null (consistent with numeric null handling)", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+          grimoire: null,
+          runs: 100,
+        });
+        const opts = getCliOptions();
+        expect(opts).toEqual({ runs: 100 });
+        expect(chunks.length).toBe(0);
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+
+    it("omits grimoire when key is absent from input", () => {
+      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({ runs: 100 });
+      const opts = getCliOptions();
+      expect(opts).toEqual({ runs: 100 });
+      expect("grimoire" in opts).toBe(false);
+    });
+
+    it("rejects grimoire: 1 as non-boolean and warns", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({ grimoire: 1 });
+        const opts = getCliOptions();
+        expect(opts).toEqual({});
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toContain("ignoring non-boolean");
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+
     it("returns empty object for invalid JSON and warns on stderr", () => {
       const chunks: string[] = [];
       const originalWrite = process.stderr.write;

@@ -4,6 +4,9 @@ use napi_derive::napi;
 pub struct FuzzerConfig {
     pub max_input_len: Option<u32>,
     pub seed: Option<i64>,
+    /// Grimoire structure-aware fuzzing control.
+    /// `true` = force enable, `false` = force disable, absent = auto-detect from corpus UTF-8 content.
+    pub grimoire: Option<bool>,
 }
 
 #[napi]
