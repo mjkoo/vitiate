@@ -21,6 +21,8 @@ On construction, the Fuzzer SHALL initialize `SchedulerMetadata` with `PowerSche
 
 On construction, the Fuzzer SHALL initialize the havoc mutator with `havoc_mutations()` merged with `tokens_mutations()`, providing both standard havoc mutations and dictionary-based token mutations in a single scheduled mutator.
 
+On construction, the Fuzzer SHALL initialize `TopRatedsMetadata` on the fuzzer state. This metadata is consumed by the `MinimizerScheduler` to track the best corpus entry per coverage edge (see corpus-minimizer spec).
+
 On construction, the Fuzzer SHALL additionally initialize:
 
 - `stage_state` to `StageState::None`.
@@ -34,6 +36,7 @@ On construction, the Fuzzer SHALL additionally initialize:
   a reference to the provided coverage map
 - **AND** the CmpLog accumulator is enabled
 - **AND** `SchedulerMetadata` with `PowerSchedule::fast()` is present on the state
+- **AND** `TopRatedsMetadata` is present on the state with an empty edge-to-corpus-ID map
 - **AND** the havoc mutator includes token mutations
 
 #### Scenario: Create with custom config
@@ -61,12 +64,15 @@ corpus. Seeds serve as starting points for mutation.
 
 Each seed added via `addSeed()` SHALL receive `SchedulerTestcaseMetadata` with depth 0, a nominal execution time of 1ms, and `cycle_and_time` of (1ms, 1). This ensures `CorpusPowerTestcaseScore` can compute a score for seeds without erroring on missing `exec_time`. Seeds SHALL NOT be calibrated.
 
+Each seed SHALL also receive empty `MapIndexesMetadata` (containing no edge indices). This ensures `MinimizerScheduler::update_score()` succeeds without error when `scheduler.on_add()` is called. Seeds have no coverage data, so they cover no edges and cannot become favored.
+
 #### Scenario: Add a seed
 
 - **WHEN** `fuzzer.addSeed(Buffer.from("hello"))` is called
 - **THEN** the corpus contains one entry and `getNextInput()` can produce mutations
   derived from it
 - **AND** the entry SHALL have `SchedulerTestcaseMetadata` with depth 0 and exec_time of 1ms
+- **AND** the entry SHALL have empty `MapIndexesMetadata`
 
 #### Scenario: Add multiple seeds
 
@@ -74,6 +80,7 @@ Each seed added via `addSeed()` SHALL receive `SchedulerTestcaseMetadata` with d
 - **THEN** the corpus size is 3 and `getNextInput()` can produce mutations derived from
   any of them
 - **AND** each entry SHALL have `SchedulerTestcaseMetadata` with depth 0 and exec_time of 1ms
+- **AND** each entry SHALL have empty `MapIndexesMetadata`
 
 ### Requirement: Auto-seed on empty corpus
 
@@ -365,14 +372,14 @@ The helper SHALL:
 1. Mask unstable edges (zero coverage map entries at indices in the unstable entries set).
 2. Construct a `StdMapObserver` from `map_ptr`.
 3. Evaluate crash/timeout objective (`CrashFeedback`, `TimeoutFeedback`) using `exit_kind`. For `ExitKind::Ok` (the only value used by `advance_stage()`), objective evaluation will return "not a solution" — this is expected and the evaluation is still performed for uniformity.
-4. Evaluate coverage feedback (`MaxMapFeedback::is_interesting()`).
+4. Evaluate coverage feedback (`MaxMapFeedback::is_interesting()`). During the coverage map iteration that computes `MapNoveltiesMetadata`, also collect the indices of all nonzero entries into `MapIndexesMetadata`.
 5. If interesting: create a `Testcase` from the provided `input` bytes, set `exec_time` to `Duration::from_nanos(exec_time_ns as u64)`, add `SchedulerTestcaseMetadata` with the following fields:
    - `depth`: `parent_corpus_id`'s depth + 1.
    - `bitmap_size`: number of non-zero entries in the coverage map.
    - `n_fuzz_entry`: initialized to 0.
    - `handicap`: initialized to 0.
    - `cycle_and_time`: initialized to `(Duration::ZERO, 0)`.
-   Add to corpus via `corpus_mut().add()`, call `scheduler.on_add()`.
+   Store `MapNoveltiesMetadata` and `MapIndexesMetadata` on the testcase. Add to corpus via `corpus_mut().add()`, call `scheduler.on_add()`.
 6. Zero the coverage map.
 7. Return a result indicating: whether the input was interesting (new coverage), whether it was a solution (crash/timeout objective triggered), and the `CorpusId` if a corpus entry was added.
 
@@ -392,6 +399,13 @@ The helper SHALL:
 - **AND** the coverage map contains novel coverage
 - **THEN** the helper SHALL return interesting=true
 - **AND** the input SHALL be added to the corpus
+
+#### Scenario: MapIndexesMetadata stored alongside MapNoveltiesMetadata
+
+- **WHEN** `evaluate_coverage()` processes an interesting input whose coverage map has nonzero values at indices {10, 20, 30, 40, 50}
+- **AND** only indices {40, 50} are novel (exceed the global max map)
+- **THEN** the corpus entry SHALL have `MapNoveltiesMetadata` containing {40, 50}
+- **AND** the corpus entry SHALL have `MapIndexesMetadata` containing {10, 20, 30, 40, 50}
 
 ### Requirement: StageState enum on Fuzzer
 

@@ -6,8 +6,8 @@ use libafl::events::NopEventManager;
 use libafl::executors::ExitKind as LibaflExitKind;
 use libafl::feedbacks::map::MapFeedbackMetadata;
 use libafl::feedbacks::{
-    CrashFeedback, Feedback, MapNoveltiesMetadata, MaxMapFeedback, StateInitializer,
-    TimeoutFeedback,
+    CrashFeedback, Feedback, MapIndexesMetadata, MapNoveltiesMetadata, MaxMapFeedback,
+    StateInitializer, TimeoutFeedback,
 };
 use libafl::inputs::{BytesInput, GeneralizedInputMetadata, HasMutatorBytes, ResizableMutator};
 use libafl::mutators::grimoire::{
@@ -25,9 +25,13 @@ use libafl::mutators::{
 };
 use libafl::observers::StdMapObserver;
 use libafl::observers::cmp::{CmpValues, CmpValuesMetadata};
+use libafl::observers::map::{CanTrack, ExplicitTracking};
+use libafl::schedulers::minimizer::TopRatedsMetadata;
 use libafl::schedulers::powersched::{N_FUZZ_SIZE, PowerSchedule, SchedulerMetadata};
 use libafl::schedulers::testcase_score::CorpusPowerTestcaseScore;
-use libafl::schedulers::{ProbabilitySamplingScheduler, RemovableScheduler, Scheduler};
+use libafl::schedulers::{
+    MinimizerScheduler, ProbabilitySamplingScheduler, RemovableScheduler, Scheduler,
+};
 use libafl::stages::UnicodeIdentificationMetadata;
 use libafl::state::{HasCorpus, HasExecutions, HasMaxSize, HasRand, HasSolutions, StdState};
 use libafl::{HasMetadata, HasNamedMetadata};
@@ -119,10 +123,19 @@ const MAX_DICTIONARY_SIZE: usize = 512;
 
 // Concrete LibAFL type aliases.
 type CovObserver = StdMapObserver<'static, u8, false>;
+/// CovObserver with index tracking enabled, needed by `MinimizerScheduler`.
+type TrackingCovObserver = ExplicitTracking<CovObserver, true, false>;
 type FuzzerFeedback = MaxMapFeedback<CovObserver, CovObserver>;
 type CrashObjective = CrashFeedback;
 type TimeoutObjective = TimeoutFeedback;
-type FuzzerScheduler = ProbabilitySamplingScheduler<CorpusPowerTestcaseScore>;
+type FuzzerBaseScheduler = ProbabilitySamplingScheduler<CorpusPowerTestcaseScore>;
+type FuzzerScheduler = MinimizerScheduler<
+    FuzzerBaseScheduler,
+    libafl::schedulers::LenTimeMulTestcasePenalty,
+    BytesInput,
+    MapIndexesMetadata,
+    TrackingCovObserver,
+>;
 type TokensMutationsType = (TokenInsert, (TokenReplace, ()));
 type FuzzerMutationsType = <HavocMutationsType as Merge<TokensMutationsType>>::MergeResult;
 type FuzzerMutator = HavocScheduledMutator<FuzzerMutationsType>;
@@ -677,7 +690,9 @@ impl Fuzzer {
             .init_state(&mut state)
             .map_err(|e| Error::from_reason(format!("Failed to init timeout state: {e}")))?;
 
-        let scheduler = ProbabilitySamplingScheduler::new();
+        let base_scheduler = ProbabilitySamplingScheduler::new();
+        let tracking_observer = temp_observer.track_indices();
+        let scheduler = MinimizerScheduler::new(&tracking_observer, base_scheduler);
         let mutator = HavocScheduledMutator::new(havoc_mutations().merge(tokens_mutations()));
         let i2s_mutator = I2SSpliceReplace::new();
         let grimoire_mutator = HavocScheduledMutator::with_max_stack_pow(
@@ -712,8 +727,9 @@ impl Fuzzer {
             UNICODE_MAX_STACK_POW,
         );
 
-        // Drop the temporary observer - feedback only holds a name-based Handle.
-        drop(temp_observer);
+        // Drop the tracking observer - feedback only holds a name-based Handle.
+        // temp_observer was consumed by track_indices() above.
+        drop(tracking_observer);
 
         // Set max input size on state for I2SRandReplace bounds.
         state.set_max_size(max_input_len as usize);
@@ -724,6 +740,10 @@ impl Fuzzer {
 
         // Initialize power scheduling metadata with FAST strategy.
         state.add_metadata(SchedulerMetadata::new(Some(PowerSchedule::fast())));
+
+        // Initialize minimizer scheduler state: TopRatedsMetadata tracks the best
+        // corpus entry per coverage edge for the MinimizerScheduler.
+        state.add_metadata(TopRatedsMetadata::new());
 
         // Auto-detection for Grimoire and unicode: scan corpus for UTF-8 content.
         // Both features share the same detection signal and deferred threshold.
@@ -799,6 +819,11 @@ impl Fuzzer {
         sched_meta.set_cycle_and_time((SEED_EXEC_TIME, 1));
         testcase.add_metadata(sched_meta);
 
+        // Seeds receive empty MapIndexesMetadata so MinimizerScheduler::update_score()
+        // succeeds without error when scheduler.on_add() is called. Seeds cover no
+        // edges, so they cannot become favored.
+        testcase.add_metadata(MapIndexesMetadata::new(vec![]));
+
         let id = self
             .state
             .corpus_mut()
@@ -823,6 +848,7 @@ impl Fuzzer {
                 let mut sched_meta = SchedulerTestcaseMetadata::new(0);
                 sched_meta.set_cycle_and_time((SEED_EXEC_TIME, 1));
                 testcase.add_metadata(sched_meta);
+                testcase.add_metadata(MapIndexesMetadata::new(vec![]));
 
                 let id = self
                     .state
@@ -1603,14 +1629,22 @@ impl Fuzzer {
                     // Drop observers before reading the raw map pointer to avoid aliasing.
                     drop(observers);
 
-                    // Count nonzero bytes for bitmap_size from the raw coverage map.
+                    // Collect all nonzero coverage map indices for MapIndexesMetadata
+                    // and count them for bitmap_size. Piggy-backs on a single map pass.
                     // SAFETY: map_ptr is valid for map_len bytes, backed by _coverage_map
                     // Buffer. The observer has been dropped, so no aliasing.
-                    let bitmap_size =
-                        unsafe { std::slice::from_raw_parts(self.map_ptr, self.map_len) }
-                            .iter()
-                            .filter(|&&b| b > 0)
-                            .count() as u64;
+                    let map_slice =
+                        unsafe { std::slice::from_raw_parts(self.map_ptr, self.map_len) };
+                    let covered_indices: Vec<usize> = map_slice
+                        .iter()
+                        .enumerate()
+                        .filter(|&(_, &b)| b > 0)
+                        .map(|(i, _)| i)
+                        .collect();
+                    let bitmap_size = covered_indices.len() as u64;
+
+                    // Store MapIndexesMetadata for the MinimizerScheduler's update_score.
+                    testcase.add_metadata(MapIndexesMetadata::new(covered_indices));
 
                     testcase.set_exec_time(exec_time);
 
@@ -2607,18 +2641,38 @@ mod tests {
 
         // Initialize SchedulerMetadata (required by CorpusPowerTestcaseScore).
         state.add_metadata(SchedulerMetadata::new(Some(PowerSchedule::fast())));
+        // Initialize TopRatedsMetadata (required by MinimizerScheduler).
+        state.add_metadata(TopRatedsMetadata::new());
 
         drop(observer);
         (state, feedback, objective)
     }
 
-    /// Create a seed testcase with scheduler metadata (required by CorpusPowerTestcaseScore).
+    /// Create a MinimizerScheduler wrapping ProbabilitySamplingScheduler for tests.
+    ///
+    /// # Safety
+    /// Creates a temporary `StdMapObserver` from `map_ptr`. The observer is consumed
+    /// by `track_indices()` and the tracking wrapper is dropped before returning,
+    /// so no observer aliases persist. Callers must ensure no other live observer
+    /// holds `map_ptr` at call time.
+    fn make_scheduler(map_ptr: *mut u8, map_len: usize) -> FuzzerScheduler {
+        let observer =
+            unsafe { StdMapObserver::from_mut_ptr(EDGES_OBSERVER_NAME, map_ptr, map_len) };
+        let tracking = observer.track_indices();
+        let scheduler = MinimizerScheduler::new(&tracking, ProbabilitySamplingScheduler::new());
+        drop(tracking);
+        scheduler
+    }
+
+    /// Create a seed testcase with scheduler metadata (required by CorpusPowerTestcaseScore)
+    /// and empty MapIndexesMetadata (required by MinimizerScheduler::update_score).
     fn make_seed_testcase(data: &[u8]) -> Testcase<BytesInput> {
         let mut tc = Testcase::new(BytesInput::new(data.to_vec()));
         tc.set_exec_time(SEED_EXEC_TIME);
         let mut meta = SchedulerTestcaseMetadata::new(0);
         meta.set_cycle_and_time((SEED_EXEC_TIME, 1));
         tc.add_metadata(meta);
+        tc.add_metadata(MapIndexesMetadata::new(vec![]));
         tc
     }
 
@@ -2651,10 +2705,12 @@ mod tests {
         timeout_objective.init_state(&mut state).unwrap();
 
         state.add_metadata(SchedulerMetadata::new(Some(PowerSchedule::fast())));
+        state.add_metadata(TopRatedsMetadata::new());
         state.metadata_map_mut().insert(CmpValuesMetadata::new());
 
-        let scheduler = ProbabilitySamplingScheduler::new();
-        drop(observer);
+        let tracking = observer.track_indices();
+        let scheduler = MinimizerScheduler::new(&tracking, ProbabilitySamplingScheduler::new());
+        drop(tracking);
         (
             state,
             feedback,
@@ -2667,7 +2723,7 @@ mod tests {
     #[test]
     fn test_new_state_is_empty() {
         let (map_ptr, _map) = make_coverage_map(65536);
-        let (state, _feedback, _objective) = make_state_and_feedback(map_ptr, 65536);
+        let (state, _feedback, _objective) = make_state_and_feedback(map_ptr, _map.len());
         assert_eq!(state.corpus().count(), 0);
         assert_eq!(state.solutions().count(), 0);
     }
@@ -2675,8 +2731,8 @@ mod tests {
     #[test]
     fn test_add_seed() {
         let (map_ptr, _map) = make_coverage_map(65536);
-        let (mut state, _feedback, _objective) = make_state_and_feedback(map_ptr, 65536);
-        let mut scheduler: FuzzerScheduler = ProbabilitySamplingScheduler::new();
+        let (mut state, _feedback, _objective) = make_state_and_feedback(map_ptr, _map.len());
+        let mut scheduler = make_scheduler(map_ptr, _map.len());
 
         let testcase = make_seed_testcase(b"hello");
         let id = state.corpus_mut().add(testcase).unwrap();
@@ -2688,8 +2744,8 @@ mod tests {
     #[test]
     fn test_get_next_input_auto_seeds() {
         let (map_ptr, _map) = make_coverage_map(65536);
-        let (mut state, _feedback, _objective) = make_state_and_feedback(map_ptr, 65536);
-        let mut scheduler: FuzzerScheduler = ProbabilitySamplingScheduler::new();
+        let (mut state, _feedback, _objective) = make_state_and_feedback(map_ptr, _map.len());
+        let mut scheduler = make_scheduler(map_ptr, _map.len());
         let mut mutator = HavocScheduledMutator::new(havoc_mutations().merge(tokens_mutations()));
 
         // Seed with only non-empty entries so the non-empty assertion is sound
@@ -2896,8 +2952,8 @@ mod tests {
     #[test]
     fn test_max_input_len_enforcement() {
         let (map_ptr, _map) = make_coverage_map(65536);
-        let (mut state, _feedback, _objective) = make_state_and_feedback(map_ptr, 65536);
-        let mut scheduler: FuzzerScheduler = ProbabilitySamplingScheduler::new();
+        let (mut state, _feedback, _objective) = make_state_and_feedback(map_ptr, _map.len());
+        let mut scheduler = make_scheduler(map_ptr, _map.len());
         let mut mutator = HavocScheduledMutator::new(havoc_mutations().merge(tokens_mutations()));
         let max_input_len: u32 = 128;
 
@@ -3286,6 +3342,7 @@ mod tests {
         sched_meta.set_bitmap_size(1);
         sched_meta.set_cycle_and_time((Duration::from_micros(100), 1));
         testcase.add_metadata(sched_meta);
+        testcase.add_metadata(MapIndexesMetadata::new(vec![0]));
 
         let id = state.corpus_mut().add(testcase).unwrap();
         scheduler.on_add(&mut state, id).unwrap();
@@ -3346,6 +3403,7 @@ mod tests {
         sched_meta.set_bitmap_size(1);
         sched_meta.set_cycle_and_time((Duration::from_micros(100), 1));
         testcase.add_metadata(sched_meta);
+        testcase.add_metadata(MapIndexesMetadata::new(vec![0]));
 
         let child_id = state.corpus_mut().add(testcase).unwrap();
         scheduler.on_add(&mut state, child_id).unwrap();
@@ -3554,6 +3612,7 @@ mod tests {
         sched_meta.set_bitmap_size(bitmap_size);
         sched_meta.set_cycle_and_time((exec_time, 1));
         testcase.add_metadata(sched_meta);
+        testcase.add_metadata(MapIndexesMetadata::new(vec![0, 5]));
 
         let id = state.corpus_mut().add(testcase).unwrap();
         scheduler.on_add(&mut state, id).unwrap();
@@ -3574,7 +3633,7 @@ mod tests {
     fn test_explicit_seed_has_scheduler_metadata() {
         let (map_ptr, _map) = make_coverage_map(1024);
         let (mut state, ..) = make_fuzzer(map_ptr, 1024);
-        let mut scheduler: FuzzerScheduler = ProbabilitySamplingScheduler::new();
+        let mut scheduler = make_scheduler(map_ptr, _map.len());
 
         let tc = make_seed_testcase(b"hello");
         let id = state.corpus_mut().add(tc).unwrap();
@@ -3594,7 +3653,7 @@ mod tests {
     fn test_auto_seed_has_scheduler_metadata() {
         let (map_ptr, _map) = make_coverage_map(1024);
         let (mut state, ..) = make_fuzzer(map_ptr, 1024);
-        let mut scheduler: FuzzerScheduler = ProbabilitySamplingScheduler::new();
+        let mut scheduler = make_scheduler(map_ptr, _map.len());
 
         // Add auto-seeds the same way Fuzzer::get_next_input does.
         for seed in DEFAULT_SEEDS {
@@ -3603,6 +3662,7 @@ mod tests {
             let mut sched_meta = SchedulerTestcaseMetadata::new(0);
             sched_meta.set_cycle_and_time((SEED_EXEC_TIME, 1));
             testcase.add_metadata(sched_meta);
+            testcase.add_metadata(MapIndexesMetadata::new(vec![]));
 
             let id = state.corpus_mut().add(testcase).unwrap();
             scheduler.on_add(&mut state, id).unwrap();
@@ -3660,6 +3720,7 @@ mod tests {
         sched_meta.set_bitmap_size(1);
         sched_meta.set_cycle_and_time((Duration::from_micros(100), 1));
         testcase.add_metadata(sched_meta);
+        testcase.add_metadata(MapIndexesMetadata::new(vec![10]));
         let corpus_id = state.corpus_mut().add(testcase).unwrap();
         scheduler.on_add(&mut state, corpus_id).unwrap();
 
@@ -3804,7 +3865,7 @@ mod tests {
     fn test_calibrate_finish_averages_exec_time() {
         let (map_ptr, _map) = make_coverage_map(1024);
         let (mut state, ..) = make_fuzzer(map_ptr, 1024);
-        let mut scheduler: FuzzerScheduler = ProbabilitySamplingScheduler::new();
+        let mut scheduler = make_scheduler(map_ptr, _map.len());
 
         // Add a corpus entry with preliminary metadata.
         let mut tc = Testcase::new(BytesInput::new(b"test".to_vec()));
@@ -3813,6 +3874,7 @@ mod tests {
         sched_meta.set_bitmap_size(1);
         sched_meta.set_cycle_and_time((Duration::from_micros(100), 1));
         tc.add_metadata(sched_meta);
+        tc.add_metadata(MapIndexesMetadata::new(vec![]));
         let id = state.corpus_mut().add(tc).unwrap();
         scheduler.on_add(&mut state, id).unwrap();
 
@@ -4082,7 +4144,7 @@ mod tests {
     fn test_crash_during_calibration_partial_data() {
         let (map_ptr, _map) = make_coverage_map(1024);
         let (mut state, ..) = make_fuzzer(map_ptr, 1024);
-        let mut scheduler: FuzzerScheduler = ProbabilitySamplingScheduler::new();
+        let mut scheduler = make_scheduler(map_ptr, _map.len());
 
         // Add a corpus entry with preliminary metadata.
         let mut tc = Testcase::new(BytesInput::new(b"crashing".to_vec()));
@@ -4091,6 +4153,7 @@ mod tests {
         sched_meta.set_bitmap_size(1);
         sched_meta.set_cycle_and_time((Duration::from_micros(100), 1));
         tc.add_metadata(sched_meta);
+        tc.add_metadata(MapIndexesMetadata::new(vec![]));
         let id = state.corpus_mut().add(tc).unwrap();
         scheduler.on_add(&mut state, id).unwrap();
 
@@ -4141,7 +4204,9 @@ mod tests {
 
         timeout_objective.init_state(&mut state).unwrap();
 
-        let scheduler = ProbabilitySamplingScheduler::new();
+        let tracking_observer = temp_observer.track_indices();
+        let scheduler =
+            MinimizerScheduler::new(&tracking_observer, ProbabilitySamplingScheduler::new());
         let mutator = HavocScheduledMutator::new(havoc_mutations().merge(tokens_mutations()));
         let i2s_mutator = I2SSpliceReplace::new();
         let grimoire_mutator = HavocScheduledMutator::with_max_stack_pow(
@@ -4172,11 +4237,12 @@ mod tests {
             UNICODE_MAX_STACK_POW,
         );
 
-        drop(temp_observer);
+        drop(tracking_observer);
 
         state.set_max_size(DEFAULT_MAX_INPUT_LEN as usize);
         state.metadata_map_mut().insert(CmpValuesMetadata::new());
         state.add_metadata(SchedulerMetadata::new(Some(PowerSchedule::fast())));
+        state.add_metadata(TopRatedsMetadata::new());
 
         Fuzzer {
             state,
@@ -5517,6 +5583,7 @@ mod tests {
             let mut sched_meta = SchedulerTestcaseMetadata::new(0);
             sched_meta.set_cycle_and_time((SEED_EXEC_TIME, 1));
             testcase.add_metadata(sched_meta);
+            testcase.add_metadata(MapIndexesMetadata::new(vec![]));
             let id = fuzzer.state.corpus_mut().add(testcase).unwrap();
             fuzzer.scheduler.on_add(&mut fuzzer.state, id).unwrap();
             set_n_fuzz_entry_for_corpus_id(&fuzzer.state, id).unwrap();
@@ -5572,6 +5639,7 @@ mod tests {
         let mut sched_meta = SchedulerTestcaseMetadata::new(0);
         sched_meta.set_n_fuzz_entry(0);
         testcase.add_metadata(sched_meta);
+        testcase.add_metadata(MapIndexesMetadata::new(novelty_indices.to_vec()));
         *testcase.exec_time_mut() = Some(Duration::from_micros(100));
 
         let corpus_id = fuzzer.state.corpus_mut().add(testcase).unwrap();
@@ -6196,6 +6264,7 @@ mod tests {
         let mut sched_meta = SchedulerTestcaseMetadata::new(0);
         sched_meta.set_n_fuzz_entry(0);
         testcase.add_metadata(sched_meta);
+        testcase.add_metadata(MapIndexesMetadata::new(vec![10]));
         *testcase.exec_time_mut() = Some(Duration::from_micros(100));
 
         // Create a simple GeneralizedInputMetadata.
@@ -7475,6 +7544,7 @@ mod tests {
             let mut sched_meta = SchedulerTestcaseMetadata::new(0);
             sched_meta.set_n_fuzz_entry(0);
             testcase.add_metadata(sched_meta);
+            testcase.add_metadata(MapIndexesMetadata::new(vec![50 + i as usize]));
             *testcase.exec_time_mut() = Some(Duration::from_micros(100));
             let id = fuzzer.state.corpus_mut().add(testcase).unwrap();
             fuzzer.scheduler.on_add(&mut fuzzer.state, id).unwrap();
@@ -7569,6 +7639,7 @@ mod tests {
         let mut sched_meta = SchedulerTestcaseMetadata::new(0);
         sched_meta.set_n_fuzz_entry(0);
         testcase.add_metadata(sched_meta);
+        testcase.add_metadata(MapIndexesMetadata::new(vec![10]));
         *testcase.exec_time_mut() = Some(Duration::from_micros(100));
 
         let corpus_id = fuzzer.state.corpus_mut().add(testcase).unwrap();
@@ -8019,6 +8090,7 @@ mod tests {
         let mut sched_meta = SchedulerTestcaseMetadata::new(0);
         sched_meta.set_n_fuzz_entry(0);
         testcase.add_metadata(sched_meta);
+        testcase.add_metadata(MapIndexesMetadata::new(vec![]));
         *testcase.exec_time_mut() = Some(Duration::from_micros(100));
 
         let corpus_id = fuzzer.state.corpus_mut().add(testcase).unwrap();
@@ -8395,5 +8467,598 @@ mod tests {
         );
 
         cmplog::disable();
+    }
+
+    // -----------------------------------------------------------------------
+    // Minimizer scheduler / MapIndexesMetadata tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_map_indexes_metadata_contains_all_covered_edges() {
+        // Task 1.3: MapIndexesMetadata contains all nonzero indices (not just novel).
+        let mut fuzzer = make_test_fuzzer(256);
+        cmplog::enable();
+
+        fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+
+        // First iteration: set edges {10, 20, 30} as covered. All are novel.
+        unsafe {
+            *fuzzer.map_ptr.add(10) = 1;
+            *fuzzer.map_ptr.add(20) = 2;
+            *fuzzer.map_ptr.add(30) = 3;
+        }
+        fuzzer.last_input = Some(BytesInput::new(b"input1".to_vec()));
+        fuzzer.last_corpus_id = Some(CorpusId::from(0usize));
+        let result = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
+        assert!(matches!(result, IterationResult::Interesting));
+
+        // The corpus entry should have MapIndexesMetadata with all 3 edges.
+        // MapIndexesMetadata has refcnt > 0 after update_score, so it must be present.
+        let id = CorpusId::from(1usize); // second entry (after seed)
+        let tc = fuzzer.state.corpus().get(id).unwrap().borrow();
+        let meta = tc
+            .metadata::<MapIndexesMetadata>()
+            .expect("MapIndexesMetadata should be present (refcnt > 0 after update_score)");
+        assert!(meta.list.contains(&10));
+        assert!(meta.list.contains(&20));
+        assert!(meta.list.contains(&30));
+        assert_eq!(meta.list.len(), 3);
+        drop(tc);
+
+        // Second iteration: edges {10, 20, 30, 40, 50} covered, only {40, 50} novel.
+        unsafe {
+            *fuzzer.map_ptr.add(10) = 1;
+            *fuzzer.map_ptr.add(20) = 2;
+            *fuzzer.map_ptr.add(30) = 3;
+            *fuzzer.map_ptr.add(40) = 1;
+            *fuzzer.map_ptr.add(50) = 1;
+        }
+        fuzzer.last_input = Some(BytesInput::new(b"input2".to_vec()));
+        fuzzer.last_corpus_id = Some(CorpusId::from(0usize));
+        let result = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
+        assert!(matches!(result, IterationResult::Interesting));
+
+        // The entry should have MapIndexesMetadata with ALL 5 edges.
+        let id2 = CorpusId::from(2usize);
+        let tc2 = fuzzer.state.corpus().get(id2).unwrap().borrow();
+        let meta = tc2
+            .metadata::<MapIndexesMetadata>()
+            .expect("MapIndexesMetadata should be present (refcnt > 0 after update_score)");
+        assert!(meta.list.contains(&10), "should contain non-novel edge 10");
+        assert!(meta.list.contains(&20), "should contain non-novel edge 20");
+        assert!(meta.list.contains(&30), "should contain non-novel edge 30");
+        assert!(meta.list.contains(&40), "should contain novel edge 40");
+        assert!(meta.list.contains(&50), "should contain novel edge 50");
+        assert_eq!(meta.list.len(), 5);
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_map_indexes_metadata_absent_for_non_interesting() {
+        // Task 1.3: MapIndexesMetadata not stored for non-interesting inputs.
+        let mut fuzzer = make_test_fuzzer(256);
+        cmplog::enable();
+
+        fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+
+        // First: establish coverage at edge 10.
+        unsafe {
+            *fuzzer.map_ptr.add(10) = 1;
+        }
+        fuzzer.last_input = Some(BytesInput::new(b"novel".to_vec()));
+        fuzzer.last_corpus_id = Some(CorpusId::from(0usize));
+        let result = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
+        assert!(matches!(result, IterationResult::Interesting));
+
+        let corpus_before = fuzzer.state.corpus().count();
+
+        // Second: same coverage (edge 10 only) — not interesting.
+        unsafe {
+            *fuzzer.map_ptr.add(10) = 1;
+        }
+        fuzzer.last_input = Some(BytesInput::new(b"duplicate".to_vec()));
+        fuzzer.last_corpus_id = Some(CorpusId::from(0usize));
+        let result = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
+        assert!(matches!(result, IterationResult::None));
+
+        // Corpus should not have grown — no entry was added.
+        assert_eq!(fuzzer.state.corpus().count(), corpus_before);
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_top_rateds_populated_on_corpus_addition() {
+        // Task 3.1: TopRatedsMetadata populated when corpus entries are added.
+        let (map_ptr, _map) = make_coverage_map(256);
+        let (mut state, _feedback, _objective) = make_state_and_feedback(map_ptr, _map.len());
+        let mut scheduler = make_scheduler(map_ptr, _map.len());
+
+        // Add a seed (no edges).
+        let tc = make_seed_testcase(b"seed");
+        let seed_id = state.corpus_mut().add(tc).unwrap();
+        scheduler.on_add(&mut state, seed_id).unwrap();
+
+        // TopRatedsMetadata should be empty (seed has no edges).
+        {
+            let top_rated = state.metadata::<TopRatedsMetadata>().unwrap();
+            assert!(
+                top_rated.map().is_empty(),
+                "TopRatedsMetadata should be empty after adding seed"
+            );
+        }
+
+        // Add an interesting entry covering edges {10, 20}.
+        let mut tc = Testcase::new(BytesInput::new(b"entry1".to_vec()));
+        tc.set_exec_time(Duration::from_micros(100));
+        let mut sched_meta = SchedulerTestcaseMetadata::new(1);
+        sched_meta.set_bitmap_size(2);
+        sched_meta.set_cycle_and_time((Duration::from_micros(100), 1));
+        tc.add_metadata(sched_meta);
+        tc.add_metadata(MapIndexesMetadata::new(vec![10, 20]));
+        let id1 = state.corpus_mut().add(tc).unwrap();
+        scheduler.on_add(&mut state, id1).unwrap();
+
+        // TopRatedsMetadata should now track edges 10 and 20 → id1.
+        {
+            let top_rated = state.metadata::<TopRatedsMetadata>().unwrap();
+            assert_eq!(
+                top_rated.map().get(&10),
+                Some(&id1),
+                "edge 10 should be tracked to entry 1"
+            );
+            assert_eq!(
+                top_rated.map().get(&20),
+                Some(&id1),
+                "edge 20 should be tracked to entry 1"
+            );
+        }
+    }
+
+    #[test]
+    fn test_is_favored_set_on_best_representative() {
+        // Task 3.2: IsFavoredMetadata set on entries that are best for at least one edge.
+        use libafl::schedulers::minimizer::IsFavoredMetadata;
+
+        let (map_ptr, _map) = make_coverage_map(256);
+        let (mut state, _feedback, _objective) = make_state_and_feedback(map_ptr, _map.len());
+        let mut scheduler = make_scheduler(map_ptr, _map.len());
+
+        // Add a seed.
+        let tc = make_seed_testcase(b"seed");
+        let seed_id = state.corpus_mut().add(tc).unwrap();
+        scheduler.on_add(&mut state, seed_id).unwrap();
+
+        // Add entry covering edge 10.
+        let mut tc = Testcase::new(BytesInput::new(b"entry1".to_vec()));
+        tc.set_exec_time(Duration::from_micros(100));
+        let mut sched_meta = SchedulerTestcaseMetadata::new(1);
+        sched_meta.set_bitmap_size(1);
+        sched_meta.set_cycle_and_time((Duration::from_micros(100), 1));
+        tc.add_metadata(sched_meta);
+        tc.add_metadata(MapIndexesMetadata::new(vec![10]));
+        let id1 = state.corpus_mut().add(tc).unwrap();
+        scheduler.on_add(&mut state, id1).unwrap();
+
+        // Trigger cull by calling next(). MinimizerScheduler::next calls cull
+        // which refreshes IsFavoredMetadata.
+        let _ = scheduler.next(&mut state).unwrap();
+
+        // Entry 1 should be favored (best for edge 10).
+        {
+            let tc = state.corpus().get(id1).unwrap().borrow();
+            assert!(
+                tc.metadata::<IsFavoredMetadata>().is_ok(),
+                "entry covering edge 10 should be favored"
+            );
+        }
+
+        // Seed should NOT be favored (no edges).
+        {
+            let tc = state.corpus().get(seed_id).unwrap().borrow();
+            assert!(
+                tc.metadata::<IsFavoredMetadata>().is_err(),
+                "seed with no edges should not be favored"
+            );
+        }
+    }
+
+    #[test]
+    fn test_non_favored_entries_skipped_with_high_probability() {
+        // Task 3.3: Non-favored entries skipped with high probability.
+        // With only seeds (non-favored), the scheduler should still terminate
+        // but each attempt has a 95% skip probability.
+        let (map_ptr, _map) = make_coverage_map(256);
+        let (mut state, _feedback, _objective) = make_state_and_feedback(map_ptr, _map.len());
+        let mut scheduler = make_scheduler(map_ptr, _map.len());
+
+        // Add seeds only (all non-favored).
+        for seed in DEFAULT_SEEDS {
+            let tc = make_seed_testcase(seed);
+            let id = state.corpus_mut().add(tc).unwrap();
+            scheduler.on_add(&mut state, id).unwrap();
+        }
+
+        // With a known seed, call next() multiple times — it should always return
+        // a valid corpus ID even though all entries are non-favored.
+        for _ in 0..20 {
+            let id = scheduler.next(&mut state).unwrap();
+            assert!(
+                state.corpus().get(id).is_ok(),
+                "scheduler should return valid corpus entry even when all non-favored"
+            );
+        }
+    }
+
+    #[test]
+    fn test_entry_displacement_smaller_faster_wins() {
+        // Task 3.4: Smaller/faster entry replaces larger/slower for shared edge.
+        let (map_ptr, _map) = make_coverage_map(256);
+        let (mut state, _feedback, _objective) = make_state_and_feedback(map_ptr, _map.len());
+        let mut scheduler = make_scheduler(map_ptr, _map.len());
+
+        // Add a seed.
+        let tc = make_seed_testcase(b"seed");
+        let seed_id = state.corpus_mut().add(tc).unwrap();
+        scheduler.on_add(&mut state, seed_id).unwrap();
+
+        // Entry A: large, slow. Covers edge 42.
+        // penalty = as_millis(1ms) * 100 bytes = 100
+        let mut tc_a = Testcase::new(BytesInput::new(vec![0u8; 100]));
+        tc_a.set_exec_time(Duration::from_millis(1));
+        let mut meta_a = SchedulerTestcaseMetadata::new(1);
+        meta_a.set_bitmap_size(1);
+        meta_a.set_cycle_and_time((Duration::from_millis(1), 1));
+        tc_a.add_metadata(meta_a);
+        tc_a.add_metadata(MapIndexesMetadata::new(vec![42]));
+        let id_a = state.corpus_mut().add(tc_a).unwrap();
+        scheduler.on_add(&mut state, id_a).unwrap();
+
+        // Entry A should own edge 42.
+        {
+            let top_rated = state.metadata::<TopRatedsMetadata>().unwrap();
+            assert_eq!(top_rated.map().get(&42), Some(&id_a));
+        }
+
+        // Entry B: small, fast. Also covers edge 42.
+        // penalty = as_millis(500us) * 50 bytes = 0 (sub-ms truncates to 0; lower → wins)
+        let mut tc_b = Testcase::new(BytesInput::new(vec![0u8; 50]));
+        tc_b.set_exec_time(Duration::from_micros(500));
+        let mut meta_b = SchedulerTestcaseMetadata::new(1);
+        meta_b.set_bitmap_size(1);
+        meta_b.set_cycle_and_time((Duration::from_micros(500), 1));
+        tc_b.add_metadata(meta_b);
+        tc_b.add_metadata(MapIndexesMetadata::new(vec![42]));
+        let id_b = state.corpus_mut().add(tc_b).unwrap();
+        scheduler.on_add(&mut state, id_b).unwrap();
+
+        // Entry B should now own edge 42 (lower penalty).
+        {
+            let top_rated = state.metadata::<TopRatedsMetadata>().unwrap();
+            assert_eq!(
+                top_rated.map().get(&42),
+                Some(&id_b),
+                "smaller/faster entry B should displace entry A for edge 42"
+            );
+        }
+    }
+
+    #[test]
+    fn test_seeds_have_empty_map_indexes_metadata() {
+        // Task 3.5: Seeds have empty MapIndexesMetadata, on_add succeeds,
+        // and TopRatedsMetadata is not modified.
+        let (map_ptr, _map) = make_coverage_map(256);
+        let (mut state, _feedback, _objective) = make_state_and_feedback(map_ptr, _map.len());
+        let mut scheduler = make_scheduler(map_ptr, _map.len());
+
+        // TopRatedsMetadata should be empty initially.
+        {
+            let top_rated = state.metadata::<TopRatedsMetadata>().unwrap();
+            assert!(top_rated.map().is_empty());
+        }
+
+        // Add 3 seeds.
+        for seed_data in [b"hello" as &[u8], b"world", b"test"] {
+            let tc = make_seed_testcase(seed_data);
+            let id = state.corpus_mut().add(tc).unwrap();
+            // on_add should succeed without error.
+            scheduler.on_add(&mut state, id).unwrap();
+        }
+
+        // TopRatedsMetadata should STILL be empty — seeds have no edges.
+        {
+            let top_rated = state.metadata::<TopRatedsMetadata>().unwrap();
+            assert!(
+                top_rated.map().is_empty(),
+                "TopRatedsMetadata should not be modified by seeds with empty MapIndexesMetadata"
+            );
+        }
+    }
+
+    #[test]
+    fn test_calibration_on_replace_retains_edges() {
+        // Spec coverage: corpus-minimizer/spec.md lines 74-105.
+        // Scenarios: "Calibrated entry retains existing edges" and
+        // "Future entries compare using calibrated penalties".
+        let (map_ptr, _map) = make_coverage_map(256);
+        let (mut state, _feedback, _objective) = make_state_and_feedback(map_ptr, _map.len());
+        let mut scheduler = make_scheduler(map_ptr, _map.len());
+
+        // Add a seed (required by the scheduler).
+        let tc = make_seed_testcase(b"seed");
+        let seed_id = state.corpus_mut().add(tc).unwrap();
+        scheduler.on_add(&mut state, seed_id).unwrap();
+
+        // Add entry A covering edges {10, 20}.
+        // LenTimeMulTestcasePenalty: exec_time.as_millis() * input_len = 1 * 10 = 10
+        let mut tc_a = Testcase::new(BytesInput::new(vec![0u8; 10]));
+        tc_a.set_exec_time(Duration::from_millis(1));
+        let mut sched_meta_a = SchedulerTestcaseMetadata::new(1);
+        sched_meta_a.set_bitmap_size(2);
+        sched_meta_a.set_cycle_and_time((Duration::from_millis(1), 1));
+        tc_a.add_metadata(sched_meta_a);
+        tc_a.add_metadata(MapIndexesMetadata::new(vec![10, 20]));
+        let id_a = state.corpus_mut().add(tc_a).unwrap();
+        scheduler.on_add(&mut state, id_a).unwrap();
+
+        // Verify A owns edges {10, 20}.
+        {
+            let top_rated = state.metadata::<TopRatedsMetadata>().unwrap();
+            assert_eq!(top_rated.map().get(&10), Some(&id_a));
+            assert_eq!(top_rated.map().get(&20), Some(&id_a));
+        }
+
+        // --- Scenario 1: self-comparison shortcut in on_replace ---
+        // Worsen A's exec_time to 5ms → penalty becomes 5 * 10 = 50.
+        // on_replace should retain A's edges unconditionally (self-check shortcut).
+        let prev_tc = {
+            let tc = state.corpus().get(id_a).unwrap().borrow();
+            tc.clone()
+        };
+        {
+            let mut tc = state.corpus().get(id_a).unwrap().borrow_mut();
+            tc.set_exec_time(Duration::from_millis(5));
+            tc.metadata_mut::<SchedulerTestcaseMetadata>()
+                .expect("SchedulerTestcaseMetadata should be present")
+                .set_cycle_and_time((Duration::from_millis(5), 1));
+        }
+        scheduler.on_replace(&mut state, id_a, &prev_tc).unwrap();
+
+        // A should still own edges {10, 20} after on_replace (self-comparison retains).
+        {
+            let top_rated = state.metadata::<TopRatedsMetadata>().unwrap();
+            assert_eq!(
+                top_rated.map().get(&10),
+                Some(&id_a),
+                "A should retain edge 10 after on_replace (self-comparison shortcut)"
+            );
+            assert_eq!(
+                top_rated.map().get(&20),
+                Some(&id_a),
+                "A should retain edge 20 after on_replace (self-comparison shortcut)"
+            );
+        }
+
+        // --- Scenario 2: displacement uses calibrated penalty ---
+        // Add entry C covering edge {10} only.
+        // penalty = 2ms * 10 bytes = 20 (lower than A's calibrated 50).
+        let mut tc_c = Testcase::new(BytesInput::new(vec![0u8; 10]));
+        tc_c.set_exec_time(Duration::from_millis(2));
+        let mut sched_meta_c = SchedulerTestcaseMetadata::new(1);
+        sched_meta_c.set_bitmap_size(1);
+        sched_meta_c.set_cycle_and_time((Duration::from_millis(2), 1));
+        tc_c.add_metadata(sched_meta_c);
+        tc_c.add_metadata(MapIndexesMetadata::new(vec![10]));
+        let id_c = state.corpus_mut().add(tc_c).unwrap();
+        scheduler.on_add(&mut state, id_c).unwrap();
+
+        // C (penalty 20) should displace A (calibrated penalty 50) for edge 10.
+        // A should retain edge 20 (C doesn't cover it).
+        {
+            let top_rated = state.metadata::<TopRatedsMetadata>().unwrap();
+            assert_eq!(
+                top_rated.map().get(&10),
+                Some(&id_c),
+                "C (penalty 20) should displace A (penalty 50) for edge 10"
+            );
+            assert_eq!(
+                top_rated.map().get(&20),
+                Some(&id_a),
+                "A should retain edge 20 (C doesn't cover it)"
+            );
+        }
+    }
+
+    #[test]
+    fn test_entry_loses_favored_status_when_displaced() {
+        // Spec coverage: corpus-minimizer/spec.md
+        // Scenario: "Displaced entry loses edge ownership but retains favored marker"
+        // Entry A is best for edge 10 (its only edge). Entry B displaces A.
+        // Verifies TopRatedsMetadata ownership transfers and B gets IsFavoredMetadata.
+        // Per spec, A's stale IsFavoredMetadata is not removed (inherited LibAFL behavior).
+        use libafl::schedulers::minimizer::IsFavoredMetadata;
+
+        let (map_ptr, _map) = make_coverage_map(256);
+        let (mut state, _feedback, _objective) = make_state_and_feedback(map_ptr, _map.len());
+        let mut scheduler = make_scheduler(map_ptr, _map.len());
+
+        // Add a seed.
+        let tc = make_seed_testcase(b"seed");
+        let seed_id = state.corpus_mut().add(tc).unwrap();
+        scheduler.on_add(&mut state, seed_id).unwrap();
+
+        // Add entry A covering edge {10} only.
+        // penalty = 1ms * 10 bytes = 10
+        let mut tc_a = Testcase::new(BytesInput::new(vec![0u8; 10]));
+        tc_a.set_exec_time(Duration::from_millis(1));
+        let mut sched_meta_a = SchedulerTestcaseMetadata::new(1);
+        sched_meta_a.set_bitmap_size(1);
+        sched_meta_a.set_cycle_and_time((Duration::from_millis(1), 1));
+        tc_a.add_metadata(sched_meta_a);
+        tc_a.add_metadata(MapIndexesMetadata::new(vec![10]));
+        let id_a = state.corpus_mut().add(tc_a).unwrap();
+        scheduler.on_add(&mut state, id_a).unwrap();
+
+        // Trigger cull via next() — A should be favored (best for edge 10).
+        let _ = scheduler.next(&mut state).unwrap();
+        {
+            let tc = state.corpus().get(id_a).unwrap().borrow();
+            assert!(
+                tc.metadata::<IsFavoredMetadata>().is_ok(),
+                "A should be favored before displacement (best for edge 10)"
+            );
+        }
+
+        // Add entry B covering edge {10} with lower penalty.
+        // penalty = 1ms * 5 bytes = 5 (lower than A's 10)
+        let mut tc_b = Testcase::new(BytesInput::new(vec![0u8; 5]));
+        tc_b.set_exec_time(Duration::from_millis(1));
+        let mut sched_meta_b = SchedulerTestcaseMetadata::new(1);
+        sched_meta_b.set_bitmap_size(1);
+        sched_meta_b.set_cycle_and_time((Duration::from_millis(1), 1));
+        tc_b.add_metadata(sched_meta_b);
+        tc_b.add_metadata(MapIndexesMetadata::new(vec![10]));
+        let id_b = state.corpus_mut().add(tc_b).unwrap();
+        scheduler.on_add(&mut state, id_b).unwrap();
+
+        // B should now own edge 10 in TopRatedsMetadata (displacement happened in on_add).
+        {
+            let top_rated = state.metadata::<TopRatedsMetadata>().unwrap();
+            assert_eq!(
+                top_rated.map().get(&10),
+                Some(&id_b),
+                "B (penalty 5) should displace A (penalty 10) for edge 10"
+            );
+        }
+
+        // A should not own ANY edge in TopRatedsMetadata (edge 10 was its only edge).
+        {
+            let top_rated = state.metadata::<TopRatedsMetadata>().unwrap();
+            assert!(
+                !top_rated.map().values().any(|id| *id == id_a),
+                "A should not own any edge after displacement"
+            );
+        }
+
+        // Trigger cull via next() to refresh IsFavoredMetadata.
+        let _ = scheduler.next(&mut state).unwrap();
+
+        // B should be favored (cull marks entries in TopRatedsMetadata).
+        {
+            let tc = state.corpus().get(id_b).unwrap().borrow();
+            assert!(
+                tc.metadata::<IsFavoredMetadata>().is_ok(),
+                "B should be favored (now best for edge 10)"
+            );
+        }
+    }
+
+    #[test]
+    fn test_calibration_on_replace_gains_new_edges() {
+        // Spec coverage: corpus-minimizer/spec.md lines 92-98.
+        // Scenario: "Calibrated entry gains new edges with improved penalty"
+        // A covers {10, 20, 30} but only owns {20, 30} (B owns 10 with lower penalty).
+        // After calibration improves A's exec_time, on_replace makes A displace B for edge 10.
+        let (map_ptr, _map) = make_coverage_map(256);
+        let (mut state, _feedback, _objective) = make_state_and_feedback(map_ptr, _map.len());
+        let mut scheduler = make_scheduler(map_ptr, _map.len());
+
+        // Add a seed.
+        let tc = make_seed_testcase(b"seed");
+        let seed_id = state.corpus_mut().add(tc).unwrap();
+        scheduler.on_add(&mut state, seed_id).unwrap();
+
+        // Add entry B covering edge {10} only.
+        // penalty = 2ms * 10 bytes = 20
+        let mut tc_b = Testcase::new(BytesInput::new(vec![0u8; 10]));
+        tc_b.set_exec_time(Duration::from_millis(2));
+        let mut sched_meta_b = SchedulerTestcaseMetadata::new(1);
+        sched_meta_b.set_bitmap_size(1);
+        sched_meta_b.set_cycle_and_time((Duration::from_millis(2), 1));
+        tc_b.add_metadata(sched_meta_b);
+        tc_b.add_metadata(MapIndexesMetadata::new(vec![10]));
+        let id_b = state.corpus_mut().add(tc_b).unwrap();
+        scheduler.on_add(&mut state, id_b).unwrap();
+
+        // Add entry A covering edges {10, 20, 30}.
+        // penalty = 3ms * 10 bytes = 30 (higher than B's 20 for edge 10)
+        let mut tc_a = Testcase::new(BytesInput::new(vec![0u8; 10]));
+        tc_a.set_exec_time(Duration::from_millis(3));
+        let mut sched_meta_a = SchedulerTestcaseMetadata::new(1);
+        sched_meta_a.set_bitmap_size(3);
+        sched_meta_a.set_cycle_and_time((Duration::from_millis(3), 1));
+        tc_a.add_metadata(sched_meta_a);
+        tc_a.add_metadata(MapIndexesMetadata::new(vec![10, 20, 30]));
+        let id_a = state.corpus_mut().add(tc_a).unwrap();
+        scheduler.on_add(&mut state, id_a).unwrap();
+
+        // Verify initial ownership: B owns edge 10, A owns edges 20 and 30.
+        {
+            let top_rated = state.metadata::<TopRatedsMetadata>().unwrap();
+            assert_eq!(
+                top_rated.map().get(&10),
+                Some(&id_b),
+                "B should own edge 10 initially (penalty 20 < A's 30)"
+            );
+            assert_eq!(
+                top_rated.map().get(&20),
+                Some(&id_a),
+                "A should own edge 20 (first and only entry for it)"
+            );
+            assert_eq!(
+                top_rated.map().get(&30),
+                Some(&id_a),
+                "A should own edge 30 (first and only entry for it)"
+            );
+        }
+
+        // Simulate calibration: clone A as prev_tc, then improve A's exec_time.
+        let prev_tc = {
+            let tc = state.corpus().get(id_a).unwrap().borrow();
+            tc.clone()
+        };
+
+        // Improve A's exec_time from 3ms to 1ms → new penalty = 1ms * 10 bytes = 10.
+        {
+            let mut tc = state.corpus().get(id_a).unwrap().borrow_mut();
+            tc.set_exec_time(Duration::from_millis(1));
+            tc.metadata_mut::<SchedulerTestcaseMetadata>()
+                .expect("SchedulerTestcaseMetadata should be present")
+                .set_cycle_and_time((Duration::from_millis(1), 1));
+        }
+
+        // Call on_replace to re-evaluate A's edges with the calibrated penalty.
+        scheduler.on_replace(&mut state, id_a, &prev_tc).unwrap();
+
+        // A (penalty 10) should now displace B (penalty 20) for edge 10.
+        {
+            let top_rated = state.metadata::<TopRatedsMetadata>().unwrap();
+            assert_eq!(
+                top_rated.map().get(&10),
+                Some(&id_a),
+                "A should now own edge 10 after calibration (penalty 10 < B's 20)"
+            );
+            assert_eq!(
+                top_rated.map().get(&20),
+                Some(&id_a),
+                "A should still own edge 20"
+            );
+            assert_eq!(
+                top_rated.map().get(&30),
+                Some(&id_a),
+                "A should still own edge 30"
+            );
+        }
+
+        // Verify B no longer owns edge 10.
+        {
+            let top_rated = state.metadata::<TopRatedsMetadata>().unwrap();
+            assert_ne!(
+                top_rated.map().get(&10),
+                Some(&id_b),
+                "B should no longer own edge 10 after A's calibration"
+            );
+        }
     }
 }
