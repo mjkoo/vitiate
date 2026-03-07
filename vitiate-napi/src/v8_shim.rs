@@ -11,9 +11,9 @@ const _: () = assert!(size_of::<AtomicBool>() == 1);
 
 /// Result from `vitiate_run_target` in C++.
 #[repr(C)]
-pub struct VitiateRunTargetResult {
-    pub exit_kind: i32,
-    pub value: napi::sys::napi_value,
+pub(crate) struct VitiateRunTargetResult {
+    pub(crate) exit_kind: i32,
+    pub(crate) value: napi::sys::napi_value,
 }
 
 unsafe extern "C" {
@@ -31,7 +31,7 @@ unsafe extern "C" {
 
 /// Initialize the V8 isolate cache. Must be called from the main thread.
 /// Returns `true` if the isolate was cached successfully.
-pub fn v8_init() -> bool {
+pub(crate) fn v8_init() -> bool {
     // SAFETY: Called once from the main thread during Watchdog construction.
     // The C++ shim caches `v8::Isolate::GetCurrent()` which is valid on the
     // main thread where Node.js runs.
@@ -41,7 +41,7 @@ pub fn v8_init() -> bool {
 /// Call `v8::Isolate::TerminateExecution()` on the cached isolate.
 /// Thread-safe — designed to be called from the watchdog thread.
 /// Returns `true` if the call succeeded.
-pub fn v8_terminate() -> bool {
+pub(crate) fn v8_terminate() -> bool {
     // SAFETY: `TerminateExecution` is documented as thread-safe in V8.
     // The cached isolate pointer was set by `v8_init` on the main thread.
     unsafe { vitiate_v8_terminate() == 1 }
@@ -50,7 +50,7 @@ pub fn v8_terminate() -> bool {
 /// Call `v8::Isolate::CancelTerminateExecution()` on the cached isolate.
 /// Called from the main thread to clear a pending termination flag.
 /// Returns `true` if the call succeeded.
-pub fn v8_cancel_terminate() -> bool {
+pub(crate) fn v8_cancel_terminate() -> bool {
     // SAFETY: Called from the main thread during `disarm()`. The isolate
     // pointer is valid for the lifetime of the Node.js process.
     unsafe { vitiate_v8_cancel_terminate() == 1 }
@@ -59,7 +59,7 @@ pub fn v8_cancel_terminate() -> bool {
 /// Run the fuzz target via the C++ shim, which handles V8 termination at
 /// the NAPI C level. Returns `None` if the shim is not initialized (e.g.,
 /// during `cargo test` when V8/NAPI symbols can't be resolved).
-pub fn run_target_ffi(
+pub(crate) fn run_target_ffi(
     env: napi::sys::napi_env,
     target: napi::sys::napi_value,
     input: napi::sys::napi_value,

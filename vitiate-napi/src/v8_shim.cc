@@ -21,6 +21,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #ifdef _WIN32
 #include <windows.h>
@@ -242,7 +243,7 @@ int vitiate_v8_terminate() {
 // thread during disarm() to clear a pending termination flag. Returns 1 on
 // success, 0 if no isolate.
 int vitiate_v8_cancel_terminate() {
-    if (cached_isolate == nullptr || fn_cancel_terminate == nullptr) {
+    if (!init_published.load(std::memory_order_acquire)) {
         return 0;
     }
     fn_cancel_terminate(cached_isolate);
@@ -265,8 +266,8 @@ int vitiate_run_target(
     const std::atomic<bool>* fired,
     VitiateRunTargetResult* out
 ) {
-    // If NAPI symbols weren't resolved, signal caller to use fallback
-    if (fn_napi_call_function == nullptr) {
+    // If shim wasn't fully initialized, signal caller to use fallback
+    if (!init_published.load(std::memory_order_acquire)) {
         return 0;
     }
 
@@ -357,10 +358,24 @@ int vitiate_run_target(
         }
     }
 
-    // Unexpected NAPI error — return as crash with null error
+    // Unexpected NAPI error — return as crash with diagnostic error
     if (set_prop_u32(env, obj, "exitKind", 1) != vitiate_napi_ok) {
         return 0;
     }
+
+    // Best-effort: attach an error message with the NAPI status code
+    char msg_buf[64];
+    snprintf(msg_buf, sizeof(msg_buf),
+             "unexpected NAPI status from call_function: %d",
+             static_cast<int>(status));
+    napi_value msg = nullptr;
+    if (fn_napi_create_string_utf8(env, msg_buf, strlen(msg_buf), &msg) == vitiate_napi_ok) {
+        napi_value error = nullptr;
+        if (fn_napi_create_error(env, nullptr, msg, &error) == vitiate_napi_ok) {
+            set_prop_value(env, obj, "error", error);
+        }
+    }
+
     out->exit_kind = 1;
     out->value = obj;
     return 1;

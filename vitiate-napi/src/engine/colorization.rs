@@ -1,3 +1,4 @@
+use std::collections::BinaryHeap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
@@ -50,7 +51,8 @@ pub(super) fn type_replace(input: &[u8], rand: &mut impl Rand) -> Vec<u8> {
     ) -> u8 {
         // Pick from [0, class_size - 1), then skip past `original`.
         let offset_of_original = original - range_start;
-        // SAFETY-INVARIANT: class_size >= 2, so class_size - 1 >= 1
+        // Panic justification: class_size >= 2 (enforced by all call sites),
+        // so class_size - 1 >= 1, making NonZero::new always Some.
         let r = rand.below(core::num::NonZero::new(usize::from(class_size - 1)).unwrap()) as u8;
         if r >= offset_of_original {
             range_start + r + 1
@@ -144,10 +146,11 @@ fn build_colorized_input(
 fn group_cmplog_by_site(
     entries: &[crate::cmplog::CmpLogEntry],
 ) -> hashbrown::HashMap<usize, Vec<libafl::observers::cmp::CmpValues>> {
-    let mut map = hashbrown::HashMap::new();
+    let mut map: hashbrown::HashMap<usize, Vec<libafl::observers::cmp::CmpValues>> =
+        hashbrown::HashMap::new();
     for (cmp_values, site_id, _operator) in entries {
         map.entry(*site_id as usize)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(cmp_values.clone());
     }
     map
@@ -184,7 +187,7 @@ impl Fuzzer {
             original_hash: 0, // Set after first advance (baseline execution)
             original_input: input_bytes.clone(),
             changed_input,
-            pending_ranges: Vec::new(), // Populated after baseline hash
+            pending_ranges: BinaryHeap::new(), // Populated after baseline hash
             taint_ranges: Vec::new(),
             executions: 0,
             max_executions,
@@ -266,12 +269,14 @@ impl Fuzzer {
             }
 
             // Store TaintMetadata now that dual trace succeeded.
-            let merged = merge_ranges(taint_ranges);
-            let colorized_input = build_colorized_input(&original_input, &changed_input, &merged);
-            let taint_metadata = TaintMetadata::new(colorized_input, merged);
+            // taint_ranges were already merged in transition_to_dual_trace.
+            let colorized_input =
+                build_colorized_input(&original_input, &changed_input, &taint_ranges);
+            let taint_metadata = TaintMetadata::new(colorized_input, taint_ranges);
             self.state.metadata_map_mut().insert(taint_metadata);
 
-            // Zero the coverage map.
+            // SAFETY: map_ptr is a valid pointer to map_len bytes of shared
+            // coverage memory, initialized during Fuzzer construction.
             unsafe {
                 std::ptr::write_bytes(self.map_ptr, 0, self.map_len);
             }
@@ -284,7 +289,8 @@ impl Fuzzer {
         // Drain and discard CmpLog (stage data is noise, except for dual trace).
         let _ = crate::cmplog::drain();
 
-        // Read coverage map.
+        // SAFETY: map_ptr is a valid pointer to map_len bytes of shared
+        // coverage memory, initialized during Fuzzer construction.
         let map = unsafe { std::slice::from_raw_parts(self.map_ptr, self.map_len) };
 
         if executions == 1 {
@@ -292,18 +298,20 @@ impl Fuzzer {
             // Compute original_hash from the coverage map.
             original_hash = coverage_hash(map);
 
-            // Zero the coverage map.
+            // SAFETY: map_ptr is a valid pointer to map_len bytes of shared
+            // coverage memory, initialized during Fuzzer construction.
             unsafe {
                 std::ptr::write_bytes(self.map_ptr, 0, self.map_len);
             }
 
             // Initialize pending_ranges with the full input range.
             if !original_input.is_empty() {
-                pending_ranges.push((0, original_input.len()));
+                let len = original_input.len();
+                pending_ranges.push((len, 0, len));
             }
 
             // Pop the next pending range and build candidate.
-            if let Some((start, end)) = pending_ranges.pop() {
+            if let Some((_size, start, end)) = pending_ranges.pop() {
                 let mut candidate = original_input.clone();
                 candidate[start..end].copy_from_slice(&changed_input[start..end]);
 
@@ -338,7 +346,8 @@ impl Fuzzer {
         // Subsequent advances: process the binary search result.
         let current_hash = coverage_hash(map);
 
-        // Zero the coverage map.
+        // SAFETY: map_ptr is a valid pointer to map_len bytes of shared
+        // coverage memory, initialized during Fuzzer construction.
         unsafe {
             std::ptr::write_bytes(self.map_ptr, 0, self.map_len);
         }
@@ -353,8 +362,8 @@ impl Fuzzer {
                 let len = end - start;
                 if len > 1 {
                     let mid = start + len / 2;
-                    pending_ranges.push((start, mid));
-                    pending_ranges.push((mid, end));
+                    pending_ranges.push((mid - start, start, mid));
+                    pending_ranges.push((end - mid, mid, end));
                 }
                 // Ranges of length 1 that differ are discarded (byte is not free).
             }
@@ -373,9 +382,9 @@ impl Fuzzer {
             );
         }
 
-        // Pop the next pending range (largest first — sort by size descending).
-        pending_ranges.sort_by(|a, b| (a.1 - a.0).cmp(&(b.1 - b.0)));
-        let (start, end) = pending_ranges.pop().unwrap();
+        // Pop the next pending range (largest first via max-heap).
+        // Panic justification: guarded by the is_empty() check above.
+        let (_size, start, end) = pending_ranges.pop().unwrap();
 
         // Build candidate: start from original, apply changed bytes for this range.
         let mut candidate = original_input.clone();
@@ -409,8 +418,8 @@ impl Fuzzer {
         executions: usize,
         max_executions: usize,
     ) -> Result<Option<Buffer>> {
-        // Build the fully-colorized input for dual trace.
-        let merged = merge_ranges(taint_ranges.clone());
+        // Merge taint ranges now to avoid recomputing in the dual trace handler.
+        let merged = merge_ranges(taint_ranges);
         let colorized_input = build_colorized_input(&original_input, &changed_input, &merged);
 
         self.last_stage_input = Some(colorized_input.clone());
@@ -419,8 +428,8 @@ impl Fuzzer {
             original_hash,
             original_input,
             changed_input,
-            pending_ranges: Vec::new(),
-            taint_ranges,
+            pending_ranges: BinaryHeap::new(),
+            taint_ranges: merged,
             executions,
             max_executions,
             awaiting_dual_trace: true,
@@ -471,8 +480,7 @@ impl Fuzzer {
         }
 
         // Yield the first candidate.
-        let first: Vec<u8> = candidates[0].clone().into();
-        let mut bytes = first;
+        let mut bytes: Vec<u8> = candidates[0].clone().into();
         bytes.truncate(self.max_input_len as usize);
 
         self.last_stage_input = Some(bytes.clone());
@@ -534,8 +542,7 @@ impl Fuzzer {
         }
 
         // Yield the next candidate.
-        let next: Vec<u8> = candidates[next_index].clone().into();
-        let mut bytes = next;
+        let mut bytes: Vec<u8> = candidates[next_index].clone().into();
         bytes.truncate(self.max_input_len as usize);
 
         self.last_stage_input = Some(bytes.clone());

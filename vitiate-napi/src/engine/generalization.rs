@@ -6,10 +6,23 @@ use libafl::inputs::GeneralizedInputMetadata;
 use libafl::state::{HasCorpus, HasExecutions};
 use napi::bindgen_prelude::*;
 
-use super::{
-    Fuzzer, GENERALIZATION_BRACKETS, GENERALIZATION_DELIMITERS, GENERALIZATION_OFFSETS,
-    MAX_GENERALIZED_LEN, StageState,
-};
+use super::{Fuzzer, MAX_GENERALIZED_LEN, StageState};
+
+/// Offset values for the offset-based gap-finding passes.
+const GENERALIZATION_OFFSETS: [usize; 5] = [255, 127, 63, 31, 0];
+
+/// Delimiter characters for delimiter-based gap-finding passes.
+const GENERALIZATION_DELIMITERS: [u8; 7] = [b'.', b';', b',', b'\n', b'\r', b'#', b' '];
+
+/// Bracket pairs for bracket-based gap-finding passes: (open, close).
+const GENERALIZATION_BRACKETS: [(u8, u8); 6] = [
+    (b'(', b')'),
+    (b'[', b']'),
+    (b'{', b'}'),
+    (b'<', b'>'),
+    (b'\'', b'\''),
+    (b'"', b'"'),
+];
 
 /// Phases within the generalization algorithm. Each phase corresponds to a
 /// type of gap-finding pass that ablates portions of the input and checks
@@ -38,54 +51,52 @@ pub(super) enum GeneralizationPhase {
     },
 }
 
+/// Build a candidate by concatenating structural bytes around a gap.
+pub(super) fn build_generalization_candidate(
+    payload: &[Option<u8>],
+    start: usize,
+    end: usize,
+) -> Vec<u8> {
+    debug_assert!(
+        start <= end && end <= payload.len(),
+        "build_generalization_candidate: invalid range {start}..{end} for payload len {}",
+        payload.len()
+    );
+    let mut candidate = Vec::new();
+    for &slot in &payload[..start] {
+        if let Some(b) = slot {
+            candidate.push(b);
+        }
+    }
+    for &slot in &payload[end..] {
+        if let Some(b) = slot {
+            candidate.push(b);
+        }
+    }
+    candidate
+}
+
+/// Remove consecutive `None` entries from the payload, leaving only a single
+/// `None` to represent each contiguous gap region. O(n) via `retain`.
+pub(super) fn trim_payload(payload: &mut Vec<Option<u8>>) {
+    let mut previous_was_none = false;
+    payload.retain(|item| {
+        let dominated = item.is_none() && previous_was_none;
+        previous_was_none = item.is_none();
+        !dominated
+    });
+}
+
+/// Mark a range of payload slots as gaps (`None`) if novelties survived.
+fn mark_gaps(payload: &mut [Option<u8>], range: Option<(usize, usize)>, novelties_survived: bool) {
+    if novelties_survived && let Some((start, end)) = range {
+        for slot in payload.iter_mut().take(end).skip(start) {
+            *slot = None;
+        }
+    }
+}
+
 impl Fuzzer {
-    /// Build a candidate by concatenating structural bytes around a gap.
-    pub(super) fn build_generalization_candidate(
-        payload: &[Option<u8>],
-        start: usize,
-        end: usize,
-    ) -> Vec<u8> {
-        debug_assert!(
-            start <= end && end <= payload.len(),
-            "build_generalization_candidate: invalid range {start}..{end} for payload len {}",
-            payload.len()
-        );
-        let mut candidate = Vec::new();
-        for &slot in &payload[..start] {
-            if let Some(b) = slot {
-                candidate.push(b);
-            }
-        }
-        for &slot in &payload[end..] {
-            if let Some(b) = slot {
-                candidate.push(b);
-            }
-        }
-        candidate
-    }
-
-    /// Remove consecutive `None` entries from the payload, leaving only a single
-    /// `None` to represent each contiguous gap region. O(n) via `retain`.
-    pub(super) fn trim_payload(payload: &mut Vec<Option<u8>>) {
-        let mut previous_was_none = false;
-        payload.retain(|item| {
-            let dominated = item.is_none() && previous_was_none;
-            previous_was_none = item.is_none();
-            !dominated
-        });
-    }
-
-    /// Convert a payload (`Vec<Option<u8>>`) to `GeneralizedInputMetadata`.
-    ///
-    /// Rules:
-    /// - Contiguous `Some(byte)` runs become `GeneralizedItem::Bytes(Vec<u8>)`.
-    /// - Each `None` becomes `GeneralizedItem::Gap`.
-    /// - Leading `Gap` is prepended if first element is not `None`.
-    /// - Trailing `Gap` is appended if last element is not `None`.
-    pub(super) fn payload_to_generalized(payload: &[Option<u8>]) -> GeneralizedInputMetadata {
-        GeneralizedInputMetadata::generalized_from_options(payload)
-    }
-
     /// Check whether all novelty indices are nonzero in the current coverage map.
     pub(super) fn check_novelties_survived(&self, novelties: &[usize]) -> bool {
         // SAFETY: map_ptr is valid for map_len bytes, backed by _coverage_map Buffer.
@@ -143,8 +154,7 @@ impl Fuzzer {
         let payload: Vec<Option<u8>> = input_bytes.iter().map(|&b| Some(b)).collect();
 
         // First candidate is the original input (verification phase).
-        let candidate = input_bytes.clone();
-        self.last_stage_input = Some(candidate.clone());
+        self.last_stage_input = Some(input_bytes.clone());
 
         self.stage_state = StageState::Generalization {
             corpus_id,
@@ -154,7 +164,7 @@ impl Fuzzer {
             candidate_range: None,
         };
 
-        Ok(Some(Buffer::from(candidate)))
+        Ok(Some(Buffer::from(input_bytes)))
     }
 
     /// Advance the generalization stage after a target execution.
@@ -222,21 +232,14 @@ impl Fuzzer {
                 self.generate_next_candidate(corpus_id, novelties, payload, next_phase)
             }
             GeneralizationPhase::Offset { level, _pos: _ } => {
-                // Process result of previous candidate.
-                if novelties_survived && let Some((start, end)) = candidate_range {
-                    for i in start..end {
-                        if i < payload.len() {
-                            payload[i] = None;
-                        }
-                    }
-                }
+                mark_gaps(&mut payload, candidate_range, novelties_survived);
 
                 // Advance position.
                 let offset = GENERALIZATION_OFFSETS[level as usize];
                 let next_pos = candidate_range.map_or(0, |(_, e)| e);
                 if next_pos >= payload.len() {
                     // Pass complete — trim and move to next level or delimiter phase.
-                    Self::trim_payload(&mut payload);
+                    trim_payload(&mut payload);
                     let next_phase = if (level + 1) < GENERALIZATION_OFFSETS.len() as u8 {
                         GeneralizationPhase::Offset {
                             level: level + 1,
@@ -251,7 +254,7 @@ impl Fuzzer {
                 // Compute next range.
                 let start = next_pos;
                 let end = std::cmp::min(start + 1 + offset, payload.len());
-                let candidate = Self::build_generalization_candidate(&payload, start, end);
+                let candidate = build_generalization_candidate(&payload, start, end);
                 self.last_stage_input = Some(candidate.clone());
 
                 self.stage_state = StageState::Generalization {
@@ -265,19 +268,12 @@ impl Fuzzer {
                 Ok(Some(Buffer::from(candidate)))
             }
             GeneralizationPhase::Delimiter { index, _pos: _ } => {
-                // Process result of previous candidate.
-                if novelties_survived && let Some((start, end)) = candidate_range {
-                    for i in start..end {
-                        if i < payload.len() {
-                            payload[i] = None;
-                        }
-                    }
-                }
+                mark_gaps(&mut payload, candidate_range, novelties_survived);
 
                 let next_pos = candidate_range.map_or(0, |(_, e)| e);
                 if next_pos >= payload.len() {
                     // Pass complete — trim and move to next delimiter or bracket phase.
-                    Self::trim_payload(&mut payload);
+                    trim_payload(&mut payload);
                     let next_phase = if (index + 1) < GENERALIZATION_DELIMITERS.len() as u8 {
                         GeneralizationPhase::Delimiter {
                             index: index + 1,
@@ -306,7 +302,7 @@ impl Fuzzer {
                     None => payload.len(),
                 };
 
-                let candidate = Self::build_generalization_candidate(&payload, start, end);
+                let candidate = build_generalization_candidate(&payload, start, end);
                 self.last_stage_input = Some(candidate.clone());
 
                 self.stage_state = StageState::Generalization {
@@ -327,16 +323,7 @@ impl Fuzzer {
                 end: bracket_end,
                 endings,
             } => {
-                // Process result of previous candidate: mark gaps if survived.
-                if let Some((cr_start, cr_end)) = candidate_range
-                    && novelties_survived
-                {
-                    for i in cr_start..cr_end {
-                        if i < payload.len() {
-                            payload[i] = None;
-                        }
-                    }
-                }
+                mark_gaps(&mut payload, candidate_range, novelties_survived);
 
                 // After yielding a candidate, advance inner-loop state per LibAFL:
                 //   start = end (collapse inner window)
@@ -383,7 +370,7 @@ impl Fuzzer {
                         .advance_to_next_offset_or_delimiter(corpus_id, novelties, payload, level);
                 }
                 let end = std::cmp::min(start + 1 + offset, payload.len());
-                let candidate = Self::build_generalization_candidate(&payload, start, end);
+                let candidate = build_generalization_candidate(&payload, start, end);
                 self.last_stage_input = Some(candidate.clone());
 
                 self.stage_state = StageState::Generalization {
@@ -410,7 +397,7 @@ impl Fuzzer {
                     None => payload.len(),
                 };
 
-                let candidate = Self::build_generalization_candidate(&payload, start, end);
+                let candidate = build_generalization_candidate(&payload, start, end);
                 self.last_stage_input = Some(candidate.clone());
 
                 self.stage_state = StageState::Generalization {
@@ -446,7 +433,7 @@ impl Fuzzer {
         mut payload: Vec<Option<u8>>,
         current_level: u8,
     ) -> Result<Option<Buffer>> {
-        Self::trim_payload(&mut payload);
+        trim_payload(&mut payload);
         if (current_level + 1) < GENERALIZATION_OFFSETS.len() as u8 {
             self.generate_next_candidate(
                 corpus_id,
@@ -474,7 +461,7 @@ impl Fuzzer {
         mut payload: Vec<Option<u8>>,
         current_index: u8,
     ) -> Result<Option<Buffer>> {
-        Self::trim_payload(&mut payload);
+        trim_payload(&mut payload);
         if (current_index + 1) < GENERALIZATION_DELIMITERS.len() as u8 {
             self.generate_next_candidate(
                 corpus_id,
@@ -572,7 +559,7 @@ impl Fuzzer {
                 endings += 1;
                 // Found a closer — yield candidate from start..end (exclusive of endpoints
                 // to match LibAFL behavior: the opener and closer themselves are kept).
-                let candidate = Self::build_generalization_candidate(&payload, start + 1, end);
+                let candidate = build_generalization_candidate(&payload, start + 1, end);
                 self.last_stage_input = Some(candidate.clone());
 
                 self.stage_state = StageState::Generalization {
@@ -599,7 +586,7 @@ impl Fuzzer {
             // We found at least one closer — the outer loop advances past this opener.
             // The outer loop advances `index` by 1 per opener (not per backward-scan step
             // as in the spec). This may revisit positions but does not affect correctness.
-            Self::trim_payload(&mut payload);
+            trim_payload(&mut payload);
             self.find_next_bracket_opener(corpus_id, novelties, payload, pair_index, index + 1)
         } else {
             // No closer found at all for this opener — advance to next pair.
@@ -616,7 +603,7 @@ impl Fuzzer {
         mut payload: Vec<Option<u8>>,
         pair_index: u8,
     ) -> Result<Option<Buffer>> {
-        Self::trim_payload(&mut payload);
+        trim_payload(&mut payload);
         self.generate_next_candidate(
             corpus_id,
             novelties,
@@ -638,7 +625,7 @@ impl Fuzzer {
         corpus_id: CorpusId,
         payload: &[Option<u8>],
     ) -> Result<Option<Buffer>> {
-        let metadata = Self::payload_to_generalized(payload);
+        let metadata = GeneralizedInputMetadata::generalized_from_options(payload);
 
         let mut tc = self
             .state

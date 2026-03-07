@@ -48,10 +48,11 @@ const KNOWN_OPS: &[&str] = &["==", "!=", "<", ">", "<=", ">="];
 /// the JS source is only parsed and compiled once per operator.
 #[cfg_attr(test, allow(dead_code))]
 fn eval_comparison(env: &Env, left: Unknown, right: Unknown, op: &str) -> Result<bool> {
-    debug_assert!(
-        KNOWN_OPS.contains(&op),
-        "eval_comparison: unexpected operator: {op}"
-    );
+    if !KNOWN_OPS.contains(&op) {
+        return Err(Error::from_reason(format!(
+            "eval_comparison: unexpected operator: {op}"
+        )));
+    }
 
     // Retrieve (or create) the per-operator cache on globalThis.__vitiate_cmp_cache
     let cache_script = format!(

@@ -58,21 +58,21 @@ where
             return Ok(MutationResult::Skipped);
         }
 
-        // SAFETY of unwraps: cmps_len and input_len are checked > 0 above.
+        // SAFETY of unwrap: cmps_len is checked > 0 above.
         let idx = state
             .rand_mut()
             .below(core::num::NonZero::new(cmps_len).unwrap());
-        let off = state
-            .rand_mut()
-            .below(core::num::NonZero::new(input_len).unwrap());
-        // Pre-generate splice/overwrite coin flip while we have &mut state.
-        let use_splice = state.rand_mut().coinflip(0.5);
 
         let meta = state.metadata_map().get::<CmpValuesMetadata>().unwrap();
         let cmp_values = meta.list[idx].clone();
 
         match &cmp_values {
             CmpValues::Bytes(v) => {
+                // SAFETY of unwrap: input_len is checked > 0 above.
+                let off = state
+                    .rand_mut()
+                    .below(core::num::NonZero::new(input_len).unwrap());
+                let use_splice = state.rand_mut().coinflip(0.5);
                 let max_size = state.max_size();
                 self.mutate_bytes_splice(input, &v.0, &v.1, off, max_size, use_splice)
             }

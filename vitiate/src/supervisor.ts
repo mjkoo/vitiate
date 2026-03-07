@@ -30,6 +30,12 @@ export interface SupervisorOptions {
 
 export interface SupervisorResult {
   crashed: boolean;
+  /**
+   * Path to the crash/timeout artifact written by the parent from shmem.
+   * Only populated for signal-death and watchdog-timeout crashes (where the
+   * parent recovers the input). For JS-level crashes (exit code 1), the
+   * child writes the artifact directly and this field is undefined.
+   */
   crashArtifactPath?: string;
   signal?: string;
   exitCode?: number;
@@ -43,8 +49,12 @@ export function waitForChild(
   child: ChildProcess,
 ): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
   return new Promise((resolve, reject) => {
-    child.on("error", reject);
-    child.on("exit", (code, signal) => {
+    child.once("error", (err) => {
+      child.removeAllListeners("exit");
+      reject(err);
+    });
+    child.once("exit", (code, signal) => {
+      child.removeAllListeners("error");
       resolve({ code, signal });
     });
   });
@@ -77,7 +87,6 @@ export async function runSupervisor(
   process.on("SIGINT", sigintHandler);
 
   let respawnCount = 0;
-  let lastCrashArtifactPath: string | undefined;
 
   try {
     while (true) {
@@ -86,30 +95,30 @@ export async function runSupervisor(
       const { code, signal } = await waitForChild(child);
 
       if (sigintReceived) {
-        // Parent received SIGINT — exit cleanly
-        return { crashed: false, exitCode: code ?? 1 };
+        // Parent received SIGINT — exit cleanly (130 = conventional SIGINT exit)
+        return { crashed: false, exitCode: code ?? 130 };
       }
 
       if (signal !== null) {
         // Child was killed by a signal — native crash
         process.stderr.write(`vitiate: child killed by signal ${signal}\n`);
 
-        lastCrashArtifactPath = handleCrash(shmem, testDir, testName, "crash");
-        shmem.resetGeneration();
-
-        respawnCount++;
-        if (respawnCount >= maxRespawns) {
-          process.stderr.write(
-            `vitiate: respawn limit (${maxRespawns}) exceeded, giving up\n`,
-          );
+        const result = recoverAndRespawn(
+          shmem,
+          testDir,
+          testName,
+          "crash",
+          respawnCount,
+          maxRespawns,
+        );
+        if (result.limitReached) {
           return {
             crashed: true,
-            crashArtifactPath: lastCrashArtifactPath,
+            crashArtifactPath: result.crashArtifactPath,
             signal,
           };
         }
-
-        process.stderr.write("vitiate: respawning child to continue fuzzing\n");
+        respawnCount++;
         continue;
       }
 
@@ -128,27 +137,22 @@ export async function runSupervisor(
         // Watchdog timeout — attempt backup recovery from shmem
         process.stderr.write("vitiate: child exited with watchdog timeout\n");
 
-        lastCrashArtifactPath = handleCrash(
+        const result = recoverAndRespawn(
           shmem,
           testDir,
           testName,
           "timeout",
+          respawnCount,
+          maxRespawns,
         );
-        shmem.resetGeneration();
-
-        respawnCount++;
-        if (respawnCount >= maxRespawns) {
-          process.stderr.write(
-            `vitiate: respawn limit (${maxRespawns}) exceeded, giving up\n`,
-          );
+        if (result.limitReached) {
           return {
             crashed: true,
-            crashArtifactPath: lastCrashArtifactPath,
+            crashArtifactPath: result.crashArtifactPath,
             exitCode: WATCHDOG_EXIT_CODE,
           };
         }
-
-        process.stderr.write("vitiate: respawning child to continue fuzzing\n");
+        respawnCount++;
         continue;
       }
 
@@ -161,22 +165,34 @@ export async function runSupervisor(
 }
 
 /**
- * Read the stashed input from shmem and write an artifact if present.
- * Returns the artifact path if an artifact was written.
+ * Recover the crashing input from shmem, write an artifact, reset the
+ * generation counter, and check whether the respawn limit has been reached.
  */
-function handleCrash(
+function recoverAndRespawn(
   shmem: ShmemHandle,
   testDir: string,
   testName: string,
   kind: ArtifactKind,
-): string | undefined {
+  respawnCount: number,
+  maxRespawns: number,
+): { crashArtifactPath: string | undefined; limitReached: boolean } {
+  let crashArtifactPath: string | undefined;
   const input = shmem.readStashedInput();
   if (input.length > 0) {
-    const artifactPath = writeArtifact(testDir, testName, input, kind);
+    crashArtifactPath = writeArtifact(testDir, testName, input, kind);
     process.stderr.write(
-      `vitiate: ${kind} artifact written to ${artifactPath}\n`,
+      `vitiate: ${kind} artifact written to ${crashArtifactPath}\n`,
     );
-    return artifactPath;
   }
-  return undefined;
+  shmem.resetGeneration();
+
+  if (respawnCount + 1 >= maxRespawns) {
+    process.stderr.write(
+      `vitiate: respawn limit (${maxRespawns}) exceeded, giving up\n`,
+    );
+    return { crashArtifactPath, limitReached: true };
+  }
+
+  process.stderr.write("vitiate: respawning child to continue fuzzing\n");
+  return { crashArtifactPath, limitReached: false };
 }

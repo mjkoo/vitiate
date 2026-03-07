@@ -541,28 +541,6 @@ mod tests {
     }
 
     #[test]
-    fn magic_validation_accepts_correct_value() {
-        let mut buf = vec![0u8; shmem_size(4096)];
-        let base = buf.as_mut_ptr();
-        unsafe {
-            (base.add(MAGIC_OFFSET) as *mut u32).write(MAGIC);
-        }
-        let magic = unsafe { (base.add(MAGIC_OFFSET) as *const u32).read() };
-        assert_eq!(magic, MAGIC);
-    }
-
-    #[test]
-    fn magic_validation_rejects_wrong_value() {
-        let mut buf = vec![0u8; shmem_size(4096)];
-        let base = buf.as_mut_ptr();
-        unsafe {
-            (base.add(MAGIC_OFFSET) as *mut u32).write(0xDEADBEEF);
-        }
-        let magic = unsafe { (base.add(MAGIC_OFFSET) as *const u32).read() };
-        assert_ne!(magic, MAGIC);
-    }
-
-    #[test]
     fn large_input_stash_and_read() {
         let max_len = 8192;
         let (_buf, view) = make_test_view(max_len);

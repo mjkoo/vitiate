@@ -10,12 +10,15 @@ use libafl::observers::cmp::CmpValues;
 use libafl::state::{HasMaxSize, HasRand};
 use libafl_bolts::rands::{Rand, StdRand};
 
-/// Find a seed that produces the desired RNG sequence for I2SSpliceReplace::mutate().
+/// Find a seed that produces the desired RNG sequence for I2SSpliceReplace::mutate()
+/// when the selected entry is a `CmpValues::Bytes` variant.
 ///
-/// The mutate() method makes three RNG calls in order:
+/// The mutate() method makes these RNG calls in order for Bytes entries:
 /// 1. `below(cmps_len)` → entry index
 /// 2. `below(input_len)` → starting offset
 /// 3. `coinflip(0.5)` → splice (true) or overwrite (false)
+///
+/// For non-Bytes entries, only call 1 is made before delegating to the inner mutator.
 fn find_i2s_seed(
     cmps_len: usize,
     input_len: usize,
@@ -129,37 +132,44 @@ fn test_i2s_equal_length_always_overwrites() {
 fn test_i2s_non_bytes_delegates_to_inner() {
     use core::num::NonZero;
 
-    let mut seed = 0u64;
+    // Use only U32 entries so the inner I2SRandReplace can only apply U32 mutations.
+    // The outer mutate() draws one RNG value (idx), then delegates to the inner
+    // I2SRandReplace which draws its own idx and off. Find a seed where the inner
+    // mutator's off lands within the 4-byte input so it can find the match.
+    let entries = vec![CmpValues::U32((42, 99, false))];
+    let input_bytes = 42u32.to_ne_bytes().to_vec();
+
+    let mut seed = None;
     for s in 0u64..100_000 {
         let mut rng = StdRand::with_seed(s);
-        let idx = rng.below(NonZero::new(2).unwrap());
-        if idx == 0 {
-            seed = s;
+        // Outer mutate: draws idx (cmps_len=1, always 0).
+        let _outer_idx = rng.below(NonZero::new(1).unwrap());
+        // Inner I2SRandReplace::mutate: draws idx then off.
+        let _inner_idx = rng.below(NonZero::new(1).unwrap());
+        let inner_off = rng.below(NonZero::new(input_bytes.len()).unwrap());
+        // off must be 0 for a 4-byte U32 match in a 4-byte input.
+        if inner_off == 0 {
+            seed = Some(s);
             break;
         }
     }
+    let seed = seed.expect("no suitable seed found");
 
-    let entries = vec![
-        CmpValues::U32((42, 99, false)),
-        CmpValues::Bytes((make_cmplog_bytes(b"abc"), make_cmplog_bytes(b"xyz"))),
-    ];
-
-    let input_bytes = 42u32.to_ne_bytes().to_vec();
     let mut state = make_i2s_state(seed, entries, 4096);
-    let mut input = BytesInput::new(input_bytes.clone());
+    let mut input = BytesInput::new(input_bytes);
     let mut mutator = I2SSpliceReplace::new();
 
     let result = mutator.mutate(&mut state, &mut input).unwrap();
-    assert!(
-        result == MutationResult::Mutated || result == MutationResult::Skipped,
-        "non-Bytes entry should delegate to inner I2SRandReplace"
+    assert_eq!(
+        result,
+        MutationResult::Mutated,
+        "U32 entry should delegate to inner I2SRandReplace and mutate"
     );
 
-    let mutated = input.mutator_bytes();
-    assert!(
-        !mutated.windows(3).any(|w| w == b"xyz" || w == b"abc"),
-        "Bytes entry should not have been applied; \
-         the U32 path (delegation) should have been taken instead"
+    assert_eq!(
+        input.mutator_bytes(),
+        &99u32.to_ne_bytes(),
+        "inner I2SRandReplace should have replaced 42 with 99"
     );
 }
 

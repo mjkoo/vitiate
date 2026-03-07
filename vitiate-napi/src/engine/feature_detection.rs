@@ -50,10 +50,12 @@ impl FeatureDetection {
             // interesting inputs.
             (false, Some(0))
         } else {
-            // Currently unreachable: state is freshly constructed with an empty
-            // corpus. Retained as a defensive fallback if future changes introduce
-            // pre-populated state.
-            (false, None)
+            // Pre-populated corpus: defer detection just like the empty case.
+            // The scan needs `&FuzzerState` which isn't available yet at
+            // construction, so we defer and scan once the threshold is reached.
+            // Currently unreachable (state is freshly constructed with an empty
+            // corpus), but correct if future changes introduce pre-populated state.
+            (false, Some(0))
         };
 
         let grimoire_enabled = grimoire_override.unwrap_or(corpus_is_utf8);

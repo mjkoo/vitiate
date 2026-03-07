@@ -8,7 +8,7 @@ use libafl::feedbacks::{
     CrashFeedback, Feedback, MapIndexesMetadata, MapNoveltiesMetadata, MaxMapFeedback,
     StateInitializer, TimeoutFeedback,
 };
-use libafl::inputs::BytesInput;
+use libafl::inputs::{BytesInput, GeneralizedInputMetadata};
 use libafl::observers::StdMapObserver;
 use libafl::observers::cmp::{CmpValues, CmpValuesMetadata, CmplogBytes};
 use libafl::observers::map::CanTrack;
@@ -160,7 +160,7 @@ pub(super) fn make_cmplog_bytes(data: &[u8]) -> CmplogBytes {
 /// # Panics
 /// Panics if no iterative stage (I2S, Grimoire, Unicode) is active.
 pub(super) fn force_single_iteration(fuzzer: &mut Fuzzer) {
-    fuzzer.stage_state = match fuzzer.stage_state {
+    fuzzer.stage_state = match std::mem::replace(&mut fuzzer.stage_state, StageState::None) {
         StageState::I2S {
             corpus_id,
             iteration,
@@ -182,11 +182,13 @@ pub(super) fn force_single_iteration(fuzzer: &mut Fuzzer) {
         StageState::Unicode {
             corpus_id,
             iteration,
+            metadata,
             ..
         } => StageState::Unicode {
             corpus_id,
             iteration,
             max_iterations: iteration + 1,
+            metadata,
         },
         _ => panic!("force_single_iteration: no iterative stage active"),
     };
@@ -390,7 +392,7 @@ impl TestFuzzerBuilder {
 
         // Create GeneralizedInputMetadata from the input bytes.
         let payload: Vec<Option<u8>> = input.iter().map(|&b| Some(b)).collect();
-        testcase.add_metadata(Fuzzer::payload_to_generalized(&payload));
+        testcase.add_metadata(GeneralizedInputMetadata::generalized_from_options(&payload));
 
         let corpus_id = fuzzer.state.corpus_mut().add(testcase).unwrap();
         fuzzer

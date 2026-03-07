@@ -11,7 +11,7 @@ import {
   installExceptionHandler,
 } from "vitiate-napi";
 import type { FuzzerConfig } from "vitiate-napi";
-import type { FuzzOptions } from "./config.js";
+import { isSupervisorChild, type FuzzOptions } from "./config.js";
 import {
   loadSeedCorpus,
   loadCachedCorpus,
@@ -41,8 +41,225 @@ export interface FuzzLoopResult {
   totalExecs: number;
 }
 
+interface TargetExecutionResult {
+  exitKind: ExitKind;
+  error?: Error;
+}
+
+/**
+ * Run the fuzz target with optional watchdog timeout protection.
+ *
+ * Handles both sync and async targets. When a watchdog is configured,
+ * uses runTarget() for sync execution and arm()/disarm() for async
+ * continuations. Guarantees disarm() via finally for async paths.
+ */
+async function executeTarget(
+  target: (data: Buffer) => void | Promise<void>,
+  input: Buffer,
+  watchdog: Watchdog | null,
+  timeoutMs: number | undefined,
+): Promise<TargetExecutionResult> {
+  if (timeoutMs !== undefined && timeoutMs > 0) {
+    if (!watchdog) {
+      throw new Error("unreachable: watchdog is null with timeout configured");
+    }
+
+    // Why a watchdog thread instead of setTimeout/Promise.race:
+    // The fuzz target may block the event loop (infinite loop, CPU-bound
+    // code), which prevents setTimeout callbacks from firing. The watchdog
+    // thread is immune to event loop starvation and can call
+    // V8::TerminateExecution from outside the JS context.
+
+    // runTarget: arms watchdog, calls target at the NAPI C level, disarms.
+    // V8 TerminateExecution bypasses JavaScript try/catch, so runTarget
+    // intercepts at the C level and calls CancelTerminateExecution before
+    // returning to JavaScript.
+    const targetResult = watchdog.runTarget(target, input, timeoutMs);
+
+    if (targetResult.exitKind === ExitKind.Timeout) {
+      return {
+        exitKind: ExitKind.Timeout,
+        error:
+          targetResult.error instanceof Error
+            ? targetResult.error
+            : new Error("fuzz target timed out"),
+      };
+    }
+    if (targetResult.exitKind === ExitKind.Crash) {
+      return {
+        exitKind: ExitKind.Crash,
+        error:
+          targetResult.error instanceof Error
+            ? targetResult.error
+            : new Error(String(targetResult.error)),
+      };
+    }
+    if (targetResult.exitKind !== ExitKind.Ok) {
+      throw new Error(
+        `unreachable: unexpected exitKind from watchdog: ${targetResult.exitKind}`,
+      );
+    }
+    if (targetResult.result instanceof Promise) {
+      // Async target returned a Promise - re-arm and await.
+      // If the async code hangs, V8 TerminateExecution cascades through
+      // all JS frames and the _exit fallback terminates the process.
+      watchdog.arm(timeoutMs);
+      try {
+        await targetResult.result;
+      } catch (e) {
+        if (watchdog.didFire) {
+          return {
+            exitKind: ExitKind.Timeout,
+            error: new Error("fuzz target timed out"),
+          };
+        }
+        return {
+          exitKind: ExitKind.Crash,
+          error: e instanceof Error ? e : new Error(String(e)),
+        };
+      } finally {
+        watchdog.disarm();
+      }
+    }
+
+    return { exitKind: ExitKind.Ok };
+  }
+
+  // No timeout — call target directly
+  try {
+    const maybePromise = target(input);
+    if (maybePromise instanceof Promise) {
+      await maybePromise;
+    }
+  } catch (e) {
+    return {
+      exitKind: ExitKind.Crash,
+      error: e instanceof Error ? e : new Error(String(e)),
+    };
+  }
+  return { exitKind: ExitKind.Ok };
+}
+
 function yieldToEventLoop(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
+}
+
+/**
+ * Write a crash/timeout artifact and print the crash message.
+ * Returns the constructed FuzzLoopResult.
+ */
+function recordCrash(
+  input: Buffer,
+  exitKind: ExitKind,
+  error: Error | undefined,
+  testDir: string,
+  testName: string,
+  totalExecs: number,
+): FuzzLoopResult {
+  const artifactKind: ArtifactKind =
+    exitKind === ExitKind.Timeout ? "timeout" : "crash";
+  const artifactPath = writeArtifact(testDir, testName, input, artifactKind);
+  printCrash(error ?? new Error("unknown crash"), artifactPath);
+  return {
+    crashed: true,
+    error,
+    crashInput: input,
+    crashArtifactPath: artifactPath,
+    totalExecs,
+  };
+}
+
+/**
+ * Run calibration iterations for a newly interesting corpus entry.
+ * Returns true if calibration completed normally (no crash/timeout).
+ */
+async function runCalibration(
+  target: (data: Buffer) => void | Promise<void>,
+  input: Buffer,
+  watchdog: Watchdog | null,
+  timeoutMs: number | undefined,
+  fuzzer: Fuzzer,
+): Promise<boolean> {
+  let needsMore = true;
+  while (needsMore) {
+    const calibrationStartNs = process.hrtime.bigint();
+
+    const calibrationResult = await executeTarget(
+      target,
+      input,
+      watchdog,
+      timeoutMs,
+    );
+
+    if (calibrationResult.exitKind !== ExitKind.Ok) {
+      return false;
+    }
+
+    const calibrationTimeNs = Number(
+      process.hrtime.bigint() - calibrationStartNs,
+    );
+    needsMore = fuzzer.calibrateRun(calibrationTimeNs);
+  }
+  return true;
+}
+
+/**
+ * Run the post-calibration mutational stage (I2S / Generalization / Grimoire).
+ * Returns a FuzzLoopResult if a crash was found, or null if the stage
+ * completed without crashes.
+ */
+async function runStage(
+  target: (data: Buffer) => void | Promise<void>,
+  watchdog: Watchdog | null,
+  timeoutMs: number | undefined,
+  fuzzer: Fuzzer,
+  shmemHandle: ShmemHandle | null,
+  testDir: string,
+  testName: string,
+): Promise<FuzzLoopResult | null> {
+  let stageResult = fuzzer.beginStage();
+
+  while (stageResult !== null) {
+    const stageInput = Buffer.from(stageResult);
+    shmemHandle?.stashInput(stageInput);
+
+    const stageStartNs = process.hrtime.bigint();
+    const { exitKind: stageExitKind, error: stageCaughtError } =
+      await executeTarget(target, stageInput, watchdog, timeoutMs);
+
+    if (stageExitKind !== ExitKind.Ok) {
+      // Write artifact BEFORE abortStage — abortStage can throw if the
+      // solutions corpus add() fails, and artifact preservation is more
+      // important than internal stats bookkeeping.
+      // Stage crashes are NOT minimized.
+      const result = recordCrash(
+        stageInput,
+        stageExitKind,
+        stageCaughtError,
+        testDir,
+        testName,
+        fuzzer.stats.totalExecs,
+      );
+
+      try {
+        fuzzer.abortStage(stageExitKind);
+      } catch (abortError) {
+        // abortStage failure is non-fatal: the crash artifact is already
+        // written to disk. Internal stats bookkeeping is best-effort.
+        process.stderr.write(
+          `vitiate: warning: abortStage failed after artifact was written: ${abortError instanceof Error ? abortError.message : String(abortError)}\n`,
+        );
+      }
+
+      return result;
+    }
+
+    const stageExecTimeNs = Number(process.hrtime.bigint() - stageStartNs);
+    // Only reached for Ok executions — crashes break above.
+    stageResult = fuzzer.advanceStage(ExitKind.Ok, stageExecTimeNs);
+  }
+
+  return null;
 }
 
 export async function runFuzzLoop(
@@ -53,18 +270,17 @@ export async function runFuzzLoop(
   options: FuzzOptions,
   corpusDirs?: string[],
 ): Promise<FuzzLoopResult> {
-  const rawCoverageMap = globalThis.__vitiate_cov;
-  if (!rawCoverageMap) {
+  const coverageMap = globalThis.__vitiate_cov;
+  if (!coverageMap) {
     throw new Error(
       "vitiate: coverage map not initialized. Ensure the vitiate setup file is loaded.",
     );
   }
-  if (!Buffer.isBuffer(rawCoverageMap)) {
+  if (!Buffer.isBuffer(coverageMap)) {
     throw new Error(
       "vitiate: coverage map must be a Buffer (fuzzing mode). Ensure VITIATE_FUZZ=1 is set.",
     );
   }
-  const coverageMap = rawCoverageMap;
   const cacheDir = getCacheDir();
 
   const fuzzerConfig: FuzzerConfig = {};
@@ -98,7 +314,7 @@ export async function runFuzzLoop(
   // for cross-process input stashing. The shmem allows the parent to read the
   // crashing input after the child dies, and the watchdog to read it before
   // calling _exit for timeout artifacts.
-  const shmemHandle: ShmemHandle | null = process.env["VITIATE_SUPERVISOR"]
+  const shmemHandle: ShmemHandle | null = isSupervisorChild()
     ? ShmemHandle.attach()
     : null;
 
@@ -128,15 +344,22 @@ export async function runFuzzLoop(
   startReporting(reporter, () => fuzzer.stats);
 
   const startTime = Date.now();
+  // `|| Infinity`: 0 means "unlimited" for both fields, matching libFuzzer convention.
   const maxTime = options.maxTotalTimeMs || Infinity;
   const maxRuns = options.runs || Infinity;
   let iteration = 0;
   let result: FuzzLoopResult = { crashed: false, totalExecs: 0 };
 
-  // SIGINT handler for graceful termination
+  // SIGINT handler: first Ctrl+C triggers graceful shutdown, second force-kills.
   let interrupted = false;
   const sigintHandler = () => {
+    if (interrupted) {
+      process.exit(130);
+    }
     interrupted = true;
+    process.stderr.write(
+      "\nvitiate: interrupted, finishing current iteration...\n",
+    );
   };
   process.on("SIGINT", sigintHandler);
 
@@ -153,80 +376,14 @@ export async function runFuzzLoop(
       // child death, and the watchdog to read it before _exit.
       shmemHandle?.stashInput(input);
 
-      const startNs = Number(process.hrtime.bigint());
-      let exitKind = ExitKind.Ok;
-      let caughtError: Error | undefined;
-
-      if (timeoutMs !== undefined && timeoutMs > 0) {
-        if (!watchdog) {
-          throw new Error(
-            "unreachable: watchdog is null with timeout configured",
-          );
-        }
-        const wd = watchdog;
-
-        // Why a watchdog thread instead of setTimeout/Promise.race:
-        // The fuzz target may block the event loop (infinite loop, CPU-bound
-        // code), which prevents setTimeout callbacks from firing. The watchdog
-        // thread is immune to event loop starvation and can call
-        // V8::TerminateExecution from outside the JS context.
-
-        // runTarget: arms watchdog, calls target at the NAPI C level, disarms.
-        // V8 TerminateExecution bypasses JavaScript try/catch, so runTarget
-        // intercepts at the C level and calls CancelTerminateExecution before
-        // returning to JavaScript.
-        const targetResult = wd.runTarget(target, input, timeoutMs);
-
-        if (targetResult.exitKind === 2) {
-          // Sync timeout: V8 termination was intercepted at NAPI level
-          exitKind = ExitKind.Timeout;
-          caughtError =
-            targetResult.error instanceof Error
-              ? targetResult.error
-              : new Error("fuzz target timed out");
-        } else if (targetResult.exitKind === 1) {
-          // Sync crash
-          exitKind = ExitKind.Crash;
-          caughtError =
-            targetResult.error instanceof Error
-              ? targetResult.error
-              : new Error(String(targetResult.error));
-        } else if (targetResult.result instanceof Promise) {
-          // Async target returned a Promise - re-arm and await.
-          // The input was stashed to shmem before runTarget() and remains valid
-          // for the entire iteration including this async continuation, so
-          // re-arming without re-stashing is correct.
-          // If the async code hangs, V8 TerminateExecution cascades through
-          // all JS frames and the _exit fallback terminates the process.
-          wd.arm(timeoutMs);
-          try {
-            await targetResult.result;
-          } catch (e) {
-            if (wd.didFire) {
-              exitKind = ExitKind.Timeout;
-              caughtError = new Error("fuzz target timed out");
-            } else {
-              exitKind = ExitKind.Crash;
-              caughtError = e instanceof Error ? e : new Error(String(e));
-            }
-          } finally {
-            wd.disarm();
-          }
-        }
-      } else {
-        // No timeout - call target directly
-        try {
-          const maybePromise = target(input);
-          if (maybePromise instanceof Promise) {
-            await maybePromise;
-          }
-        } catch (e) {
-          caughtError = e instanceof Error ? e : new Error(String(e));
-          exitKind = ExitKind.Crash;
-        }
-      }
-
-      const execTimeNs = Number(process.hrtime.bigint()) - startNs;
+      const startNs = process.hrtime.bigint();
+      const { exitKind, error: caughtError } = await executeTarget(
+        target,
+        input,
+        watchdog,
+        timeoutMs,
+      );
+      const execTimeNs = Number(process.hrtime.bigint() - startNs);
       const iterResult = fuzzer.reportResult(exitKind, execTimeNs);
       iteration++;
 
@@ -242,26 +399,19 @@ export async function runFuzzLoop(
             target,
             watchdog,
             timeoutMs,
+            shmemHandle,
             options,
           );
         }
 
-        const artifactKind: ArtifactKind =
-          exitKind === ExitKind.Timeout ? "timeout" : "crash";
-        const artifactPath = writeArtifact(
+        result = recordCrash(
+          crashData,
+          exitKind,
+          caughtError,
           testDir,
           testName,
-          crashData,
-          artifactKind,
+          fuzzer.stats.totalExecs,
         );
-        printCrash(caughtError ?? new Error("unknown crash"), artifactPath);
-        result = {
-          crashed: true,
-          error: caughtError,
-          crashInput: crashData,
-          crashArtifactPath: artifactPath,
-          totalExecs: fuzzer.stats.totalExecs,
-        };
         break;
       }
 
@@ -270,172 +420,36 @@ export async function runFuzzLoop(
 
         // Calibration loop: re-run target to average timing and detect unstable edges.
         // The original fuzz iteration counts as calibration run #1; additional runs start here.
-        let calibrationCompleted = true;
-        let needsMore = true;
-        while (needsMore) {
-          const calibrationStartNs = Number(process.hrtime.bigint());
-          let calibrationBroken = false;
-
-          if (timeoutMs !== undefined && timeoutMs > 0 && watchdog) {
-            const calibrationResult = watchdog.runTarget(
-              target,
-              input,
-              timeoutMs,
-            );
-            if (calibrationResult.exitKind !== 0) {
-              // Sync crash or timeout during calibration — finalize with partial data
-              calibrationBroken = true;
-            } else if (calibrationResult.result instanceof Promise) {
-              // Async target returned a Promise — await with watchdog protection
-              watchdog.arm(timeoutMs);
-              try {
-                await calibrationResult.result;
-              } catch {
-                calibrationBroken = true;
-              } finally {
-                watchdog.disarm();
-              }
-            }
-          } else {
-            // No timeout — call target directly
-            try {
-              const maybePromise = target(input);
-              if (maybePromise instanceof Promise) {
-                await maybePromise;
-              }
-            } catch {
-              calibrationBroken = true;
-            }
-          }
-
-          if (calibrationBroken) {
-            calibrationCompleted = false;
-            break;
-          }
-
-          const calibrationTimeNs =
-            Number(process.hrtime.bigint()) - calibrationStartNs;
-          needsMore = fuzzer.calibrateRun(calibrationTimeNs);
-        }
+        const calibrationCompleted = await runCalibration(
+          target,
+          input,
+          watchdog,
+          timeoutMs,
+          fuzzer,
+        );
         fuzzer.calibrateFinish();
 
         // Stage execution loop: run concentrated I2S mutations on the freshly
         // calibrated corpus entry. Only enter if calibration completed normally.
         if (calibrationCompleted) {
-          let stageResult = fuzzer.beginStage();
-
-          while (stageResult !== null) {
-            const stageInput = Buffer.from(stageResult);
-            shmemHandle?.stashInput(stageInput);
-
-            const stageStartNs = Number(process.hrtime.bigint());
-            let stageExitKind = ExitKind.Ok;
-            let stageCaughtError: Error | undefined;
-
-            if (timeoutMs !== undefined && timeoutMs > 0) {
-              if (!watchdog) {
-                throw new Error(
-                  "unreachable: watchdog is null with timeout configured",
-                );
-              }
-              const wd = watchdog;
-              const targetResult = wd.runTarget(target, stageInput, timeoutMs);
-
-              if (targetResult.exitKind === 2) {
-                stageExitKind = ExitKind.Timeout;
-                stageCaughtError =
-                  targetResult.error instanceof Error
-                    ? targetResult.error
-                    : new Error("fuzz target timed out");
-              } else if (targetResult.exitKind === 1) {
-                stageExitKind = ExitKind.Crash;
-                stageCaughtError =
-                  targetResult.error instanceof Error
-                    ? targetResult.error
-                    : new Error(String(targetResult.error));
-              } else if (targetResult.result instanceof Promise) {
-                wd.arm(timeoutMs);
-                try {
-                  await targetResult.result;
-                } catch (e) {
-                  if (wd.didFire) {
-                    stageExitKind = ExitKind.Timeout;
-                    stageCaughtError = new Error("fuzz target timed out");
-                  } else {
-                    stageExitKind = ExitKind.Crash;
-                    stageCaughtError =
-                      e instanceof Error ? e : new Error(String(e));
-                  }
-                } finally {
-                  wd.disarm();
-                }
-              }
-            } else {
-              // No timeout — call target directly
-              try {
-                const maybePromise = target(stageInput);
-                if (maybePromise instanceof Promise) {
-                  await maybePromise;
-                }
-              } catch (e) {
-                stageCaughtError =
-                  e instanceof Error ? e : new Error(String(e));
-                stageExitKind = ExitKind.Crash;
-              }
-            }
-
-            if (stageExitKind !== ExitKind.Ok) {
-              // Write artifact BEFORE abortStage — abortStage can throw if the
-              // solutions corpus add() fails, and artifact preservation is more
-              // important than internal stats bookkeeping.
-              // Stage crashes are NOT minimized.
-              const artifactKind: ArtifactKind =
-                stageExitKind === ExitKind.Timeout ? "timeout" : "crash";
-              const artifactPath = writeArtifact(
-                testDir,
-                testName,
-                stageInput,
-                artifactKind,
-              );
-              printCrash(
-                stageCaughtError ?? new Error("unknown crash"),
-                artifactPath,
-              );
-
-              try {
-                fuzzer.abortStage(stageExitKind);
-              } catch (abortError) {
-                // abortStage failure is non-fatal: the crash artifact is already
-                // written to disk. Internal stats bookkeeping is best-effort.
-                process.stderr.write(
-                  `vitiate: warning: abortStage failed after artifact was written: ${abortError instanceof Error ? abortError.message : String(abortError)}\n`,
-                );
-              }
-
-              result = {
-                crashed: true,
-                error: stageCaughtError,
-                crashInput: stageInput,
-                crashArtifactPath: artifactPath,
-                totalExecs: fuzzer.stats.totalExecs,
-              };
-              break;
-            }
-
-            const stageExecTimeNs =
-              Number(process.hrtime.bigint()) - stageStartNs;
-            stageResult = fuzzer.advanceStage(ExitKind.Ok, stageExecTimeNs);
-          }
-
-          // If a stage crash occurred, exit the main loop.
-          if (result.crashed) {
+          const stageResult = await runStage(
+            target,
+            watchdog,
+            timeoutMs,
+            fuzzer,
+            shmemHandle,
+            testDir,
+            testName,
+          );
+          if (stageResult) {
+            result = stageResult;
             break;
           }
         }
       }
 
       // Yield to event loop periodically
-      if (iteration % YIELD_INTERVAL === 0) {
+      if (iteration > 0 && iteration % YIELD_INTERVAL === 0) {
         await yieldToEventLoop();
       }
     }
@@ -456,50 +470,21 @@ export async function runFuzzLoop(
 /**
  * Minimize a crashing input using the fuzz loop's execution infrastructure.
  *
- * Creates a testCandidate wrapper around Watchdog.runTarget() (or direct
- * target invocation when no watchdog is configured) and delegates to the
- * minimization engine.
+ * Creates a testCandidate wrapper around executeTarget() and delegates to
+ * the minimization engine.
  */
 async function minimizeCrashInput(
   input: Buffer,
   target: (data: Buffer) => void | Promise<void>,
   watchdog: Watchdog | null,
   timeoutMs: number | undefined,
+  shmemHandle: ShmemHandle | null,
   options: FuzzOptions,
 ): Promise<Buffer> {
   const testCandidate = async (candidate: Buffer): Promise<boolean> => {
-    if (watchdog && timeoutMs !== undefined && timeoutMs > 0) {
-      const targetResult = watchdog.runTarget(target, candidate, timeoutMs);
-      if (targetResult.exitKind === 1) {
-        // Sync crash — candidate reproduces
-        return true;
-      }
-      if (targetResult.result instanceof Promise) {
-        // Async target — await and check for rejection
-        try {
-          watchdog.arm(timeoutMs);
-          await targetResult.result;
-          watchdog.disarm();
-          return false; // Resolved normally — no crash
-        } catch {
-          const crashed = !watchdog.didFire;
-          watchdog.disarm();
-          return crashed; // Rejection = crash, but timeout = not a crash
-        }
-      }
-      return false; // exitKind 0 (Ok) or 2 (Timeout) — not a crash
-    }
-
-    // No watchdog — call target directly
-    try {
-      const maybePromise = target(candidate);
-      if (maybePromise instanceof Promise) {
-        await maybePromise;
-      }
-      return false; // No crash
-    } catch {
-      return true; // Exception = crash
-    }
+    shmemHandle?.stashInput(candidate);
+    const result = await executeTarget(target, candidate, watchdog, timeoutMs);
+    return result.exitKind === ExitKind.Crash;
   };
 
   return minimize(input, testCandidate, {

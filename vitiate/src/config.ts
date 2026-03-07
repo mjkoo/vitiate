@@ -66,9 +66,17 @@ export function resolveInstrumentOptions(
   };
 }
 
-export function isFuzzingMode(): boolean {
-  const val = process.env["VITIATE_FUZZ"];
+function envTruthy(key: string): boolean {
+  const val = process.env[key];
   return val !== undefined && val !== "" && val !== "0" && val !== "false";
+}
+
+export function isFuzzingMode(): boolean {
+  return envTruthy("VITIATE_FUZZ");
+}
+
+export function isSupervisorChild(): boolean {
+  return envTruthy("VITIATE_SUPERVISOR");
 }
 
 function validateFuzzOptions(obj: Record<string, unknown>): FuzzOptions {

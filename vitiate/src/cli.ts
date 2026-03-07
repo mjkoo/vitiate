@@ -23,11 +23,15 @@ import escapeStringRegexp from "escape-string-regexp";
 import { ShmemHandle } from "vitiate-napi";
 import { vitiatePlugin } from "./plugin.js";
 import { runSupervisor } from "./supervisor.js";
-import { DEFAULT_MAX_INPUT_LEN, type FuzzOptions } from "./config.js";
+import {
+  DEFAULT_MAX_INPUT_LEN,
+  isSupervisorChild,
+  type FuzzOptions,
+} from "./config.js";
 
 export interface CliArgs {
   testFile: string;
-  corpusDirs: string[];
+  corpusDirs: readonly string[];
   testName?: string;
   fuzzOptions: FuzzOptions;
 }
@@ -68,14 +72,14 @@ function warnUnsupportedFlags(parsed: InferValue<typeof cliParser>): void {
       );
     }
   }
-  if (parsed.jobs !== undefined && parsed.jobs > 1) {
+  if (parsed.jobs !== undefined && parsed.jobs !== 1) {
     process.stderr.write(
       `vitiate: warning: -jobs=${parsed.jobs} is ignored; vitiate runs a single job at a time (equivalent to -jobs=1)\n`,
     );
   }
-  if (parsed.merge !== undefined && parsed.merge === 1) {
+  if (parsed.merge !== undefined && parsed.merge !== 0) {
     process.stderr.write(
-      `vitiate: warning: -merge=1 is not yet supported; corpus merge mode is ignored\n`,
+      `vitiate: warning: -merge=${parsed.merge} is not yet supported; corpus merge mode is ignored\n`,
     );
   }
 }
@@ -96,7 +100,7 @@ function toCliArgs(parsed: InferValue<typeof cliParser>): CliArgs {
   } = parsed;
   return {
     testFile,
-    corpusDirs: [...corpusDirs],
+    corpusDirs,
     testName,
     fuzzOptions: {
       maxLen,
@@ -160,7 +164,7 @@ async function runParentMode(
  */
 async function runChildMode(
   testFile: string,
-  corpusDirs: string[],
+  corpusDirs: readonly string[],
   fuzzOptions: FuzzOptions,
   testName?: string,
 ): Promise<void> {
@@ -208,7 +212,7 @@ async function main(): Promise<void> {
     }),
   );
 
-  if (process.env["VITIATE_SUPERVISOR"]) {
+  if (isSupervisorChild()) {
     // Child mode: shmem is already set up by the parent
     await runChildMode(testFile, corpusDirs, fuzzOptions, testName);
   } else {

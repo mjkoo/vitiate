@@ -32,7 +32,8 @@ static INSTALL_ONCE: Once = Once::new();
 /// Safe to call multiple times — subsequent calls are no-ops.
 // This function is only called from JavaScript via NAPI. In the Rust test binary,
 // the NAPI entry point is not linked, so the function appears unused.
-#[allow(dead_code, unused_variables)]
+#[allow(dead_code)]
+#[cfg_attr(not(windows), allow(unused_variables))]
 #[napi]
 pub fn install_exception_handler(shmem: &ShmemHandle, artifact_dir: String) {
     INSTALL_ONCE.call_once(|| {

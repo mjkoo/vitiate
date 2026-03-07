@@ -48,16 +48,20 @@ const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 /// Enriched CmpLog entry: comparison values, site ID, and operator type.
 pub type CmpLogEntry = (CmpValues, u32, CmpLogOperator);
 
+struct CmpLogState {
+    enabled: bool,
+    entries: Vec<CmpLogEntry>,
+}
+
 thread_local! {
-    static CMPLOG_ENABLED: RefCell<bool> = const { RefCell::new(false) };
-    static CMPLOG_ENTRIES: RefCell<Vec<CmpLogEntry>> = const { RefCell::new(Vec::new()) };
+    static CMPLOG_STATE: RefCell<CmpLogState> = const { RefCell::new(CmpLogState { enabled: false, entries: Vec::new() }) };
 }
 
 /// Enable CmpLog recording. Called when a Fuzzer is constructed.
 ///
 /// Assumes at most one Fuzzer is active per thread. See module docs.
 pub fn enable() {
-    CMPLOG_ENABLED.with(|e| *e.borrow_mut() = true);
+    CMPLOG_STATE.with(|s| s.borrow_mut().enabled = true);
 }
 
 /// Disable CmpLog recording and discard any leftover entries.
@@ -66,26 +70,26 @@ pub fn enable() {
 /// leaking into a subsequently created Fuzzer.
 /// Assumes at most one Fuzzer is active per thread. See module docs.
 pub fn disable() {
-    CMPLOG_ENABLED.with(|e| *e.borrow_mut() = false);
-    let _ = drain();
+    CMPLOG_STATE.with(|s| {
+        let mut state = s.borrow_mut();
+        state.enabled = false;
+        state.entries.clear();
+    });
 }
 
 /// Check if CmpLog recording is currently enabled.
 pub fn is_enabled() -> bool {
-    CMPLOG_ENABLED.with(|e| *e.borrow())
+    CMPLOG_STATE.with(|s| s.borrow().enabled)
 }
 
 /// Push an enriched comparison entry into the thread-local accumulator.
 ///
 /// Silently drops entries when disabled or at capacity (4096).
 pub fn push(entry: CmpValues, site_id: u32, operator: CmpLogOperator) {
-    if !is_enabled() {
-        return;
-    }
-    CMPLOG_ENTRIES.with(|entries| {
-        let mut entries = entries.borrow_mut();
-        if entries.len() < MAX_ENTRIES {
-            entries.push((entry, site_id, operator));
+    CMPLOG_STATE.with(|s| {
+        let mut state = s.borrow_mut();
+        if state.enabled && state.entries.len() < MAX_ENTRIES {
+            state.entries.push((entry, site_id, operator));
         }
     });
 }
@@ -94,7 +98,7 @@ pub fn push(entry: CmpValues, site_id: u32, operator: CmpLogOperator) {
 ///
 /// The accumulator is empty after this call.
 pub fn drain() -> Vec<CmpLogEntry> {
-    CMPLOG_ENTRIES.with(|entries| std::mem::take(&mut *entries.borrow_mut()))
+    CMPLOG_STATE.with(|s| std::mem::take(&mut s.borrow_mut().entries))
 }
 
 /// Create a `CmplogBytes` from a byte slice, truncating to 32 bytes.
@@ -320,7 +324,7 @@ mod tests {
         enable();
         for i in 0..MAX_ENTRIES + 100 {
             push(
-                CmpValues::U8((i as u8, 0, false)),
+                CmpValues::U8((0, 0, false)),
                 i as u32,
                 CmpLogOperator::Equal,
             );

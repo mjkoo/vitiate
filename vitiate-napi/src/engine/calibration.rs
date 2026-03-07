@@ -39,21 +39,14 @@ impl CalibrationState {
 
     /// Initialize for a new calibration cycle.
     pub(super) fn begin(&mut self, corpus_id: CorpusId, initial_exec_time: Duration) {
+        self.reset();
         self.corpus_id = Some(corpus_id);
         self.total_time = initial_exec_time;
         self.iterations = 1;
-        self.has_unstable = false;
-        self.first_map = None;
-        self.history_map = None;
     }
 
     /// Reset calibration state after calibration completes.
     pub(super) fn reset(&mut self) {
-        self.corpus_id = None;
-        self.first_map = None;
-        self.history_map = None;
-        self.total_time = Duration::ZERO;
-        self.iterations = 0;
-        self.has_unstable = false;
+        *self = Self::new();
     }
 }

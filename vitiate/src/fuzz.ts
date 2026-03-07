@@ -11,6 +11,7 @@ import { ShmemHandle } from "vitiate-napi";
 import type { FuzzOptions } from "./config.js";
 import {
   isFuzzingMode,
+  isSupervisorChild,
   getCliOptions,
   DEFAULT_MAX_INPUT_LEN,
 } from "./config.js";
@@ -37,6 +38,9 @@ function getCorpusDirs(): string[] | undefined {
 }
 
 type FuzzTarget = (data: Buffer) => void | Promise<void>;
+
+/** INT32_MAX — disables Vitest's built-in timeout so vitiate manages its own. */
+const VITEST_NO_TIMEOUT = 2_147_483_647;
 
 function getTestDir(): string {
   const current = getCurrentTest();
@@ -142,9 +146,10 @@ function registerFuzzTest(
   target: FuzzTarget,
   options?: FuzzOptions,
 ): void {
+  // CLI options (env-based) take precedence over per-test options
   const mergedOptions = { ...options, ...getCachedCliOptions() };
   if (isFuzzingMode()) {
-    if (process.env["VITIATE_SUPERVISOR"]) {
+    if (isSupervisorChild()) {
       // Child mode: supervised — enter the fuzz loop directly
       register(
         name,
@@ -162,11 +167,13 @@ function registerFuzzTest(
           if (result.crashed) {
             throw (
               result.error ??
-              new Error(`Crash found, artifact: ${result.crashArtifactPath}`)
+              new Error(
+                `Crash found${result.crashArtifactPath ? `, artifact: ${result.crashArtifactPath}` : ""}`,
+              )
             );
           }
         },
-        2_147_483_647, // disable vitest timeout; fuzz loop manages its own termination
+        VITEST_NO_TIMEOUT,
       );
     } else {
       // Parent mode: become a supervisor for this fuzz test
@@ -208,7 +215,7 @@ function registerFuzzTest(
 
           translateSupervisorResult(result, testDir, name);
         },
-        2_147_483_647, // disable vitest timeout; supervisor manages its own lifecycle
+        VITEST_NO_TIMEOUT,
       );
     }
   } else {

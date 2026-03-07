@@ -446,13 +446,15 @@ fn test_unicode_stage_iteration_counting() {
     if let StageState::Unicode {
         corpus_id,
         iteration,
+        metadata,
         ..
-    } = fuzzer.stage_state
+    } = std::mem::replace(&mut fuzzer.stage_state, StageState::None)
     {
         fuzzer.stage_state = StageState::Unicode {
             corpus_id,
             iteration,
             max_iterations: 3,
+            metadata,
         };
     }
 
@@ -486,13 +488,15 @@ fn test_unicode_stage_non_cumulative_mutations() {
     if let StageState::Unicode {
         corpus_id,
         iteration,
+        metadata,
         ..
-    } = fuzzer.stage_state
+    } = std::mem::replace(&mut fuzzer.stage_state, StageState::None)
     {
         fuzzer.stage_state = StageState::Unicode {
             corpus_id,
             iteration,
             max_iterations: 2,
+            metadata,
         };
     }
 
@@ -525,13 +529,15 @@ fn test_unicode_stage_cmplog_drained() {
     if let StageState::Unicode {
         corpus_id,
         iteration,
+        metadata,
         ..
-    } = fuzzer.stage_state
+    } = std::mem::replace(&mut fuzzer.stage_state, StageState::None)
     {
         fuzzer.stage_state = StageState::Unicode {
             corpus_id,
             iteration,
             max_iterations: 2,
+            metadata,
         };
     }
 
@@ -596,18 +602,16 @@ fn test_unicode_stage_max_input_length_enforcement() {
 }
 
 #[test]
-fn test_unicode_stage_metadata_cached_on_testcase() {
+fn test_unicode_stage_metadata_stashed_in_stage_state() {
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .unicode(true)
         .build_with_corpus_entry(b"hello world", &[10]);
     let _ = fuzzer.begin_unicode(corpus_id).unwrap();
 
-    // Verify metadata was cached.
-    let tc = fuzzer.state.corpus().get(corpus_id).unwrap();
-    let tc_ref = tc.borrow();
+    // Verify metadata is stashed in the stage state.
     assert!(
-        tc_ref.has_metadata::<UnicodeIdentificationMetadata>(),
-        "unicode metadata should be cached on testcase"
+        matches!(fuzzer.stage_state, StageState::Unicode { ref metadata, .. } if !metadata.ranges().is_empty()),
+        "unicode metadata should be stashed in stage state"
     );
 
     cmplog::disable();
@@ -663,12 +667,7 @@ fn test_unicode_enabled_drives_stage_transitions() {
     assert!(matches!(fuzzer.stage_state, StageState::Unicode { .. }));
 
     // When unicode is disabled, same entry should not start stage.
-    if let StageState::Unicode {
-        corpus_id: _,
-        iteration: _,
-        max_iterations: _,
-    } = fuzzer.stage_state
-    {
+    if let StageState::Unicode { .. } = fuzzer.stage_state {
         fuzzer.stage_state = StageState::None;
     }
     fuzzer.features.unicode_enabled = false;
@@ -695,13 +694,15 @@ fn test_unicode_stage_exec_counter_increments() {
     if let StageState::Unicode {
         corpus_id,
         iteration,
+        metadata,
         ..
-    } = fuzzer.stage_state
+    } = std::mem::replace(&mut fuzzer.stage_state, StageState::None)
     {
         fuzzer.stage_state = StageState::Unicode {
             corpus_id,
             iteration,
             max_iterations: 2,
+            metadata,
         };
     }
 

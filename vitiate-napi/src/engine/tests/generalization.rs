@@ -1,6 +1,8 @@
 use super::helpers::{TestFuzzerBuilder, make_cmplog_bytes};
 use crate::cmplog;
-use crate::engine::generalization::GeneralizationPhase;
+use crate::engine::generalization::{
+    GeneralizationPhase, build_generalization_candidate, trim_payload,
+};
 use crate::engine::{Fuzzer, MAX_GENERALIZED_LEN, StageState};
 use crate::types::ExitKind;
 use libafl::HasMetadata;
@@ -76,7 +78,7 @@ fn test_generalization_skipped_when_already_generalized() {
 
     // Manually add GeneralizedInputMetadata to simulate prior generalization.
     let payload: Vec<Option<u8>> = b"fn foo() {}".iter().map(|&b| Some(b)).collect();
-    let meta = Fuzzer::payload_to_generalized(&payload);
+    let meta = GeneralizedInputMetadata::generalized_from_options(&payload);
     fuzzer
         .state
         .corpus()
@@ -421,7 +423,7 @@ fn test_generalization_output_format() {
         Some(b')'),
         None,
     ];
-    let meta = Fuzzer::payload_to_generalized(&payload);
+    let meta = GeneralizedInputMetadata::generalized_from_options(&payload);
     let items = meta.generalized();
     assert_eq!(
         items,
@@ -440,7 +442,7 @@ fn test_generalization_output_format() {
 fn test_generalization_output_leading_trailing_gaps() {
     // Payload starts and ends with Some — should get leading/trailing gaps.
     let payload = vec![Some(b'a'), Some(b'b')];
-    let meta = Fuzzer::payload_to_generalized(&payload);
+    let meta = GeneralizedInputMetadata::generalized_from_options(&payload);
     let items = meta.generalized();
     assert_eq!(
         items.first(),
@@ -465,7 +467,7 @@ fn test_generalization_output_leading_trailing_gaps() {
 #[test]
 fn test_trim_payload_removes_consecutive_gaps() {
     let mut payload = vec![None, None, Some(b'a'), None, None, None, Some(b'b'), None];
-    Fuzzer::trim_payload(&mut payload);
+    trim_payload(&mut payload);
     assert_eq!(
         payload,
         vec![None, Some(b'a'), None, Some(b'b'), None],
@@ -484,7 +486,7 @@ fn test_build_generalization_candidate() {
         Some(b'e'),
     ];
     // Remove range [1, 4) — removes Some(b'b'), None, Some(b'c').
-    let candidate = Fuzzer::build_generalization_candidate(&payload, 1, 4);
+    let candidate = build_generalization_candidate(&payload, 1, 4);
     // payload[..1] = [Some(b'a')] → [b'a']
     // payload[4..] = [Some(b'd'), Some(b'e')] → [b'd', b'e']
     // None values in either portion are skipped.
@@ -495,7 +497,7 @@ fn test_build_generalization_candidate() {
 fn test_build_candidate_skips_gaps() {
     let payload = vec![None, Some(b'a'), Some(b'b'), None, Some(b'c')];
     // Remove range [1, 3) — removes Some(b'a'), Some(b'b').
-    let candidate = Fuzzer::build_generalization_candidate(&payload, 1, 3);
+    let candidate = build_generalization_candidate(&payload, 1, 3);
     // payload[..1] = [None] → skipped
     // payload[3..] = [None, Some(b'c')] → [b'c']
     assert_eq!(candidate, b"c");

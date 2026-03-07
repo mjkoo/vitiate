@@ -84,7 +84,7 @@ impl TransformVisitor {
                 obj: Box::new(Expr::Ident(Ident {
                     span: DUMMY_SP,
                     ctxt: SyntaxContext::empty(),
-                    sym: self.config.coverage_global_name.clone().into(),
+                    sym: self.config.coverage_global_name.as_str().into(),
                     optional: false,
                 })),
                 prop: MemberProp::Computed(ComputedPropName {
@@ -169,7 +169,7 @@ impl TransformVisitor {
             callee: Callee::Expr(Box::new(Expr::Ident(Ident {
                 span: DUMMY_SP,
                 ctxt: SyntaxContext::empty(),
-                sym: self.config.trace_cmp_global_name.clone().into(),
+                sym: self.config.trace_cmp_global_name.as_str().into(),
                 optional: false,
             }))),
             args: vec![
@@ -227,6 +227,7 @@ impl TransformVisitor {
             BinaryOp::Gt => ">",
             BinaryOp::LtEq => "<=",
             BinaryOp::GtEq => ">=",
+            // PANIC: only reachable via is_comparison_op() guard, which covers all arms above
             _ => unreachable!(),
         }
     }
@@ -245,13 +246,17 @@ impl VisitMut for TransformVisitor {
     fn visit_mut_module(&mut self, module: &mut Module) {
         module.visit_mut_children_with(self);
 
-        let cov_name = self.config.coverage_global_name.clone();
-        let cov_var = ModuleItem::Stmt(self.make_preamble_stmt(&cov_name, &cov_name));
+        let cov_var = ModuleItem::Stmt(self.make_preamble_stmt(
+            &self.config.coverage_global_name,
+            &self.config.coverage_global_name,
+        ));
         module.body.insert(0, cov_var);
 
         if self.config.trace_cmp {
-            let trace_name = self.config.trace_cmp_global_name.clone();
-            let trace_var = ModuleItem::Stmt(self.make_preamble_stmt(&trace_name, &trace_name));
+            let trace_var = ModuleItem::Stmt(self.make_preamble_stmt(
+                &self.config.trace_cmp_global_name,
+                &self.config.trace_cmp_global_name,
+            ));
             module.body.insert(1, trace_var);
         }
     }
@@ -260,13 +265,17 @@ impl VisitMut for TransformVisitor {
     fn visit_mut_script(&mut self, script: &mut Script) {
         script.visit_mut_children_with(self);
 
-        let cov_name = self.config.coverage_global_name.clone();
-        let cov_var = self.make_preamble_stmt(&cov_name, &cov_name);
+        let cov_var = self.make_preamble_stmt(
+            &self.config.coverage_global_name,
+            &self.config.coverage_global_name,
+        );
         script.body.insert(0, cov_var);
 
         if self.config.trace_cmp {
-            let trace_name = self.config.trace_cmp_global_name.clone();
-            let trace_var = self.make_preamble_stmt(&trace_name, &trace_name);
+            let trace_var = self.make_preamble_stmt(
+                &self.config.trace_cmp_global_name,
+                &self.config.trace_cmp_global_name,
+            );
             script.body.insert(1, trace_var);
         }
     }
@@ -438,7 +447,10 @@ pub fn process_transform(
 ) -> Program {
     let config: PluginConfig = metadata
         .get_transform_plugin_config()
-        .and_then(|json| serde_json::from_str(&json).ok())
+        .map(|json| {
+            serde_json::from_str(&json)
+                .unwrap_or_else(|e| panic!("vitiate-instrument: invalid plugin config: {e}"))
+        })
         .unwrap_or_default();
 
     let file_path = metadata

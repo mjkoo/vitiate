@@ -61,10 +61,8 @@ impl TokenTracker {
         if !state.has_metadata::<Tokens>() {
             state.add_metadata(Tokens::default());
         }
-        let dict_full = state
-            .metadata::<Tokens>()
-            .map(|t| t.tokens().len() >= MAX_DICTIONARY_SIZE)
-            .unwrap_or(false);
+        // PANIC: Tokens metadata is guaranteed to exist — inserted above if absent.
+        let dict_full = state.metadata::<Tokens>().unwrap().tokens().len() >= MAX_DICTIONARY_SIZE;
         if dict_full {
             return;
         }
@@ -89,8 +87,8 @@ impl TokenTracker {
         for token in &newly_promoted {
             self.candidates.remove(token);
             self.promoted.insert(token.clone());
-            // Tokens metadata is guaranteed to exist: added above when the
-            // has_metadata check failed, and only reached here inside that branch.
+            // PANIC: Tokens metadata is guaranteed to exist — inserted at the
+            // top of process() if absent.
             let tokens = state.metadata_mut::<Tokens>().unwrap();
             tokens.add_token(token);
             if tokens.tokens().len() >= MAX_DICTIONARY_SIZE {

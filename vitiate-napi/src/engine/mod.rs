@@ -92,22 +92,6 @@ const STAGE_MAX_ITERATIONS: usize = 128;
 /// Maximum input size for generalization. Inputs exceeding this are skipped.
 const MAX_GENERALIZED_LEN: usize = 8192;
 
-/// Offset values for the offset-based gap-finding passes.
-const GENERALIZATION_OFFSETS: [usize; 5] = [255, 127, 63, 31, 0];
-
-/// Delimiter characters for delimiter-based gap-finding passes.
-const GENERALIZATION_DELIMITERS: [u8; 7] = [b'.', b';', b',', b'\n', b'\r', b'#', b' '];
-
-/// Bracket pairs for bracket-based gap-finding passes: (open, close).
-const GENERALIZATION_BRACKETS: [(u8, u8); 6] = [
-    (b'(', b')'),
-    (b'[', b']'),
-    (b'{', b'}'),
-    (b'<', b'>'),
-    (b'\'', b'\''),
-    (b'"', b'"'),
-];
-
 // Concrete LibAFL type aliases.
 type CovObserver = StdMapObserver<'static, u8, false>;
 /// CovObserver with index tracking enabled, needed by `MinimizerScheduler`.
@@ -222,8 +206,9 @@ enum StageState {
         original_input: Vec<u8>,
         /// Type-replaced copy of the input.
         changed_input: Vec<u8>,
-        /// Ranges still to test, processed largest-first.
-        pending_ranges: Vec<(usize, usize)>,
+        /// Ranges still to test, processed largest-first via max-heap.
+        /// Elements are `(size, start, end)` so the largest range is popped first.
+        pending_ranges: std::collections::BinaryHeap<(usize, usize, usize)>,
         /// Confirmed free ranges (bytes that don't affect coverage).
         taint_ranges: Vec<std::ops::Range<usize>>,
         /// Number of colorization executions so far.
@@ -273,6 +258,8 @@ enum StageState {
         corpus_id: CorpusId,
         iteration: usize,
         max_iterations: usize,
+        /// Cached metadata identifying UTF-8 ranges, computed once at stage start.
+        metadata: UnicodeIdentificationMetadata,
     },
 }
 
@@ -430,29 +417,7 @@ impl Fuzzer {
 
     #[napi]
     pub fn add_seed(&mut self, input: Buffer) -> Result<()> {
-        let bytes_input = BytesInput::new(input.to_vec());
-        let mut testcase = Testcase::new(bytes_input);
-
-        // Seeds get nominal metadata so CorpusPowerTestcaseScore can score them.
-        testcase.set_exec_time(SEED_EXEC_TIME);
-        let mut sched_meta = SchedulerTestcaseMetadata::new(0);
-        sched_meta.set_cycle_and_time((SEED_EXEC_TIME, 1));
-        testcase.add_metadata(sched_meta);
-
-        // Seeds receive empty MapIndexesMetadata so MinimizerScheduler::update_score()
-        // succeeds without error when scheduler.on_add() is called. Seeds cover no
-        // edges, so they cannot become favored.
-        testcase.add_metadata(MapIndexesMetadata::new(vec![]));
-
-        let id = self
-            .state
-            .corpus_mut()
-            .add(testcase)
-            .map_err(|e| Error::from_reason(format!("Failed to add seed: {e}")))?;
-        self.scheduler
-            .on_add(&mut self.state, id)
-            .map_err(|e| Error::from_reason(format!("Failed to notify scheduler: {e}")))?;
-        set_n_fuzz_entry_for_corpus_id(&self.state, id)?;
+        self.add_seed_internal(BytesInput::new(input.to_vec()))?;
         Ok(())
     }
 
@@ -461,24 +426,7 @@ impl Fuzzer {
         // Auto-seed if corpus is empty.
         if self.state.corpus().count() == 0 {
             for seed in DEFAULT_SEEDS {
-                let mut testcase = Testcase::new(BytesInput::new(seed.to_vec()));
-
-                // Auto-seeds get same nominal metadata as explicit seeds.
-                testcase.set_exec_time(SEED_EXEC_TIME);
-                let mut sched_meta = SchedulerTestcaseMetadata::new(0);
-                sched_meta.set_cycle_and_time((SEED_EXEC_TIME, 1));
-                testcase.add_metadata(sched_meta);
-                testcase.add_metadata(MapIndexesMetadata::new(vec![]));
-
-                let id = self
-                    .state
-                    .corpus_mut()
-                    .add(testcase)
-                    .map_err(|e| Error::from_reason(format!("Failed to auto-seed: {e}")))?;
-                self.scheduler
-                    .on_add(&mut self.state, id)
-                    .map_err(|e| Error::from_reason(format!("Failed to notify scheduler: {e}")))?;
-                set_n_fuzz_entry_for_corpus_id(&self.state, id)?;
+                self.add_seed_internal(BytesInput::new(seed.to_vec()))?;
             }
             self.features.set_auto_seed_count(DEFAULT_SEEDS.len());
         }
@@ -890,7 +838,7 @@ impl Fuzzer {
     #[napi]
     pub fn advance_stage(
         &mut self,
-        _exit_kind: ExitKind,
+        exit_kind: ExitKind,
         exec_time_ns: f64,
     ) -> Result<Option<Buffer>> {
         match &self.stage_state {
@@ -909,7 +857,7 @@ impl Fuzzer {
                 return self.advance_colorization(exec_time_ns);
             }
             StageState::Redqueen { .. } => {
-                return self.advance_redqueen(_exit_kind, exec_time_ns);
+                return self.advance_redqueen(exit_kind, exec_time_ns);
             }
         }
 
@@ -1065,6 +1013,30 @@ impl Fuzzer {
 }
 
 impl Fuzzer {
+    /// Add a seed to the corpus with nominal metadata for scheduling.
+    ///
+    /// Seeds receive empty `MapIndexesMetadata` so `MinimizerScheduler::update_score()`
+    /// succeeds without error. Seeds cover no edges, so they cannot become favored.
+    fn add_seed_internal(&mut self, input: BytesInput) -> Result<CorpusId> {
+        let mut testcase = Testcase::new(input);
+        testcase.set_exec_time(SEED_EXEC_TIME);
+        let mut sched_meta = SchedulerTestcaseMetadata::new(0);
+        sched_meta.set_cycle_and_time((SEED_EXEC_TIME, 1));
+        testcase.add_metadata(sched_meta);
+        testcase.add_metadata(MapIndexesMetadata::new(vec![]));
+
+        let id = self
+            .state
+            .corpus_mut()
+            .add(testcase)
+            .map_err(|e| Error::from_reason(format!("Failed to add seed: {e}")))?;
+        self.scheduler
+            .on_add(&mut self.state, id)
+            .map_err(|e| Error::from_reason(format!("Failed to notify scheduler: {e}")))?;
+        set_n_fuzz_entry_for_corpus_id(&self.state, id)?;
+        Ok(id)
+    }
+
     /// Compute which coverage map indices are newly maximized compared to the
     /// feedback's internal history. Called BEFORE `is_interesting()` so the
     /// history hasn't been updated yet. Returns indices where `map[i] > history[i]`.

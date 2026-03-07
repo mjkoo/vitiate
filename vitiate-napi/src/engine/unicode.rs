@@ -25,19 +25,6 @@ impl Fuzzer {
             return Ok(None);
         }
 
-        // Cache metadata on testcase if not already present.
-        {
-            let tc = self
-                .state
-                .corpus()
-                .get(corpus_id)
-                .map_err(|e| Error::from_reason(format!("Failed to get corpus entry: {e}")))?;
-            let mut tc_ref = tc.borrow_mut();
-            if !tc_ref.has_metadata::<UnicodeIdentificationMetadata>() {
-                tc_ref.add_metadata(metadata);
-            }
-        }
-
         // Select random iteration count 1..=STAGE_MAX_ITERATIONS.
         // SAFETY of unwrap: STAGE_MAX_ITERATIONS is a non-zero constant.
         let max_iterations = self
@@ -47,13 +34,14 @@ impl Fuzzer {
             + 1;
 
         // Generate first mutated input.
-        let bytes = self.unicode_mutate_one(corpus_id)?;
+        let bytes = self.unicode_mutate_one(corpus_id, &metadata)?;
 
         self.last_stage_input = Some(bytes.clone());
         self.stage_state = StageState::Unicode {
             corpus_id,
             iteration: 0,
             max_iterations,
+            metadata,
         };
 
         Ok(Some(Buffer::from(bytes)))
@@ -61,22 +49,23 @@ impl Fuzzer {
 
     /// Advance the unicode stage after a target execution.
     pub(super) fn advance_unicode(&mut self, exec_time_ns: f64) -> Result<Option<Buffer>> {
-        let (corpus_id, iteration, max_iterations) = match self.stage_state {
-            StageState::Unicode {
-                corpus_id,
-                iteration,
-                max_iterations,
-            } => (corpus_id, iteration, max_iterations),
-            _ => return Ok(None),
-        };
+        let (corpus_id, iteration, max_iterations, metadata) =
+            match std::mem::replace(&mut self.stage_state, StageState::None) {
+                StageState::Unicode {
+                    corpus_id,
+                    iteration,
+                    max_iterations,
+                    metadata,
+                } => (corpus_id, iteration, max_iterations, metadata),
+                _ => return Ok(None),
+            };
 
         // Drain CmpLog (discard — unicode doesn't use CmpLog data).
         let _ = crate::cmplog::drain();
 
-        // Reset stage state before the fallible evaluate_coverage call. On error,
-        // the stage is cleanly abandoned (no zombie state). On success, stage_state
-        // is overwritten below with the next iteration or StageState::None.
-        self.stage_state = StageState::None;
+        // stage_state is already StageState::None (set by mem::replace above).
+        // On error, the stage is cleanly abandoned (no zombie state). On success,
+        // stage_state is overwritten below with the next iteration.
         let stage_input = self
             .last_stage_input
             .take()
@@ -93,18 +82,18 @@ impl Fuzzer {
         let next_iteration = iteration + 1;
         if next_iteration >= max_iterations {
             // Unicode stage complete — pipeline done.
-            // stage_state is already StageState::None (reset before evaluate_coverage above).
             return Ok(None);
         }
 
         // Generate next unicode candidate.
-        let bytes = self.unicode_mutate_one(corpus_id)?;
+        let bytes = self.unicode_mutate_one(corpus_id, &metadata)?;
         self.last_stage_input = Some(bytes.clone());
 
         self.stage_state = StageState::Unicode {
             corpus_id,
             iteration: next_iteration,
             max_iterations,
+            metadata,
         };
 
         Ok(Some(Buffer::from(bytes)))
@@ -112,7 +101,11 @@ impl Fuzzer {
 
     /// Clone a corpus entry, apply unicode mutations, and return the result bytes.
     /// Each call starts from a fresh clone (non-cumulative mutations).
-    pub(super) fn unicode_mutate_one(&mut self, corpus_id: CorpusId) -> Result<Vec<u8>> {
+    pub(super) fn unicode_mutate_one(
+        &mut self,
+        corpus_id: CorpusId,
+        metadata: &UnicodeIdentificationMetadata,
+    ) -> Result<Vec<u8>> {
         // Clone the corpus entry.
         let input = self
             .state
@@ -120,12 +113,8 @@ impl Fuzzer {
             .cloned_input_for_id(corpus_id)
             .map_err(|e| Error::from_reason(format!("Failed to clone corpus entry: {e}")))?;
 
-        // Retrieve cached metadata (mutations are non-cumulative: each iteration
-        // starts from the same original input, so metadata is identical).
-        let metadata = self.get_or_compute_unicode_metadata(corpus_id)?;
-
         // Create UnicodeInput tuple and apply mutation.
-        let mut unicode_input: UnicodeInput = (input, metadata);
+        let mut unicode_input: UnicodeInput = (input, metadata.clone());
         let _ = self
             .unicode_mutator
             .mutate(&mut self.state, &mut unicode_input)

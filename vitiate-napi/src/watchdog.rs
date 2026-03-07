@@ -353,6 +353,9 @@ impl Watchdog {
         self.arm(timeout_ms);
 
         let raw_env = env.raw();
+        // SAFETY: `raw_env` is valid — obtained from the `Env` parameter which
+        // NAPI guarantees is valid for the duration of this call. `input` and
+        // `target` are owned Rust values being converted to raw NAPI handles.
         let input_value = unsafe { Buffer::to_napi_value(raw_env, input)? };
         let target_value = unsafe { Unknown::to_napi_value(raw_env, target)? };
 
@@ -366,6 +369,10 @@ impl Watchdog {
 
         // Fallback path: C++ shim not initialized (cargo test, symbol resolution
         // failed). Call the function via NAPI and handle exceptions manually.
+        //
+        // SAFETY for all raw NAPI calls below: `raw_env` is valid (from the
+        // `Env` parameter), and all output pointers are valid stack locals.
+        // Raw NAPI functions are safe to call with valid env + pointer args.
         let mut result_value: napi::sys::napi_value = std::ptr::null_mut();
         let mut global: napi::sys::napi_value = std::ptr::null_mut();
         let status = unsafe { napi::sys::napi_get_global(raw_env, &mut global) };
