@@ -125,26 +125,14 @@ describe("parseArgs", () => {
       }
     });
 
-    it("parses -merge=1 with warning about unsupported corpus merge", () => {
-      const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-      try {
-        parseArgs(argv("./test.ts", "-merge=1"));
-        expect(stderrSpy).toHaveBeenCalledWith(
-          expect.stringContaining("-merge"),
-        );
-      } finally {
-        stderrSpy.mockRestore();
-      }
+    it("parses -merge=1 and sets merge flag", () => {
+      const result = parseArgs(argv("./test.ts", "-merge=1"));
+      expect(result.merge).toBe(true);
     });
 
-    it("parses -merge=0 without warning (not requesting merge)", () => {
-      const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-      try {
-        parseArgs(argv("./test.ts", "-merge=0"));
-        expect(stderrSpy).not.toHaveBeenCalled();
-      } finally {
-        stderrSpy.mockRestore();
-      }
+    it("parses -merge=0 without merge mode", () => {
+      const result = parseArgs(argv("./test.ts", "-merge=0"));
+      expect(result.merge).toBe(false);
     });
 
     it("unknown flags still cause parse errors", () => {

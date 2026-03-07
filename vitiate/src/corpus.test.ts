@@ -12,6 +12,9 @@ import { tmpdir } from "node:os";
 import {
   loadSeedCorpus,
   loadCachedCorpus,
+  loadCachedCorpusWithPaths,
+  loadCorpusDirsWithPaths,
+  deleteCorpusEntry,
   writeCorpusEntry,
   writeCorpusEntryToDir,
   writeArtifact,
@@ -428,6 +431,90 @@ describe("corpus", () => {
       expect(result).toHaveLength(2);
       const contents = result.map((b) => b.toString()).sort();
       expect(contents).toEqual(["aaa", "bbb"]);
+    });
+  });
+
+  describe("loadCachedCorpusWithPaths", () => {
+    it("returns empty array when directory does not exist", () => {
+      const result = loadCachedCorpusWithPaths(
+        tmpDir,
+        "test.fuzz.ts",
+        "nonexistent",
+      );
+      expect(result).toEqual([]);
+    });
+
+    it("returns entries with absolute paths and data", () => {
+      const dirName = sanitizeTestName("parse");
+      const dir = path.join(tmpDir, "test.fuzz.ts", dirName);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(path.join(dir, "a1b2c3d4"), "data1");
+      writeFileSync(path.join(dir, "e5f6g7h8"), "data2");
+
+      const result = loadCachedCorpusWithPaths(tmpDir, "test.fuzz.ts", "parse");
+      expect(result).toHaveLength(2);
+      for (const entry of result) {
+        expect(path.isAbsolute(entry.path)).toBe(true);
+        expect(entry.data).toBeInstanceOf(Buffer);
+      }
+      const contents = result.map((e) => e.data.toString()).sort();
+      expect(contents).toEqual(["data1", "data2"]);
+    });
+  });
+
+  describe("loadCorpusDirsWithPaths", () => {
+    it("returns entries with paths from multiple directories", () => {
+      const dir1 = path.join(tmpDir, "corpus1");
+      const dir2 = path.join(tmpDir, "corpus2");
+      mkdirSync(dir1, { recursive: true });
+      mkdirSync(dir2, { recursive: true });
+      writeFileSync(path.join(dir1, "abc"), "aaa");
+      writeFileSync(path.join(dir2, "def"), "bbb");
+
+      const result = loadCorpusDirsWithPaths([dir1, dir2]);
+      expect(result).toHaveLength(2);
+      for (const entry of result) {
+        expect(path.isAbsolute(entry.path)).toBe(true);
+        expect(entry.data).toBeInstanceOf(Buffer);
+      }
+    });
+
+    it("returns empty array for nonexistent directories", () => {
+      const result = loadCorpusDirsWithPaths(["/nonexistent/dir"]);
+      expect(result).toEqual([]);
+    });
+
+    it("skips nonexistent directories but returns entries from existing ones", () => {
+      const dir = path.join(tmpDir, "corpus");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(path.join(dir, "abc"), "data");
+
+      const result = loadCorpusDirsWithPaths(["/nonexistent/dir", dir]);
+      expect(result).toHaveLength(1);
+      expect(result[0]!.data.toString()).toBe("data");
+    });
+  });
+
+  describe("deleteCorpusEntry", () => {
+    it("deletes an existing file", () => {
+      const filePath = path.join(tmpDir, "entry");
+      writeFileSync(filePath, "data");
+      expect(existsSync(filePath)).toBe(true);
+
+      deleteCorpusEntry(filePath);
+      expect(existsSync(filePath)).toBe(false);
+    });
+
+    it("silently succeeds when file does not exist", () => {
+      const filePath = path.join(tmpDir, "nonexistent");
+      expect(() => deleteCorpusEntry(filePath)).not.toThrow();
+    });
+
+    it("propagates non-ENOENT errors", () => {
+      // Attempt to delete a directory (which will fail with EISDIR/EPERM)
+      const dirPath = path.join(tmpDir, "adir");
+      mkdirSync(dirPath, { recursive: true });
+      expect(() => deleteCorpusEntry(dirPath)).toThrow();
     });
   });
 

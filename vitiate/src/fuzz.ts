@@ -11,6 +11,9 @@ import { ShmemHandle } from "vitiate-napi";
 import type { FuzzOptions } from "./config.js";
 import {
   isFuzzingMode,
+  isOptimizeMode,
+  isMergeMode,
+  checkModeExclusion,
   isSupervisorChild,
   isLibfuzzerCompat,
   getCorpusOutputDir,
@@ -21,11 +24,14 @@ import {
 import {
   loadSeedCorpus,
   loadCachedCorpus,
+  loadCachedCorpusWithPaths,
   loadCorpusFromDirs,
   getCacheDir,
   getFuzzTestDataDir,
 } from "./corpus.js";
+import { getCoverageMap } from "./globals.js";
 import { runFuzzLoop } from "./loop.js";
+import { runMergeMode, runOptimizeMode } from "./merge.js";
 import { runSupervisor, type SupervisorResult } from "./supervisor.js";
 
 let cachedCliOptions: FuzzOptions | undefined;
@@ -149,9 +155,62 @@ function registerFuzzTest(
   target: FuzzTarget,
   options?: FuzzOptions,
 ): void {
-  // CLI options (env-based) take precedence over per-test options
-  const mergedOptions = { ...options, ...getCachedCliOptions() };
-  if (isFuzzingMode()) {
+  checkModeExclusion();
+  if (isOptimizeMode()) {
+    // Optimize mode: replay corpus, run set cover, delete non-survivors
+    register(
+      name,
+      async () => {
+        const testDir = getTestDir();
+        const cacheDir = getCacheDir();
+        const relativeTestFilePath = getRelativeTestFilePath();
+        const seedEntries = loadSeedCorpus(testDir, name).map((data, i) => ({
+          path: `seed-${i}`,
+          data,
+        }));
+        const cachedEntries = loadCachedCorpusWithPaths(
+          cacheDir,
+          relativeTestFilePath,
+          name,
+        );
+        const coverageMap = getCoverageMap();
+
+        await runOptimizeMode({
+          target,
+          testName: name,
+          seedEntries,
+          cachedEntries,
+          coverageMap,
+        });
+      },
+      VITEST_NO_TIMEOUT,
+    );
+  } else if (isMergeMode()) {
+    // Merge mode: replay corpus dirs, run set cover, write survivors
+    register(
+      name,
+      async () => {
+        const corpusDirs = getCorpusDirs();
+        const controlFilePath = process.env["VITIATE_MERGE_CONTROL_FILE"];
+        if (!controlFilePath) {
+          throw new Error(
+            "vitiate: VITIATE_MERGE_CONTROL_FILE env var is required in merge mode",
+          );
+        }
+        const coverageMap = getCoverageMap();
+
+        await runMergeMode({
+          target,
+          corpusDirs: corpusDirs ?? [],
+          controlFilePath,
+          coverageMap,
+        });
+      },
+      VITEST_NO_TIMEOUT,
+    );
+  } else if (isFuzzingMode()) {
+    // CLI options (env-based) take precedence over per-test options
+    const mergedOptions = { ...options, ...getCachedCliOptions() };
     if (isSupervisorChild()) {
       // Child mode: supervised — enter the fuzz loop directly
       register(

@@ -7,6 +7,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
@@ -27,13 +28,25 @@ export function sanitizeTestName(name: string): string {
   return `${hash}-${slug}`;
 }
 
+export interface CorpusEntryWithPath {
+  path: string;
+  data: Buffer;
+}
+
 function readCorpusDir(dir: string): Buffer[] {
+  return readCorpusDirWithPaths(dir).map((e) => e.data);
+}
+
+function readCorpusDirWithPaths(dir: string): CorpusEntryWithPath[] {
   if (!existsSync(dir)) {
     return [];
   }
   return readdirSync(dir, { withFileTypes: true })
     .filter((e) => e.isFile() && !e.name.startsWith("."))
-    .map((e) => readFileSync(path.join(dir, e.name)));
+    .map((e) => ({
+      path: path.join(dir, e.name),
+      data: readFileSync(path.join(dir, e.name)),
+    }));
 }
 
 export function getFuzzTestDataDir(testDir: string, testName: string): string {
@@ -82,8 +95,31 @@ export function getCacheDir(): string {
   return path.resolve(projectRoot ?? process.cwd(), ".vitiate-corpus");
 }
 
+export function loadCachedCorpusWithPaths(
+  cacheDir: string,
+  testFilePath: string,
+  testName: string,
+): CorpusEntryWithPath[] {
+  const dir = path.join(cacheDir, testFilePath, sanitizeTestName(testName));
+  return readCorpusDirWithPaths(dir);
+}
+
 export function loadCorpusFromDirs(dirs: string[]): Buffer[] {
   return dirs.flatMap((dir) => readCorpusDir(dir));
+}
+
+export function loadCorpusDirsWithPaths(dirs: string[]): CorpusEntryWithPath[] {
+  return dirs.flatMap((dir) => readCorpusDirWithPaths(dir));
+}
+
+export function deleteCorpusEntry(filePath: string): void {
+  try {
+    unlinkSync(filePath);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw e;
+    }
+  }
 }
 
 export function writeCorpusEntry(

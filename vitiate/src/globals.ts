@@ -16,6 +16,13 @@ declare global {
   ) => boolean;
 }
 
+/**
+ * Return the current coverage map. Must be called after `initGlobals()`.
+ */
+export function getCoverageMap(): Uint8Array {
+  return globalThis.__vitiate_cov;
+}
+
 type Orderable = string | number | bigint;
 
 export async function initGlobals(): Promise<void> {

@@ -9,7 +9,8 @@
  *   in fuzzing mode, and runs the fuzz loop.
  */
 import { spawn } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, realpathSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { object } from "@optique/core/constructs";
@@ -35,6 +36,7 @@ export interface CliArgs {
   testName?: string;
   artifactPrefix?: string;
   dictPath?: string;
+  merge: boolean;
   fuzzOptions: FuzzOptions;
 }
 
@@ -83,11 +85,6 @@ function warnUnsupportedFlags(parsed: InferValue<typeof cliParser>): void {
       `vitiate: warning: -jobs=${parsed.jobs} is ignored; vitiate runs a single job at a time (equivalent to -jobs=1)\n`,
     );
   }
-  if (parsed.merge !== undefined && parsed.merge !== 0) {
-    process.stderr.write(
-      `vitiate: warning: -merge=${parsed.merge} is not yet supported; corpus merge mode is ignored\n`,
-    );
-  }
 }
 
 function toCliArgs(parsed: InferValue<typeof cliParser>): CliArgs {
@@ -126,6 +123,7 @@ function toCliArgs(parsed: InferValue<typeof cliParser>): CliArgs {
     testName,
     artifactPrefix,
     dictPath,
+    merge: parsed.merge !== undefined && parsed.merge !== 0,
     fuzzOptions: {
       maxLen,
       timeoutMs: timeout != null ? timeout * 1000 : undefined,
@@ -185,6 +183,96 @@ async function runParentMode(
     process.exitCode = 1;
   } else {
     process.exitCode = result.exitCode ?? 0;
+  }
+}
+
+/**
+ * Parent supervisor for merge mode: allocates shmem, creates control file,
+ * spawns child with merge env vars, cleans up after.
+ */
+async function runMergeParentMode(
+  testFile: string,
+  corpusDirs: readonly string[],
+  maxInputLen: number,
+  testName?: string,
+): Promise<void> {
+  if (corpusDirs.length === 0) {
+    process.stderr.write(
+      "vitiate: error: -merge=1 requires at least one corpus directory\n",
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  const shmem = ShmemHandle.allocate(maxInputLen);
+  const controlFilePath = path.join(
+    tmpdir(),
+    `vitiate-merge-${process.pid}-${Date.now()}.jsonl`,
+  );
+
+  const result = await runSupervisor({
+    shmem,
+    testDir: path.dirname(path.resolve(testFile)),
+    testName: testName ?? path.basename(testFile, path.extname(testFile)),
+    spawnChild: () =>
+      spawn(process.execPath, process.argv.slice(1), {
+        env: {
+          ...process.env,
+          VITIATE_SUPERVISOR: "1",
+          VITIATE_MERGE: "1",
+          VITIATE_MERGE_CONTROL_FILE: controlFilePath,
+        },
+        stdio: ["ignore", "inherit", "inherit"],
+      }),
+    // No explicit respawn limit for merge — bounded by corpus size
+    maxRespawns: Number.MAX_SAFE_INTEGER,
+  });
+
+  // Clean up control file
+  try {
+    unlinkSync(controlFilePath);
+  } catch {
+    // Ignore — may not exist if merge had no entries
+  }
+
+  process.exitCode = result.exitCode ?? 0;
+}
+
+/**
+ * Child mode for merge: starts Vitest with instrumentation for merge replay.
+ */
+async function runMergeChildMode(
+  testFile: string,
+  corpusDirs: readonly string[],
+  testName?: string,
+): Promise<void> {
+  // Corpus directories are passed via env for the merge loop
+  if (corpusDirs.length > 0) {
+    process.env["VITIATE_CORPUS_DIRS"] = corpusDirs.join(path.delimiter);
+  }
+
+  const { startVitest } = await import("vitest/node");
+
+  const vitest = await startVitest(
+    "test",
+    [testFile],
+    {
+      include: [testFile],
+      testTimeout: 0,
+      ...(testName
+        ? { testNamePattern: `^${escapeStringRegexp(testName)}$` }
+        : {}),
+    },
+    {
+      plugins: [vitiatePlugin({ instrument: {} })],
+    },
+  );
+
+  if (vitest) {
+    await vitest.close();
+  } else {
+    process.stderr.write("vitiate: vitest failed to start\n");
+    process.exitCode = 1;
   }
 }
 
@@ -258,6 +346,7 @@ async function main(): Promise<void> {
     testName,
     artifactPrefix,
     dictPath,
+    merge,
     fuzzOptions,
   } = toCliArgs(
     runSync(cliParser, {
@@ -266,7 +355,15 @@ async function main(): Promise<void> {
     }),
   );
 
-  if (isSupervisorChild()) {
+  if (merge) {
+    // Merge mode: corpus minimization via set cover
+    if (isSupervisorChild()) {
+      await runMergeChildMode(testFile, corpusDirs, testName);
+    } else {
+      const maxInputLen = fuzzOptions.maxLen ?? DEFAULT_MAX_INPUT_LEN;
+      await runMergeParentMode(testFile, corpusDirs, maxInputLen, testName);
+    }
+  } else if (isSupervisorChild()) {
     // Child mode: shmem is already set up by the parent
     await runChildMode(
       testFile,

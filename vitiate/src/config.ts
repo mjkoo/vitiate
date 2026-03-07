@@ -93,6 +93,27 @@ export function isFuzzingMode(): boolean {
   return envTruthy("VITIATE_FUZZ");
 }
 
+export function isOptimizeMode(): boolean {
+  return envTruthy("VITIATE_OPTIMIZE");
+}
+
+export function isMergeMode(): boolean {
+  return envTruthy("VITIATE_MERGE");
+}
+
+/**
+ * Check for mutually exclusive mode combinations and throw if detected.
+ * Must be called at mode-detection boundaries.
+ */
+export function checkModeExclusion(): void {
+  if (isOptimizeMode() && isFuzzingMode()) {
+    throw new Error(
+      "VITIATE_OPTIMIZE and VITIATE_FUZZ are mutually exclusive. " +
+        "Optimize mode replays existing corpus entries; fuzz mode generates new ones.",
+    );
+  }
+}
+
 export function isSupervisorChild(): boolean {
   return envTruthy("VITIATE_SUPERVISOR");
 }

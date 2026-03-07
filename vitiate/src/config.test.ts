@@ -1,6 +1,9 @@
 import { describe, it, expect, afterEach } from "vitest";
 import {
   isFuzzingMode,
+  isOptimizeMode,
+  isMergeMode,
+  checkModeExclusion,
   isLibfuzzerCompat,
   getCorpusOutputDir,
   getArtifactPrefix,
@@ -51,6 +54,106 @@ describe("config", () => {
     it("returns true when VITIATE_FUZZ is a pattern", () => {
       process.env["VITIATE_FUZZ"] = "parser";
       expect(isFuzzingMode()).toBe(true);
+    });
+  });
+
+  describe("isOptimizeMode", () => {
+    const originalOptimize = process.env["VITIATE_OPTIMIZE"];
+
+    afterEach(() => {
+      if (originalOptimize === undefined) {
+        delete process.env["VITIATE_OPTIMIZE"];
+      } else {
+        process.env["VITIATE_OPTIMIZE"] = originalOptimize;
+      }
+    });
+
+    it("returns false when VITIATE_OPTIMIZE is not set", () => {
+      delete process.env["VITIATE_OPTIMIZE"];
+      expect(isOptimizeMode()).toBe(false);
+    });
+
+    it("returns false when VITIATE_OPTIMIZE is empty", () => {
+      process.env["VITIATE_OPTIMIZE"] = "";
+      expect(isOptimizeMode()).toBe(false);
+    });
+
+    it("returns false when VITIATE_OPTIMIZE is 0", () => {
+      process.env["VITIATE_OPTIMIZE"] = "0";
+      expect(isOptimizeMode()).toBe(false);
+    });
+
+    it("returns true when VITIATE_OPTIMIZE is 1", () => {
+      process.env["VITIATE_OPTIMIZE"] = "1";
+      expect(isOptimizeMode()).toBe(true);
+    });
+  });
+
+  describe("isMergeMode", () => {
+    const originalMerge = process.env["VITIATE_MERGE"];
+
+    afterEach(() => {
+      if (originalMerge === undefined) {
+        delete process.env["VITIATE_MERGE"];
+      } else {
+        process.env["VITIATE_MERGE"] = originalMerge;
+      }
+    });
+
+    it("returns false when VITIATE_MERGE is not set", () => {
+      delete process.env["VITIATE_MERGE"];
+      expect(isMergeMode()).toBe(false);
+    });
+
+    it("returns false when VITIATE_MERGE is 0", () => {
+      process.env["VITIATE_MERGE"] = "0";
+      expect(isMergeMode()).toBe(false);
+    });
+
+    it("returns true when VITIATE_MERGE is 1", () => {
+      process.env["VITIATE_MERGE"] = "1";
+      expect(isMergeMode()).toBe(true);
+    });
+  });
+
+  describe("checkModeExclusion", () => {
+    const originalOptimize = process.env["VITIATE_OPTIMIZE"];
+
+    afterEach(() => {
+      if (originalEnv === undefined) {
+        delete process.env["VITIATE_FUZZ"];
+      } else {
+        process.env["VITIATE_FUZZ"] = originalEnv;
+      }
+      if (originalOptimize === undefined) {
+        delete process.env["VITIATE_OPTIMIZE"];
+      } else {
+        process.env["VITIATE_OPTIMIZE"] = originalOptimize;
+      }
+    });
+
+    it("throws when both VITIATE_OPTIMIZE and VITIATE_FUZZ are set", () => {
+      process.env["VITIATE_OPTIMIZE"] = "1";
+      process.env["VITIATE_FUZZ"] = "1";
+      expect(() => checkModeExclusion()).toThrow("mutually exclusive");
+    });
+
+    it("does not throw when only VITIATE_OPTIMIZE is set", () => {
+      process.env["VITIATE_OPTIMIZE"] = "1";
+      delete process.env["VITIATE_FUZZ"];
+      expect(() => checkModeExclusion()).not.toThrow();
+    });
+
+    it("does not throw when only VITIATE_FUZZ is set", () => {
+      delete process.env["VITIATE_OPTIMIZE"];
+      process.env["VITIATE_FUZZ"] = "1";
+      expect(() => checkModeExclusion()).not.toThrow();
+    });
+
+    it("does not throw when neither is set", () => {
+      delete process.env["VITIATE_OPTIMIZE"];
+      delete process.env["VITIATE_FUZZ"];
+      expect(() => checkModeExclusion()).not.toThrow();
     });
   });
 
