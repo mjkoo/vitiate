@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [
     vitiatePlugin({
       fuzz: {
-        maxTotalTimeMs: 60_000,
+        fuzzTimeMs: 60_000,
       },
     }),
   ],

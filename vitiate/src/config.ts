@@ -27,7 +27,7 @@ const FuzzOptionsSchema = v.object({
    */
   timeoutMs: v.optional(NonNegativeInteger),
   /** Total fuzzing time limit in milliseconds. */
-  maxTotalTimeMs: v.optional(NonNegativeInteger),
+  fuzzTimeMs: v.optional(NonNegativeInteger),
   /** Maximum number of fuzzing iterations. */
   runs: v.optional(NonNegativeInteger),
   /** RNG seed for reproducible fuzzing. */
@@ -101,6 +101,25 @@ export function isLibfuzzerCompat(): boolean {
   return envTruthy("VITIATE_LIBFUZZER_COMPAT");
 }
 
+/**
+ * Read `VITIATE_FUZZ_TIME` env var (seconds) and convert to milliseconds.
+ * Returns `undefined` when unset/empty, or when the value is invalid (warns on stderr).
+ */
+export function getFuzzTime(): number | undefined {
+  const raw = process.env["VITIATE_FUZZ_TIME"];
+  if (raw === undefined || raw === "") return undefined;
+
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 0) {
+    process.stderr.write(
+      `vitiate: warning: invalid VITIATE_FUZZ_TIME value: ${JSON.stringify(raw)} (expected non-negative integer seconds)\n`,
+    );
+    return undefined;
+  }
+
+  return parsed * 1000;
+}
+
 export function getCorpusOutputDir(): string | undefined {
   return process.env["VITIATE_CORPUS_OUTPUT_DIR"] || undefined;
 }
@@ -120,46 +139,57 @@ function stripNulls(obj: Record<string, unknown>): Record<string, unknown> {
 }
 
 export function getCliOptions(): FuzzOptions {
+  let options: FuzzOptions = {};
+
   const raw = process.env["VITIATE_FUZZ_OPTIONS"];
-  if (!raw) return {};
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (e) {
-    process.stderr.write(
-      `vitiate: warning: invalid VITIATE_FUZZ_OPTIONS JSON: ${e instanceof Error ? e.message : String(e)}\n`,
-    );
-    return {};
-  }
-
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    process.stderr.write(
-      `vitiate: warning: VITIATE_FUZZ_OPTIONS must be a JSON object\n`,
-    );
-    return {};
-  }
-
-  const result = v.safeParse(
-    FuzzOptionsSchema,
-    stripNulls(parsed as Record<string, unknown>),
-  );
-  if (result.success) return result.output;
-
-  const flat = v.flatten(result.issues);
-  if (flat.nested) {
-    for (const [key, messages] of Object.entries(flat.nested)) {
-      if (!messages?.length) continue;
+  if (raw) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e) {
       process.stderr.write(
-        `vitiate: warning: invalid VITIATE_FUZZ_OPTIONS.${key}: ${messages[0]}\n`,
+        `vitiate: warning: invalid VITIATE_FUZZ_OPTIONS JSON: ${e instanceof Error ? e.message : String(e)}\n`,
       );
+      parsed = null;
     }
-  } else if (flat.root) {
-    process.stderr.write(
-      `vitiate: warning: invalid VITIATE_FUZZ_OPTIONS: ${flat.root[0]}\n`,
-    );
+
+    if (parsed !== null) {
+      if (typeof parsed !== "object" || Array.isArray(parsed)) {
+        process.stderr.write(
+          `vitiate: warning: VITIATE_FUZZ_OPTIONS must be a JSON object\n`,
+        );
+      } else {
+        const result = v.safeParse(
+          FuzzOptionsSchema,
+          stripNulls(parsed as Record<string, unknown>),
+        );
+        if (result.success) {
+          options = result.output;
+        } else {
+          const flat = v.flatten(result.issues);
+          if (flat.nested) {
+            for (const [key, messages] of Object.entries(flat.nested)) {
+              if (!messages?.length) continue;
+              process.stderr.write(
+                `vitiate: warning: invalid VITIATE_FUZZ_OPTIONS.${key}: ${messages[0]}\n`,
+              );
+            }
+          } else if (flat.root) {
+            process.stderr.write(
+              `vitiate: warning: invalid VITIATE_FUZZ_OPTIONS: ${flat.root[0]}\n`,
+            );
+          }
+        }
+      }
+    }
   }
-  return {};
+
+  const fuzzTimeOverride = getFuzzTime();
+  if (fuzzTimeOverride !== undefined) {
+    options = { ...options, fuzzTimeMs: fuzzTimeOverride };
+  }
+
+  return options;
 }
 
 export const COVERAGE_MAP_SIZE = 65536;

@@ -333,7 +333,7 @@ describe("fuzz loop", () => {
       "test.fuzz.ts",
       {
         runs: 1_000_000,
-        maxTotalTimeMs: 30_000,
+        fuzzTimeMs: 30_000,
       },
     );
 
@@ -356,7 +356,7 @@ describe("fuzz loop", () => {
       }
     };
 
-    // runs=0 should mean unlimited; maxTotalTimeMs is the safety net
+    // runs=0 should mean unlimited; fuzzTimeMs is the safety net
     const result = await runFuzzLoop(
       target,
       tmpDir,
@@ -364,7 +364,7 @@ describe("fuzz loop", () => {
       "test.fuzz.ts",
       {
         runs: 0,
-        maxTotalTimeMs: 30_000,
+        fuzzTimeMs: 30_000,
       },
     );
 
@@ -483,7 +483,7 @@ describe("fuzz loop", () => {
     expect(callCount).toBeGreaterThan(50);
   });
 
-  it("maxTotalTimeMs=0 means unlimited total time (runs until crash or runs limit)", async () => {
+  it("fuzzTimeMs=0 means unlimited total time (runs until crash or runs limit)", async () => {
     await setupFuzzingMode();
     const target = (data: Buffer): void => {
       if (data.length > 0 && data[0] === 0x42) {
@@ -491,14 +491,14 @@ describe("fuzz loop", () => {
       }
     };
 
-    // maxTotalTimeMs=0 should mean unlimited; runs is the safety net
+    // fuzzTimeMs=0 should mean unlimited; runs is the safety net
     const result = await runFuzzLoop(
       target,
       tmpDir,
       "time-zero",
       "test.fuzz.ts",
       {
-        maxTotalTimeMs: 0,
+        fuzzTimeMs: 0,
         runs: 1_000_000,
       },
     );
@@ -598,7 +598,7 @@ describe("fuzz loop", () => {
         tmpDir,
         "stage-crash",
         "test.fuzz.ts",
-        { runs: 1_000_000, maxTotalTimeMs: 30_000, grimoire: false },
+        { runs: 1_000_000, fuzzTimeMs: 30_000, grimoire: false },
       );
 
       expect(result.crashed).toBe(true);
@@ -671,7 +671,7 @@ describe("fuzz loop", () => {
         {
           runs: 1_000_000,
           timeoutMs: 200,
-          maxTotalTimeMs: 30_000,
+          fuzzTimeMs: 30_000,
           grimoire: false,
         },
       );
@@ -711,7 +711,7 @@ describe("fuzz loop", () => {
         tmpDir,
         "stage-execs-abort",
         "test.fuzz.ts",
-        { runs: 1_000_000, maxTotalTimeMs: 30_000, grimoire: false },
+        { runs: 1_000_000, fuzzTimeMs: 30_000, grimoire: false },
       );
 
       expect(result.crashed).toBe(true);

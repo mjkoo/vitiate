@@ -20,7 +20,7 @@ The shmem stash (step 2) SHALL occur whenever the `VITIATE_SUPERVISOR` environme
 The loop SHALL terminate when any of these conditions is met:
 
 - A crash or timeout is detected, including crashes/timeouts during stage execution.
-- The time limit (`fuzzTime`) is reached.
+- The time limit (`fuzzTimeMs`) is reached.
 - The iteration limit (`runs`) is reached.
 - The process receives SIGINT.
 
@@ -72,7 +72,7 @@ For `runs` and the time limit, a value of 0 means unlimited (equivalent to no li
 
 #### Scenario: Time limit reached
 
-- **WHEN** the elapsed time exceeds the configured `fuzzTime`
+- **WHEN** the elapsed time exceeds the configured `fuzzTimeMs`
 - **THEN** the loop terminates and the test passes (no crash found)
 
 #### Scenario: Iteration limit reached

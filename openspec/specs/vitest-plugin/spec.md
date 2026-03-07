@@ -13,7 +13,7 @@ The `options` parameter SHALL accept:
 - An optional `fuzz` object with project-wide fuzzing defaults:
   - `maxLen` (number, optional): Maximum input length in bytes.
   - `timeoutMs` (number, optional): Per-execution timeout in milliseconds.
-  - `maxTotalTimeMs` (number, optional): Total fuzzing time limit in milliseconds.
+  - `fuzzTimeMs` (number, optional): Total fuzzing time limit in milliseconds.
   - `runs` (number, optional): Maximum number of fuzzing iterations.
   - `seed` (number, optional): RNG seed for reproducible fuzzing.
   - `cacheDir` (string, optional): Cache directory path, resolved relative to project root.
@@ -53,6 +53,34 @@ The `options` parameter SHALL accept:
 
 - **WHEN** `vitiatePlugin({ instrument: { include: ["src/**/*.ts"] } })` is called
 - **THEN** only files matching `src/**/*.ts` are instrumented
+
+### Requirement: VITIATE_FUZZ_TIME environment variable
+
+The system SHALL support a `VITIATE_FUZZ_TIME` environment variable as a convenience shorthand for setting the fuzz campaign duration. The value SHALL be interpreted as a non-negative integer number of seconds.
+
+When `VITIATE_FUZZ_TIME` is set:
+- The value SHALL be validated as a non-negative integer. Invalid values (negative, non-integer, non-numeric, Infinity) SHALL produce a warning on stderr and be ignored.
+- The value SHALL be converted from seconds to milliseconds and applied as `fuzzTimeMs`.
+- `VITIATE_FUZZ_TIME` SHALL take precedence over `VITIATE_FUZZ_OPTIONS.fuzzTimeMs`. An invalid `VITIATE_FUZZ_TIME` SHALL NOT clobber a valid `VITIATE_FUZZ_OPTIONS.fuzzTimeMs`.
+
+Precedence (highest wins): `VITIATE_FUZZ_TIME` > `VITIATE_FUZZ_OPTIONS.fuzzTimeMs` > per-test `fuzzTimeMs` option.
+
+#### Scenario: Simple duration override
+
+- **WHEN** `VITIATE_FUZZ_TIME=30` is set in the environment
+- **THEN** each fuzz test runs for up to 30 seconds (30000ms)
+- **AND** this is equivalent to `VITIATE_FUZZ_OPTIONS={"fuzzTimeMs":30000}`
+
+#### Scenario: VITIATE_FUZZ_TIME overrides VITIATE_FUZZ_OPTIONS
+
+- **WHEN** `VITIATE_FUZZ_TIME=10` and `VITIATE_FUZZ_OPTIONS={"fuzzTimeMs":60000}` are both set
+- **THEN** `fuzzTimeMs` is 10000 (VITIATE_FUZZ_TIME wins)
+
+#### Scenario: Invalid VITIATE_FUZZ_TIME is ignored
+
+- **WHEN** `VITIATE_FUZZ_TIME=abc` is set
+- **THEN** a warning is written to stderr
+- **AND** the value is ignored (does not affect fuzzTimeMs)
 
 ### Requirement: Project root communication
 

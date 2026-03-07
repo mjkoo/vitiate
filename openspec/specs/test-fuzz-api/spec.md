@@ -13,8 +13,8 @@ fuzz(name: string, target: (data: Buffer) => void | Promise<void>, options?: Fuz
 The `FuzzOptions` SHALL support:
 
 - `maxLen` (number, optional): Maximum input length in bytes.
-- `timeout` (number, optional): Per-execution timeout in milliseconds.
-- `fuzzTime` (number, optional): Total fuzzing time limit in milliseconds.
+- `timeoutMs` (number, optional): Per-execution timeout in milliseconds.
+- `fuzzTimeMs` (number, optional): Total fuzzing time limit in milliseconds.
 - `runs` (number, optional): Maximum number of fuzzing iterations.
 - `seed` (number, optional): RNG seed for reproducible fuzzing.
 

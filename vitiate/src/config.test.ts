@@ -5,6 +5,7 @@ import {
   getCorpusOutputDir,
   getArtifactPrefix,
   getCliOptions,
+  getFuzzTime,
   resolveInstrumentOptions,
   COVERAGE_MAP_SIZE,
 } from "./config.js";
@@ -512,6 +513,188 @@ describe("config", () => {
         const opts = getCliOptions();
         expect(opts).toEqual({});
         expect(chunks.length).toBe(2);
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+  });
+
+  describe("getFuzzTime", () => {
+    const original = process.env["VITIATE_FUZZ_TIME"];
+
+    afterEach(() => {
+      if (original === undefined) {
+        delete process.env["VITIATE_FUZZ_TIME"];
+      } else {
+        process.env["VITIATE_FUZZ_TIME"] = original;
+      }
+    });
+
+    it("returns undefined when not set", () => {
+      delete process.env["VITIATE_FUZZ_TIME"];
+      expect(getFuzzTime()).toBeUndefined();
+    });
+
+    it("returns undefined when empty", () => {
+      process.env["VITIATE_FUZZ_TIME"] = "";
+      expect(getFuzzTime()).toBeUndefined();
+    });
+
+    it("converts seconds to milliseconds", () => {
+      process.env["VITIATE_FUZZ_TIME"] = "30";
+      expect(getFuzzTime()).toBe(30000);
+    });
+
+    it("accepts zero (unlimited)", () => {
+      process.env["VITIATE_FUZZ_TIME"] = "0";
+      expect(getFuzzTime()).toBe(0);
+    });
+
+    it("rejects negative values with warning", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_FUZZ_TIME"] = "-5";
+        expect(getFuzzTime()).toBeUndefined();
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toContain("VITIATE_FUZZ_TIME");
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+
+    it("rejects non-integer values with warning", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_FUZZ_TIME"] = "1.5";
+        expect(getFuzzTime()).toBeUndefined();
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toContain("VITIATE_FUZZ_TIME");
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+
+    it("rejects non-numeric values with warning", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_FUZZ_TIME"] = "abc";
+        expect(getFuzzTime()).toBeUndefined();
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toContain("VITIATE_FUZZ_TIME");
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+
+    it("rejects Infinity with warning", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_FUZZ_TIME"] = "Infinity";
+        expect(getFuzzTime()).toBeUndefined();
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toContain("VITIATE_FUZZ_TIME");
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+  });
+
+  describe("getCliOptions VITIATE_FUZZ_TIME integration", () => {
+    const originalOpts = process.env["VITIATE_FUZZ_OPTIONS"];
+    const originalFuzzTime = process.env["VITIATE_FUZZ_TIME"];
+
+    afterEach(() => {
+      if (originalOpts === undefined) {
+        delete process.env["VITIATE_FUZZ_OPTIONS"];
+      } else {
+        process.env["VITIATE_FUZZ_OPTIONS"] = originalOpts;
+      }
+      if (originalFuzzTime === undefined) {
+        delete process.env["VITIATE_FUZZ_TIME"];
+      } else {
+        process.env["VITIATE_FUZZ_TIME"] = originalFuzzTime;
+      }
+    });
+
+    it("VITIATE_FUZZ_TIME overrides VITIATE_FUZZ_OPTIONS.fuzzTimeMs", () => {
+      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        fuzzTimeMs: 60000,
+        runs: 100,
+      });
+      process.env["VITIATE_FUZZ_TIME"] = "10";
+      const opts = getCliOptions();
+      expect(opts.fuzzTimeMs).toBe(10000);
+      expect(opts.runs).toBe(100);
+    });
+
+    it("VITIATE_FUZZ_TIME works alone without VITIATE_FUZZ_OPTIONS", () => {
+      delete process.env["VITIATE_FUZZ_OPTIONS"];
+      process.env["VITIATE_FUZZ_TIME"] = "30";
+      const opts = getCliOptions();
+      expect(opts.fuzzTimeMs).toBe(30000);
+    });
+
+    it("valid VITIATE_FUZZ_TIME applies when VITIATE_FUZZ_OPTIONS has invalid JSON", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_FUZZ_OPTIONS"] = "not-json";
+        process.env["VITIATE_FUZZ_TIME"] = "30";
+        const opts = getCliOptions();
+        expect(opts.fuzzTimeMs).toBe(30000);
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toContain("VITIATE_FUZZ_OPTIONS");
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+
+    it("invalid VITIATE_FUZZ_TIME does not clobber valid VITIATE_FUZZ_OPTIONS.fuzzTimeMs", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+          fuzzTimeMs: 60000,
+        });
+        process.env["VITIATE_FUZZ_TIME"] = "not-a-number";
+        const opts = getCliOptions();
+        expect(opts.fuzzTimeMs).toBe(60000);
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toContain("VITIATE_FUZZ_TIME");
       } finally {
         process.stderr.write = originalWrite;
       }

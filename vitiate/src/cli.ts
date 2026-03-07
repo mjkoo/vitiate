@@ -112,7 +112,7 @@ function toCliArgs(parsed: InferValue<typeof cliParser>): CliArgs {
       timeoutMs: timeout != null ? timeout * 1000 : undefined,
       runs,
       seed,
-      maxTotalTimeMs: maxTotalTime != null ? maxTotalTime * 1000 : undefined,
+      fuzzTimeMs: maxTotalTime != null ? maxTotalTime * 1000 : undefined,
       minimizeBudget,
       minimizeTimeLimitMs:
         minimizeTimeLimit != null ? minimizeTimeLimit * 1000 : undefined,

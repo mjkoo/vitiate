@@ -38,7 +38,7 @@ describe("parseArgs", () => {
 
   it("parses -max_total_time flag (converts seconds to ms)", () => {
     const result = parseArgs(argv("./test.ts", "-max_total_time=300"));
-    expect(result.fuzzOptions.maxTotalTimeMs).toBe(300000);
+    expect(result.fuzzOptions.fuzzTimeMs).toBe(300000);
   });
 
   it("parses multiple flags together", () => {
@@ -212,7 +212,7 @@ describe("-test flag", () => {
       ),
     );
     expect(result.testName).toBe("parse-url");
-    expect(result.fuzzOptions.maxTotalTimeMs).toBe(30000);
+    expect(result.fuzzOptions.fuzzTimeMs).toBe(30000);
     expect(result.fuzzOptions.maxLen).toBe(4096);
   });
 });
@@ -246,9 +246,9 @@ describe("zero-value CLI flags (0 = unlimited convention)", () => {
     expect(result.fuzzOptions.runs).toBe(0);
   });
 
-  it("-max_total_time=0 converts to maxTotalTimeMs: 0", () => {
+  it("-max_total_time=0 converts to fuzzTimeMs: 0", () => {
     const result = parseArgs(argv("./test.ts", "-max_total_time=0"));
-    expect(result.fuzzOptions.maxTotalTimeMs).toBe(0);
+    expect(result.fuzzOptions.fuzzTimeMs).toBe(0);
   });
 
   it("-minimize_time_limit=0 converts to minimizeTimeLimitMs: 0", () => {

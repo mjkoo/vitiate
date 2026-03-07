@@ -359,7 +359,7 @@ export async function runFuzzLoop(
 
   const startTime = Date.now();
   // `|| Infinity`: 0 means "unlimited" for both fields, matching libFuzzer convention.
-  const maxTime = options.maxTotalTimeMs || Infinity;
+  const maxTime = options.fuzzTimeMs || Infinity;
   const maxRuns = options.runs || Infinity;
   let iteration = 0;
   let result: FuzzLoopResult = { crashed: false, totalExecs: 0 };
