@@ -14,7 +14,7 @@ use libafl::mutators::grimoire::{
     GrimoireExtensionMutator, GrimoireRandomDeleteMutator, GrimoireRecursiveReplacementMutator,
     GrimoireStringReplacementMutator,
 };
-use libafl::mutators::token_mutations::{TokenInsert, TokenReplace};
+use libafl::mutators::token_mutations::{AflppRedQueen, TokenInsert, TokenReplace};
 use libafl::mutators::unicode::{
     UnicodeCategoryRandMutator, UnicodeCategoryTokenReplaceMutator, UnicodeSubcategoryRandMutator,
     UnicodeSubcategoryTokenReplaceMutator,
@@ -23,7 +23,9 @@ use libafl::mutators::{
     HavocMutationsType, HavocScheduledMutator, Mutator, Tokens, havoc_mutations, tokens_mutations,
 };
 use libafl::observers::StdMapObserver;
-use libafl::observers::cmp::{CmpValues, CmpValuesMetadata};
+use libafl::observers::cmp::{
+    AflppCmpLogHeader, AflppCmpValuesMetadata, CmpValues, CmpValuesMetadata,
+};
 use libafl::observers::map::{CanTrack, ExplicitTracking};
 use libafl::schedulers::minimizer::TopRatedsMetadata;
 use libafl::schedulers::powersched::{N_FUZZ_SIZE, PowerSchedule, SchedulerMetadata};
@@ -42,6 +44,7 @@ use napi_derive::napi;
 
 use crate::types::{ExitKind, FuzzerConfig, FuzzerStats, IterationResult};
 
+mod colorization;
 mod generalization;
 mod grimoire;
 mod mutator;
@@ -254,6 +257,15 @@ pub struct Fuzzer {
     /// Whether Grimoire structure-aware fuzzing is enabled. Determined by
     /// auto-detection (corpus UTF-8 scanning) or explicit override.
     grimoire_enabled: bool,
+    /// REDQUEEN multi-mutator for transform-aware targeted replacements.
+    redqueen_mutator: AflppRedQueen,
+    /// Whether REDQUEEN is enabled. Determined by auto-detection (inverted
+    /// polarity: binary corpus → enable) or explicit override.
+    redqueen_enabled: bool,
+    /// Whether REDQUEEN ran for the current corpus entry (used to skip I2S).
+    redqueen_ran_for_entry: bool,
+    /// Original config override for redqueen. `None` = auto-detect.
+    redqueen_override: Option<bool>,
     /// Unicode scheduled mutator operating on `(BytesInput, UnicodeIdentificationMetadata)`.
     unicode_mutator: UnicodeMutator,
     /// Whether unicode-aware mutations are enabled. Determined by
@@ -301,18 +313,19 @@ fn set_n_fuzz_entry_for_corpus_id(state: &FuzzerState, id: CorpusId) -> Result<(
     Ok(())
 }
 
-/// Extract byte tokens from CmpLog entries for dictionary-based mutations.
+/// Extract byte tokens from enriched CmpLog entries for dictionary-based mutations.
 ///
-/// Iterates `CmpValues::Bytes` entries and collects both operands, filtering
-/// out empty sequences, all-null byte sequences, and all-0xFF byte sequences.
+/// Iterates `CmpValues::Bytes` entries (extracting the `CmpValues` component
+/// from enriched tuples) and collects both operands, filtering out empty
+/// sequences, all-null byte sequences, and all-0xFF byte sequences.
 /// Non-Bytes entries (U8, U16, U32, U64) are skipped — integer comparisons
 /// already produce a companion `CmpValues::Bytes` entry with decimal string
 /// representations.
-fn extract_tokens_from_cmplog(entries: &[CmpValues]) -> Vec<Vec<u8>> {
+fn extract_tokens_from_cmplog(entries: &[crate::cmplog::CmpLogEntry]) -> Vec<Vec<u8>> {
     let mut tokens = Vec::new();
 
-    for entry in entries {
-        if let CmpValues::Bytes((left, right)) = entry {
+    for (cmp_values, _site_id, _operator) in entries {
+        if let CmpValues::Bytes((left, right)) = cmp_values {
             for operand in [left, right] {
                 let bytes = operand.as_slice();
                 // CmplogBytes has a natural 32-byte capacity bound, so no
@@ -331,11 +344,121 @@ fn extract_tokens_from_cmplog(entries: &[CmpValues]) -> Vec<Vec<u8>> {
     tokens
 }
 
+/// Derive the operand byte size from a `CmpValues` variant.
+///
+/// Returns the shape value for `AflppCmpLogHeader` (byte size minus 1).
+fn cmp_values_shape(cmp_values: &CmpValues) -> u8 {
+    match cmp_values {
+        CmpValues::U8(_) => 0,  // 1 byte, shape = 0
+        CmpValues::U16(_) => 1, // 2 bytes, shape = 1
+        CmpValues::U32(_) => 3, // 4 bytes, shape = 3
+        CmpValues::U64(_) => 7, // 8 bytes, shape = 7
+        CmpValues::Bytes((left, _)) => {
+            let len = left.as_slice().len();
+            if len == 0 { 0 } else { (len - 1) as u8 }
+        }
+    }
+}
+
+/// Convert a `CmpLogOperator` to the AFL++ CMP_ATTRIBUTE bitflags.
+fn operator_to_attribute(op: crate::cmplog::CmpLogOperator) -> u8 {
+    use crate::cmplog::CmpLogOperator;
+    // AFL++ constants (from libafl/src/mutators/token_mutations.rs):
+    // CMP_ATTTRIBUTE_IS_EQUAL = 1
+    // CMP_ATTRIBUTE_IS_GREATER = 2
+    // CMP_ATTRIBUTE_IS_LESSER = 4
+    match op {
+        CmpLogOperator::Equal => 1,    // CMP_ATTTRIBUTE_IS_EQUAL
+        CmpLogOperator::NotEqual => 0, // No specific attribute for not-equal
+        CmpLogOperator::Greater => 2,  // CMP_ATTRIBUTE_IS_GREATER
+        CmpLogOperator::Less => 4,     // CMP_ATTRIBUTE_IS_LESSER
+    }
+}
+
+/// Build an `AflppCmpLogHeader` from shape and attribute values.
+///
+/// Encodes the values into the bitfield format:
+/// bits 0-5: hits (0), bits 6-10: shape, bit 11: type_ (0 = cmp),
+/// bits 12-15: attribute.
+fn build_cmplog_header(shape: u8, attribute: u8) -> AflppCmpLogHeader {
+    let raw: u16 = (u16::from(attribute & 0x0F) << 12) | (u16::from(shape & 0x1F) << 6);
+    AflppCmpLogHeader::new_with_raw_value(raw)
+}
+
+/// Build `AflppCmpValuesMetadata` from enriched CmpLog drain entries.
+///
+/// Groups entries by site ID into `orig_cmpvals`, derives headers from
+/// operator/size, and initializes `new_cmpvals` as empty.
+fn build_aflpp_cmp_metadata(entries: &[crate::cmplog::CmpLogEntry]) -> AflppCmpValuesMetadata {
+    let mut metadata = AflppCmpValuesMetadata::new();
+    let mut headers_map: HashMap<usize, AflppCmpLogHeader> = HashMap::new();
+
+    for (cmp_values, site_id, operator) in entries {
+        let site = *site_id as usize;
+        metadata
+            .orig_cmpvals
+            .entry(site)
+            .or_default()
+            .push(cmp_values.clone());
+
+        // Only insert the header once per site (first entry determines it).
+        headers_map.entry(site).or_insert_with(|| {
+            let shape = cmp_values_shape(cmp_values);
+            let attribute = operator_to_attribute(*operator);
+            build_cmplog_header(shape, attribute)
+        });
+    }
+
+    metadata.headers = headers_map.into_iter().collect();
+    metadata
+}
+
+/// Flatten `AflppCmpValuesMetadata.orig_cmpvals` into a flat `Vec<CmpValues>`
+/// for I2S backward compatibility.
+fn flatten_orig_cmpvals(metadata: &AflppCmpValuesMetadata) -> Vec<CmpValues> {
+    metadata
+        .orig_cmpvals
+        .values()
+        .flat_map(|v| v.iter().cloned())
+        .collect()
+}
+
 /// Tracks the lifecycle of a multi-execution stage (I2S, Grimoire, etc.).
 /// Designed for extensibility — future stages add new variants.
 enum StageState {
     /// No stage is active.
     None,
+    /// Colorization stage: identifies free byte ranges via binary search.
+    Colorization {
+        corpus_id: CorpusId,
+        /// Coverage hash of the baseline (original) execution.
+        original_hash: u64,
+        /// Original corpus entry bytes.
+        original_input: Vec<u8>,
+        /// Type-replaced copy of the input.
+        changed_input: Vec<u8>,
+        /// Ranges still to test, processed largest-first.
+        pending_ranges: Vec<(usize, usize)>,
+        /// Confirmed free ranges (bytes that don't affect coverage).
+        taint_ranges: Vec<std::ops::Range<usize>>,
+        /// Number of colorization executions so far.
+        executions: usize,
+        /// Maximum allowed executions (2 * input_len).
+        max_executions: usize,
+        /// True after binary search, before dual trace execution.
+        awaiting_dual_trace: bool,
+        /// The range `(start, end)` being tested in the current execution.
+        /// `None` for the baseline execution and the dual trace.
+        testing_range: Option<(usize, usize)>,
+    },
+    /// REDQUEEN mutation stage: transform-aware targeted replacements.
+    Redqueen {
+        corpus_id: CorpusId,
+        /// Pre-generated candidates from `multi_mutate()`.
+        candidates: Vec<BytesInput>,
+        /// Current candidate index.
+        index: usize,
+    },
     /// I2S mutational stage in progress.
     I2S {
         corpus_id: CorpusId,
@@ -389,6 +512,7 @@ impl Fuzzer {
         let seed = config.as_ref().and_then(|c| c.seed);
         let grimoire_override = config.as_ref().and_then(|c| c.grimoire);
         let unicode_override = config.as_ref().and_then(|c| c.unicode);
+        let redqueen_override = config.as_ref().and_then(|c| c.redqueen);
 
         let map_ptr = coverage_map.as_mut_ptr();
         let map_len = coverage_map.len();
@@ -430,6 +554,7 @@ impl Fuzzer {
         let scheduler = MinimizerScheduler::new(&tracking_observer, base_scheduler);
         let mutator = HavocScheduledMutator::new(havoc_mutations().merge(tokens_mutations()));
         let i2s_mutator = I2SSpliceReplace::new();
+        let redqueen_mutator = AflppRedQueen::with_cmplog_options(true, true);
         let grimoire_mutator = HavocScheduledMutator::with_max_stack_pow(
             tuple_list!(
                 GrimoireExtensionMutator::new(),
@@ -480,14 +605,17 @@ impl Fuzzer {
         // corpus entry per coverage edge for the MinimizerScheduler.
         state.add_metadata(TopRatedsMetadata::new());
 
-        // Auto-detection for Grimoire and unicode: scan corpus for UTF-8 content.
-        // Both features share the same detection signal and deferred threshold.
+        // Auto-detection for Grimoire, unicode, and REDQUEEN: scan corpus for UTF-8 content.
+        // All three features share the same detection signal and deferred threshold.
+        // REDQUEEN uses inverted polarity: enabled when corpus is NOT UTF-8 (binary).
         let grimoire_needs_detection = grimoire_override.is_none();
         let unicode_needs_detection = unicode_override.is_none();
-        let needs_deferred = grimoire_needs_detection || unicode_needs_detection;
+        let redqueen_needs_detection = redqueen_override.is_none();
+        let needs_deferred =
+            grimoire_needs_detection || unicode_needs_detection || redqueen_needs_detection;
 
         let (corpus_is_utf8, deferred_detection_count) = if !needs_deferred {
-            // Both features are explicitly configured — no detection needed.
+            // All features are explicitly configured — no detection needed.
             (false, None)
         } else if state.corpus().count() == 0 {
             // Empty corpus: defer detection until DEFERRED_DETECTION_THRESHOLD
@@ -502,6 +630,9 @@ impl Fuzzer {
 
         let grimoire_enabled = grimoire_override.unwrap_or(corpus_is_utf8);
         let unicode_enabled = unicode_override.unwrap_or(corpus_is_utf8);
+        // REDQUEEN: inverted polarity — enabled for binary (non-UTF-8) corpus.
+        let redqueen_enabled =
+            redqueen_override.unwrap_or(!corpus_is_utf8 && deferred_detection_count.is_none());
 
         Ok(Self {
             state,
@@ -534,6 +665,10 @@ impl Fuzzer {
             last_stage_input: None,
             grimoire_mutator,
             grimoire_enabled,
+            redqueen_mutator,
+            redqueen_enabled,
+            redqueen_ran_for_entry: false,
+            redqueen_override,
             unicode_mutator,
             unicode_enabled,
             grimoire_override,
@@ -711,6 +846,10 @@ impl Fuzzer {
                     if self.unicode_override.is_none() {
                         self.unicode_enabled = is_utf8;
                     }
+                    // REDQUEEN: inverted polarity — enabled for binary corpus.
+                    if self.redqueen_override.is_none() {
+                        self.redqueen_enabled = !is_utf8;
+                    }
                     self.deferred_detection_count = None;
                 }
             }
@@ -720,7 +859,9 @@ impl Fuzzer {
             IterationResult::None
         };
 
-        // Drain CmpLog accumulator into state metadata for the next I2S pass.
+        // Drain enriched CmpLog accumulator and build both metadata types:
+        // - AflppCmpValuesMetadata (site-keyed, for REDQUEEN)
+        // - CmpValuesMetadata (flat list, for I2S backward compatibility)
         let cmp_entries = crate::cmplog::drain();
 
         // Extract byte tokens from CmpLog entries and promote frequent ones into
@@ -762,6 +903,8 @@ impl Fuzzer {
                 for token in &promoted {
                     self.token_candidates.remove(token);
                     self.promoted_tokens.insert(token.clone());
+                    // Tokens metadata is guaranteed to exist: added above when the
+                    // has_metadata check failed, and only reached here inside that branch.
                     let tokens = self.state.metadata_mut::<Tokens>().unwrap();
                     tokens.add_token(token);
                     if tokens.tokens().len() >= MAX_DICTIONARY_SIZE {
@@ -771,9 +914,15 @@ impl Fuzzer {
             }
         }
 
+        // Build site-keyed metadata for REDQUEEN.
+        let aflpp_metadata = build_aflpp_cmp_metadata(&cmp_entries);
+        // Flatten orig_cmpvals into a flat list for I2S backward compatibility.
+        let flat_list = flatten_orig_cmpvals(&aflpp_metadata);
+
+        self.state.metadata_map_mut().insert(aflpp_metadata);
         self.state
             .metadata_map_mut()
-            .insert(CmpValuesMetadata { list: cmp_entries });
+            .insert(CmpValuesMetadata { list: flat_list });
 
         self.total_execs += 1;
         *self.state.executions_mut() += 1;
@@ -947,30 +1096,40 @@ impl Fuzzer {
             None => return Ok(None),
         };
 
-        // Check for non-empty CmpValuesMetadata.
+        // Reset per-entry flag.
+        self.redqueen_ran_for_entry = false;
+
+        // Step 1: Attempt colorization if REDQUEEN is enabled and input fits.
+        if self.redqueen_enabled {
+            let input_len = self
+                .state
+                .corpus()
+                .cloned_input_for_id(corpus_id)
+                .map(|i| -> Vec<u8> { i.into() })
+                .map(|v| v.len())
+                .unwrap_or(0);
+            if input_len > 0 && input_len <= colorization::MAX_COLORIZATION_LEN {
+                self.redqueen_ran_for_entry = true;
+                return self.begin_colorization(corpus_id);
+            }
+        }
+
+        // Step 2: Attempt I2S (only if REDQUEEN didn't run).
         let has_cmp_data = self
             .state
             .metadata_map()
             .get::<CmpValuesMetadata>()
             .is_some_and(|m| !m.list.is_empty());
-        if !has_cmp_data {
-            // I2S skipped — try generalization, Grimoire, or unicode.
-            if self.grimoire_enabled {
-                if let Some(buf) = self.begin_generalization(corpus_id)? {
-                    return Ok(Some(buf));
-                }
-                // Generalization skipped — try Grimoire directly (pre-existing metadata).
-                if let Some(buf) = self.begin_grimoire(corpus_id)? {
-                    return Ok(Some(buf));
-                }
-            }
-            // Grimoire stages not applicable — try unicode.
-            if let Some(buf) = self.begin_unicode(corpus_id)? {
-                return Ok(Some(buf));
-            }
-            return Ok(None);
+        if has_cmp_data {
+            return self.begin_i2s(corpus_id);
         }
 
+        // Step 3: Fall through to Grimoire/unicode.
+        self.begin_post_i2s_stages(corpus_id)
+    }
+
+    /// Begin the I2S stage for the given corpus entry.
+    fn begin_i2s(&mut self, corpus_id: CorpusId) -> Result<Option<Buffer>> {
         // Select random iteration count 1..=STAGE_MAX_ITERATIONS.
         // SAFETY of unwrap: STAGE_MAX_ITERATIONS is a non-zero constant.
         let max_iterations = self
@@ -1008,6 +1167,22 @@ impl Fuzzer {
         Ok(Some(Buffer::from(bytes)))
     }
 
+    /// Attempt to begin the post-I2S stages: generalization → Grimoire → unicode.
+    fn begin_post_i2s_stages(&mut self, corpus_id: CorpusId) -> Result<Option<Buffer>> {
+        if self.grimoire_enabled {
+            if let Some(buf) = self.begin_generalization(corpus_id)? {
+                return Ok(Some(buf));
+            }
+            if let Some(buf) = self.begin_grimoire(corpus_id)? {
+                return Ok(Some(buf));
+            }
+        }
+        if let Some(buf) = self.begin_unicode(corpus_id)? {
+            return Ok(Some(buf));
+        }
+        Ok(None)
+    }
+
     /// Process the result of a stage execution and return the next candidate input.
     ///
     /// Returns the next stage-mutated input as a `Buffer`, or `null` if the stage is
@@ -1030,6 +1205,12 @@ impl Fuzzer {
                 return self.advance_unicode(exec_time_ns);
             }
             StageState::I2S { .. } => {}
+            StageState::Colorization { .. } => {
+                return self.advance_colorization(exec_time_ns);
+            }
+            StageState::Redqueen { .. } => {
+                return self.advance_redqueen(_exit_kind, exec_time_ns);
+            }
         }
 
         let (corpus_id, iteration, max_iterations) = match self.stage_state {
@@ -1065,20 +1246,7 @@ impl Fuzzer {
         if next_iteration >= max_iterations {
             // I2S stage complete — try transitioning to Generalization, Grimoire, or Unicode.
             // stage_state is already StageState::None (reset before evaluate_coverage above).
-            if self.grimoire_enabled {
-                if let Some(buf) = self.begin_generalization(corpus_id)? {
-                    return Ok(Some(buf));
-                }
-                // Generalization skipped — try Grimoire (pre-existing metadata).
-                if let Some(buf) = self.begin_grimoire(corpus_id)? {
-                    return Ok(Some(buf));
-                }
-            }
-            // Grimoire stages not applicable — try unicode.
-            if let Some(buf) = self.begin_unicode(corpus_id)? {
-                return Ok(Some(buf));
-            }
-            return Ok(None);
+            return self.begin_post_i2s_stages(corpus_id);
         }
 
         // Generate next I2S candidate: clone original corpus entry, mutate.
@@ -1743,7 +1911,11 @@ mod tests {
         assert!(cmplog::is_enabled());
 
         // Push should work while enabled.
-        cmplog::push(CmpValues::U8((1, 2, false)));
+        cmplog::push(
+            CmpValues::U8((1, 2, false)),
+            0,
+            cmplog::CmpLogOperator::Equal,
+        );
         let entries = cmplog::drain();
         assert_eq!(entries.len(), 1);
 
@@ -1752,7 +1924,11 @@ mod tests {
         assert!(!cmplog::is_enabled());
 
         // Push should be silently dropped while disabled.
-        cmplog::push(CmpValues::U8((3, 4, false)));
+        cmplog::push(
+            CmpValues::U8((3, 4, false)),
+            0,
+            cmplog::CmpLogOperator::Equal,
+        );
         let entries = cmplog::drain();
         assert!(entries.is_empty());
     }
@@ -1771,16 +1947,25 @@ mod tests {
 
         // Simulate a fuzz iteration: enable, push entries, drain to metadata.
         cmplog::enable();
-        cmplog::push(CmpValues::U8((10, 20, false)));
-        cmplog::push(CmpValues::U16((1000, 2000, false)));
+        cmplog::push(
+            CmpValues::U8((10, 20, false)),
+            0,
+            cmplog::CmpLogOperator::Equal,
+        );
+        cmplog::push(
+            CmpValues::U16((1000, 2000, false)),
+            0,
+            cmplog::CmpLogOperator::Equal,
+        );
 
         let entries = cmplog::drain();
         assert_eq!(entries.len(), 2);
 
         // Insert into state metadata (as reportResult does).
+        let flat_entries: Vec<CmpValues> = entries.iter().map(|(v, _, _)| v.clone()).collect();
         state
             .metadata_map_mut()
-            .insert(CmpValuesMetadata { list: entries });
+            .insert(CmpValuesMetadata { list: flat_entries });
 
         // Verify metadata is accessible.
         let meta = state
@@ -1798,11 +1983,24 @@ mod tests {
 
     #[test]
     fn test_extract_tokens_from_mixed_cmpvalues() {
-        let entries = vec![
-            CmpValues::Bytes((make_cmplog_bytes(b"http"), make_cmplog_bytes(b"javascript"))),
-            CmpValues::U8((10, 20, false)),
-            CmpValues::Bytes((make_cmplog_bytes(b"ftp"), make_cmplog_bytes(b"ssh"))),
-            CmpValues::U16((1000, 2000, false)),
+        use cmplog::CmpLogOperator;
+        let entries: Vec<crate::cmplog::CmpLogEntry> = vec![
+            (
+                CmpValues::Bytes((make_cmplog_bytes(b"http"), make_cmplog_bytes(b"javascript"))),
+                0,
+                CmpLogOperator::Equal,
+            ),
+            (CmpValues::U8((10, 20, false)), 0, CmpLogOperator::Equal),
+            (
+                CmpValues::Bytes((make_cmplog_bytes(b"ftp"), make_cmplog_bytes(b"ssh"))),
+                0,
+                CmpLogOperator::Equal,
+            ),
+            (
+                CmpValues::U16((1000, 2000, false)),
+                0,
+                CmpLogOperator::Equal,
+            ),
         ];
 
         let tokens = extract_tokens_from_cmplog(&entries);
@@ -1817,24 +2015,41 @@ mod tests {
 
     #[test]
     fn test_extract_tokens_filters_empty_null_and_0xff() {
-        let entries = vec![
+        use cmplog::CmpLogOperator;
+        let entries: Vec<crate::cmplog::CmpLogEntry> = vec![
             // Empty left operand — should be skipped.
-            CmpValues::Bytes((make_cmplog_bytes(b""), make_cmplog_bytes(b"valid"))),
+            (
+                CmpValues::Bytes((make_cmplog_bytes(b""), make_cmplog_bytes(b"valid"))),
+                0,
+                CmpLogOperator::Equal,
+            ),
             // All-null operands — both should be skipped.
-            CmpValues::Bytes((
-                make_cmplog_bytes(&[0x00, 0x00, 0x00, 0x00]),
-                make_cmplog_bytes(b"also_valid"),
-            )),
+            (
+                CmpValues::Bytes((
+                    make_cmplog_bytes(&[0x00, 0x00, 0x00, 0x00]),
+                    make_cmplog_bytes(b"also_valid"),
+                )),
+                0,
+                CmpLogOperator::Equal,
+            ),
             // All-0xFF operand — should be skipped.
-            CmpValues::Bytes((
-                make_cmplog_bytes(b"keep_this"),
-                make_cmplog_bytes(&[0xFF, 0xFF]),
-            )),
+            (
+                CmpValues::Bytes((
+                    make_cmplog_bytes(b"keep_this"),
+                    make_cmplog_bytes(&[0xFF, 0xFF]),
+                )),
+                0,
+                CmpLogOperator::Equal,
+            ),
             // Mixed-with-nulls — should be kept (not all-null).
-            CmpValues::Bytes((
-                make_cmplog_bytes(&[0x00, 0x41, 0x00]),
-                make_cmplog_bytes(b"another"),
-            )),
+            (
+                CmpValues::Bytes((
+                    make_cmplog_bytes(&[0x00, 0x41, 0x00]),
+                    make_cmplog_bytes(b"another"),
+                )),
+                0,
+                CmpLogOperator::Equal,
+            ),
         ];
 
         let tokens = extract_tokens_from_cmplog(&entries);
@@ -1868,11 +2083,16 @@ mod tests {
         // the tokens get promoted into the dictionary.
         for _ in 0..TOKEN_PROMOTION_THRESHOLD {
             let _input = fuzzer.get_next_input().unwrap();
-            cmplog::push(CmpValues::Bytes((
-                make_cmplog_bytes(b"http"),
-                make_cmplog_bytes(b"javascript"),
-            )));
-            cmplog::push(CmpValues::U16((1000, 2000, false)));
+            cmplog::push(
+                CmpValues::Bytes((make_cmplog_bytes(b"http"), make_cmplog_bytes(b"javascript"))),
+                0,
+                cmplog::CmpLogOperator::Equal,
+            );
+            cmplog::push(
+                CmpValues::U16((1000, 2000, false)),
+                0,
+                cmplog::CmpLogOperator::Equal,
+            );
             fuzzer.report_result(ExitKind::Ok, 50_000.0).unwrap();
         }
 
@@ -1904,14 +2124,16 @@ mod tests {
         // so both pairs get promoted.
         for _ in 0..TOKEN_PROMOTION_THRESHOLD {
             let _input = fuzzer.get_next_input().unwrap();
-            cmplog::push(CmpValues::Bytes((
-                make_cmplog_bytes(b"http"),
-                make_cmplog_bytes(b"javascript"),
-            )));
-            cmplog::push(CmpValues::Bytes((
-                make_cmplog_bytes(b"ftp"),
-                make_cmplog_bytes(b"ssh"),
-            )));
+            cmplog::push(
+                CmpValues::Bytes((make_cmplog_bytes(b"http"), make_cmplog_bytes(b"javascript"))),
+                0,
+                cmplog::CmpLogOperator::Equal,
+            );
+            cmplog::push(
+                CmpValues::Bytes((make_cmplog_bytes(b"ftp"), make_cmplog_bytes(b"ssh"))),
+                0,
+                cmplog::CmpLogOperator::Equal,
+            );
             fuzzer.report_result(ExitKind::Ok, 50_000.0).unwrap();
         }
 
@@ -1941,10 +2163,14 @@ mod tests {
         for i in 0..(MAX_TOKEN_CANDIDATES + 100) {
             let _input = fuzzer.get_next_input().unwrap();
             let token_bytes = format!("tok_{i:06}");
-            cmplog::push(CmpValues::Bytes((
-                make_cmplog_bytes(token_bytes.as_bytes()),
-                make_cmplog_bytes(b"other"),
-            )));
+            cmplog::push(
+                CmpValues::Bytes((
+                    make_cmplog_bytes(token_bytes.as_bytes()),
+                    make_cmplog_bytes(b"other"),
+                )),
+                0,
+                cmplog::CmpLogOperator::Equal,
+            );
             fuzzer.report_result(ExitKind::Ok, 50_000.0).unwrap();
         }
 
@@ -1969,10 +2195,14 @@ mod tests {
         // Push a token TOKEN_PROMOTION_THRESHOLD observations to promote it.
         for _ in 0..TOKEN_PROMOTION_THRESHOLD {
             let _input = fuzzer.get_next_input().unwrap();
-            cmplog::push(CmpValues::Bytes((
-                make_cmplog_bytes(b"promote_me"),
-                make_cmplog_bytes(b"other_side"),
-            )));
+            cmplog::push(
+                CmpValues::Bytes((
+                    make_cmplog_bytes(b"promote_me"),
+                    make_cmplog_bytes(b"other_side"),
+                )),
+                0,
+                cmplog::CmpLogOperator::Equal,
+            );
             fuzzer.report_result(ExitKind::Ok, 50_000.0).unwrap();
         }
 
@@ -2003,10 +2233,14 @@ mod tests {
         // Push the same CmpLog entry again — the token must NOT re-enter candidates.
         for _ in 0..TOKEN_PROMOTION_THRESHOLD {
             let _input = fuzzer.get_next_input().unwrap();
-            cmplog::push(CmpValues::Bytes((
-                make_cmplog_bytes(b"promote_me"),
-                make_cmplog_bytes(b"other_side"),
-            )));
+            cmplog::push(
+                CmpValues::Bytes((
+                    make_cmplog_bytes(b"promote_me"),
+                    make_cmplog_bytes(b"other_side"),
+                )),
+                0,
+                cmplog::CmpLogOperator::Equal,
+            );
             fuzzer.report_result(ExitKind::Ok, 50_000.0).unwrap();
         }
 
@@ -3203,10 +3437,11 @@ mod tests {
         }
 
         // Push CmpLog data.
-        cmplog::push(CmpValues::Bytes((
-            make_cmplog_bytes(b"test"),
-            make_cmplog_bytes(b"data"),
-        )));
+        cmplog::push(
+            CmpValues::Bytes((make_cmplog_bytes(b"test"), make_cmplog_bytes(b"data"))),
+            0,
+            cmplog::CmpLogOperator::Equal,
+        );
 
         let result = fuzzer.report_result(ExitKind::Ok, 50_000.0).unwrap();
         assert_eq!(result, IterationResult::Interesting);
@@ -3278,10 +3513,14 @@ mod tests {
         assert!(first.is_some());
 
         // Simulate a stage execution that produces CmpLog entries.
-        cmplog::push(CmpValues::Bytes((
-            make_cmplog_bytes(b"stage_operand_1"),
-            make_cmplog_bytes(b"stage_operand_2"),
-        )));
+        cmplog::push(
+            CmpValues::Bytes((
+                make_cmplog_bytes(b"stage_operand_1"),
+                make_cmplog_bytes(b"stage_operand_2"),
+            )),
+            0,
+            cmplog::CmpLogOperator::Equal,
+        );
 
         // advanceStage should drain and discard these CmpLog entries.
         let _ = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
@@ -3504,10 +3743,11 @@ mod tests {
         unsafe {
             *fuzzer.map_ptr.add(10) = 1;
         }
-        cmplog::push(CmpValues::Bytes((
-            make_cmplog_bytes(b"seed"),
-            make_cmplog_bytes(b"test"),
-        )));
+        cmplog::push(
+            CmpValues::Bytes((make_cmplog_bytes(b"seed"), make_cmplog_bytes(b"test"))),
+            0,
+            cmplog::CmpLogOperator::Equal,
+        );
         let result = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
         assert!(matches!(result, IterationResult::Interesting));
         fuzzer.calibrate_finish().unwrap();
@@ -3779,10 +4019,11 @@ mod tests {
         unsafe {
             *fuzzer.map_ptr.add(50) = 1;
         }
-        cmplog::push(CmpValues::Bytes((
-            make_cmplog_bytes(b"hello"),
-            make_cmplog_bytes(b"world"),
-        )));
+        cmplog::push(
+            CmpValues::Bytes((make_cmplog_bytes(b"hello"), make_cmplog_bytes(b"world"))),
+            0,
+            cmplog::CmpLogOperator::Equal,
+        );
         let result = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
         assert!(matches!(result, IterationResult::Interesting));
         assert_eq!(fuzzer.deferred_detection_count, Some(1));
@@ -4238,10 +4479,11 @@ mod tests {
         unsafe {
             *fuzzer.map_ptr.add(42) = 1;
         }
-        cmplog::push(CmpValues::Bytes((
-            make_cmplog_bytes(b"hello"),
-            make_cmplog_bytes(b"world"),
-        )));
+        cmplog::push(
+            CmpValues::Bytes((make_cmplog_bytes(b"hello"), make_cmplog_bytes(b"world"))),
+            0,
+            cmplog::CmpLogOperator::Equal,
+        );
         let result = fuzzer.report_result(ExitKind::Ok, 50_000.0).unwrap();
         assert_eq!(result, IterationResult::Interesting);
 
@@ -5293,5 +5535,273 @@ mod tests {
                 "B should no longer own edge 10 after A's calibration"
             );
         }
+    }
+
+    // --- Pipeline integration tests ---
+
+    #[test]
+    fn test_begin_stage_starts_colorization_when_redqueen_enabled() {
+        let mut fuzzer = make_fuzzer_ready_for_stage(256);
+        fuzzer.redqueen_enabled = true;
+
+        let result = fuzzer.begin_stage().unwrap();
+        assert!(result.is_some(), "should start colorization");
+        assert!(
+            matches!(fuzzer.stage_state, StageState::Colorization { .. }),
+            "stage should be Colorization, got {:?}",
+            std::mem::discriminant(&fuzzer.stage_state)
+        );
+        assert!(
+            fuzzer.redqueen_ran_for_entry,
+            "redqueen_ran_for_entry should be true"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_begin_stage_falls_to_i2s_when_redqueen_disabled() {
+        let mut fuzzer = make_fuzzer_ready_for_stage(256);
+        fuzzer.redqueen_enabled = false;
+
+        let result = fuzzer.begin_stage().unwrap();
+        assert!(result.is_some(), "should start I2S");
+        assert!(
+            matches!(fuzzer.stage_state, StageState::I2S { .. }),
+            "stage should be I2S"
+        );
+        assert!(
+            !fuzzer.redqueen_ran_for_entry,
+            "redqueen_ran_for_entry should be false"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_begin_stage_falls_to_i2s_when_input_too_large() {
+        let mut fuzzer = make_fuzzer_ready_for_stage(256);
+        fuzzer.redqueen_enabled = true;
+
+        // Replace the corpus entry with one larger than MAX_COLORIZATION_LEN.
+        let large_input = BytesInput::new(vec![0x42; colorization::MAX_COLORIZATION_LEN + 1]);
+        let mut testcase = Testcase::new(large_input);
+        testcase.set_exec_time(std::time::Duration::from_millis(1));
+        let new_id = fuzzer.state.corpus_mut().add(testcase).unwrap();
+        fuzzer.last_interesting_corpus_id = Some(new_id);
+
+        // Add CmpValuesMetadata so I2S can start.
+        let mut cmp_meta = CmpValuesMetadata::new();
+        cmp_meta.list.push(CmpValues::Bytes((
+            make_cmplog_bytes(b"test"),
+            make_cmplog_bytes(b"best"),
+        )));
+        fuzzer.state.metadata_map_mut().insert(cmp_meta);
+
+        let result = fuzzer.begin_stage().unwrap();
+        assert!(result.is_some(), "should start I2S");
+        assert!(
+            matches!(fuzzer.stage_state, StageState::I2S { .. }),
+            "stage should be I2S, not Colorization"
+        );
+        assert!(
+            !fuzzer.redqueen_ran_for_entry,
+            "redqueen_ran_for_entry should be false for oversized input"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_redqueen_ran_for_entry_reset_on_begin_stage() {
+        let mut fuzzer = make_fuzzer_ready_for_stage(256);
+
+        // Manually set the flag to true.
+        fuzzer.redqueen_ran_for_entry = true;
+
+        let _result = fuzzer.begin_stage().unwrap();
+        // Flag should be reset to false at the start of begin_stage.
+        // (It would only be re-set to true if REDQUEEN is enabled and
+        // colorization starts, but we left redqueen_enabled = false.)
+        assert!(
+            !fuzzer.redqueen_ran_for_entry,
+            "redqueen_ran_for_entry should be reset"
+        );
+
+        cmplog::disable();
+    }
+
+    // --- REDQUEEN auto-detection tests ---
+
+    #[test]
+    fn test_redqueen_explicit_enable() {
+        let coverage_map: Buffer = vec![0u8; 256].into();
+        let fuzzer = Fuzzer::new(
+            coverage_map,
+            Some(FuzzerConfig {
+                max_input_len: None,
+                seed: None,
+                grimoire: None,
+                unicode: None,
+                redqueen: Some(true),
+            }),
+        )
+        .unwrap();
+        assert!(fuzzer.redqueen_enabled, "explicit true should enable");
+    }
+
+    #[test]
+    fn test_redqueen_explicit_disable() {
+        let coverage_map: Buffer = vec![0u8; 256].into();
+        let fuzzer = Fuzzer::new(
+            coverage_map,
+            Some(FuzzerConfig {
+                max_input_len: None,
+                seed: None,
+                grimoire: None,
+                unicode: None,
+                redqueen: Some(false),
+            }),
+        )
+        .unwrap();
+        assert!(!fuzzer.redqueen_enabled, "explicit false should disable");
+    }
+
+    #[test]
+    fn test_redqueen_auto_detect_empty_corpus_defaults_false() {
+        let coverage_map: Buffer = vec![0u8; 256].into();
+        let fuzzer = Fuzzer::new(
+            coverage_map,
+            Some(FuzzerConfig {
+                max_input_len: None,
+                seed: None,
+                grimoire: None,
+                unicode: None,
+                redqueen: None,
+            }),
+        )
+        .unwrap();
+        assert!(
+            !fuzzer.redqueen_enabled,
+            "auto-detect with empty corpus should default to false"
+        );
+        assert!(
+            fuzzer.deferred_detection_count.is_some(),
+            "should have deferred detection"
+        );
+    }
+
+    #[test]
+    fn test_redqueen_deferred_detection_binary_corpus_enables() {
+        cmplog::disable();
+        cmplog::drain();
+
+        let mut fuzzer = make_test_fuzzer(256);
+        cmplog::enable();
+        fuzzer.redqueen_override = None;
+        fuzzer.redqueen_enabled = false;
+        fuzzer.deferred_detection_count = Some(0);
+
+        fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+        let seed_id = CorpusId::from(0usize);
+
+        for i in 0..DEFERRED_DETECTION_THRESHOLD {
+            fuzzer.last_input = Some(BytesInput::new(vec![0x80, 0x90, 0xA0, i as u8]));
+            fuzzer.last_corpus_id = Some(seed_id);
+            unsafe {
+                *fuzzer.map_ptr.add(i + 10) = 1;
+            }
+            let result = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
+            assert!(matches!(result, IterationResult::Interesting));
+            fuzzer.calibrate_finish().unwrap();
+        }
+
+        assert!(
+            fuzzer.redqueen_enabled,
+            "REDQUEEN should be enabled for binary corpus"
+        );
+        assert!(
+            fuzzer.deferred_detection_count.is_none(),
+            "detection should be resolved"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_redqueen_deferred_detection_utf8_corpus_disables() {
+        cmplog::disable();
+        cmplog::drain();
+
+        let mut fuzzer = make_test_fuzzer(256);
+        cmplog::enable();
+        fuzzer.redqueen_override = None;
+        fuzzer.redqueen_enabled = false;
+        fuzzer.deferred_detection_count = Some(0);
+
+        fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+        let seed_id = CorpusId::from(0usize);
+
+        for i in 0..DEFERRED_DETECTION_THRESHOLD {
+            fuzzer.last_input = Some(BytesInput::new(format!("hello{i}").into_bytes()));
+            fuzzer.last_corpus_id = Some(seed_id);
+            unsafe {
+                *fuzzer.map_ptr.add(i + 10) = 1;
+            }
+            let result = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
+            assert!(matches!(result, IterationResult::Interesting));
+            fuzzer.calibrate_finish().unwrap();
+        }
+
+        assert!(
+            !fuzzer.redqueen_enabled,
+            "REDQUEEN should be disabled for UTF-8 corpus"
+        );
+        assert!(
+            fuzzer.deferred_detection_count.is_none(),
+            "detection should be resolved"
+        );
+
+        cmplog::disable();
+    }
+
+    #[test]
+    fn test_redqueen_complementary_to_grimoire_unicode() {
+        cmplog::disable();
+        cmplog::drain();
+
+        let mut fuzzer = make_test_fuzzer(256);
+        cmplog::enable();
+        fuzzer.grimoire_override = None;
+        fuzzer.unicode_override = None;
+        fuzzer.redqueen_override = None;
+        fuzzer.grimoire_enabled = false;
+        fuzzer.unicode_enabled = false;
+        fuzzer.redqueen_enabled = false;
+        fuzzer.deferred_detection_count = Some(0);
+
+        fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+        let seed_id = CorpusId::from(0usize);
+
+        for i in 0..DEFERRED_DETECTION_THRESHOLD {
+            fuzzer.last_input = Some(BytesInput::new(vec![0xFF, 0xFE, 0xFD, i as u8]));
+            fuzzer.last_corpus_id = Some(seed_id);
+            unsafe {
+                *fuzzer.map_ptr.add(i + 10) = 1;
+            }
+            let result = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
+            assert!(matches!(result, IterationResult::Interesting));
+            fuzzer.calibrate_finish().unwrap();
+        }
+
+        // Binary corpus: REDQUEEN on, Grimoire/Unicode off.
+        assert!(fuzzer.redqueen_enabled, "binary corpus → REDQUEEN enabled");
+        assert!(
+            !fuzzer.grimoire_enabled,
+            "binary corpus → Grimoire disabled"
+        );
+        assert!(!fuzzer.unicode_enabled, "binary corpus → Unicode disabled");
+
+        cmplog::disable();
     }
 }

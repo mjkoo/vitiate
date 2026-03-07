@@ -1047,10 +1047,11 @@ mod tests {
         let _first = fuzzer.begin_generalization(corpus_id).unwrap();
 
         // Push CmpLog entries (simulating target execution producing CmpLog data).
-        cmplog::push(CmpValues::Bytes((
-            make_cmplog_bytes(b"test"),
-            make_cmplog_bytes(b"data"),
-        )));
+        cmplog::push(
+            CmpValues::Bytes((make_cmplog_bytes(b"test"), make_cmplog_bytes(b"data"))),
+            0,
+            cmplog::CmpLogOperator::Equal,
+        );
 
         // Set novelties for verification pass.
         unsafe {

@@ -59,7 +59,7 @@ describe("fuzz loop", () => {
       tmpDir,
       "trivial",
       "test.fuzz.ts",
-      { runs: 100, grimoire: false },
+      { runs: 100, grimoire: false, unicode: false },
     );
 
     expect(result.crashed).toBe(false);
@@ -117,6 +117,7 @@ describe("fuzz loop", () => {
       {
         runs: 100,
         grimoire: false,
+        unicode: false,
       },
     );
 
@@ -374,9 +375,11 @@ describe("fuzz loop", () => {
     expect(result.totalExecs).toBeGreaterThan(0);
   });
 
-  // Tests below use `grimoire: false` to ensure deterministic totalExecs counts.
-  // Grimoire integration is tested at the engine level (Rust unit tests).
-  // A full TypeScript pipeline test for Grimoire-enabled fuzzing would be
+  // Tests below use `grimoire: false`, `unicode: false`, and `redqueen: false`
+  // to ensure deterministic totalExecs counts. These options disable mutational
+  // stages that run extra iterations beyond the `runs` limit.
+  // Grimoire/REDQUEEN integration is tested at the engine level (Rust unit tests).
+  // A full TypeScript pipeline test for these features would be
   // non-deterministic and belongs in fuzz-pipeline.test.ts if needed.
 
   it("runs calibration loop after interesting inputs", async () => {
@@ -401,6 +404,8 @@ describe("fuzz loop", () => {
       {
         runs: 50,
         grimoire: false,
+        unicode: false,
+        redqueen: false,
       },
     );
 
@@ -432,6 +437,8 @@ describe("fuzz loop", () => {
       {
         runs: 50,
         grimoire: false,
+        unicode: false,
+        redqueen: false,
       },
     );
 
@@ -464,6 +471,8 @@ describe("fuzz loop", () => {
         runs: 50,
         timeoutMs: 5000,
         grimoire: false,
+        unicode: false,
+        redqueen: false,
       },
     );
 
@@ -550,11 +559,11 @@ describe("fuzz loop", () => {
         tmpDir,
         "stage-no-cmp",
         "test.fuzz.ts",
-        { runs: 50, grimoire: false, unicode: false },
+        { runs: 50, grimoire: false, unicode: false, redqueen: false },
       );
 
       expect(result.crashed).toBe(false);
-      // Without CmpLog data (no I2S) and with Grimoire disabled, totalExecs === runs.
+      // Without CmpLog data (no I2S) and with Grimoire/REDQUEEN disabled, totalExecs === runs.
       expect(result.totalExecs).toBe(50);
       // callCount > totalExecs due to calibration re-runs.
       expect(callCount).toBeGreaterThan(result.totalExecs);
@@ -806,7 +815,7 @@ describe("fuzz loop", () => {
       await setupFuzzingMode();
       let callCount = 0;
       const covMap = globalThis.__vitiate_cov as Buffer;
-      const seen = new Set<string>();
+      let lastExecutedInput: string | null = null;
       const target = (data: Buffer): void => {
         callCount++;
         if (data.length > 0) {
@@ -818,14 +827,15 @@ describe("fuzz loop", () => {
           0,
           "===",
         );
-        // Crash on second execution of any input (during calibration re-run).
-        // Main-loop iterations produce unique inputs from the mutator, so
-        // only calibration (which re-runs the same input) triggers this.
+        // Crash when the same input runs back-to-back (calibration re-run).
+        // This relies on calibration re-executing the same input consecutively;
+        // unlike a Set, it avoids false positives from historical collisions
+        // when havoc mutations happen to produce identical short byte sequences.
         const key = data.toString("hex");
-        if (seen.has(key)) {
+        if (key === lastExecutedInput) {
           throw new Error("calibration crash!");
         }
-        seen.add(key);
+        lastExecutedInput = key;
       };
 
       const result = await runFuzzLoop(
@@ -833,7 +843,7 @@ describe("fuzz loop", () => {
         tmpDir,
         "stage-cal-crash",
         "test.fuzz.ts",
-        { runs: 50, grimoire: false, unicode: false },
+        { runs: 50, grimoire: false, unicode: false, redqueen: false },
       );
 
       expect(result.crashed).toBe(false);

@@ -278,6 +278,49 @@ describe("config", () => {
       expect("unicode" in opts).toBe(false);
     });
 
+    it("parses redqueen: true", () => {
+      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        redqueen: true,
+      });
+      expect(getCliOptions()).toEqual({ redqueen: true });
+    });
+
+    it("parses redqueen: false", () => {
+      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        redqueen: false,
+      });
+      expect(getCliOptions()).toEqual({ redqueen: false });
+    });
+
+    it("ignores non-boolean redqueen values and warns on stderr", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+          redqueen: "true",
+          runs: 100,
+        });
+        const opts = getCliOptions();
+        expect(opts).toEqual({ runs: 100 });
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toContain("ignoring non-boolean");
+        expect(chunks[0]).toContain("redqueen");
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+
+    it("omits redqueen when key is absent from input", () => {
+      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({ runs: 100 });
+      const opts = getCliOptions();
+      expect("redqueen" in opts).toBe(false);
+    });
+
     it("rejects grimoire: 1 as non-boolean and warns", () => {
       const chunks: string[] = [];
       const originalWrite = process.stderr.write;

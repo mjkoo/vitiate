@@ -12,15 +12,16 @@ pub fn trace_cmp(
     env: Env,
     left: Unknown,
     right: Unknown,
-    #[napi(ts_arg_type = "number")] _cmp_id: u32,
+    #[napi(ts_arg_type = "number")] cmp_id: u32,
     op: String,
 ) -> Result<bool> {
     if crate::cmplog::is_enabled()
+        && let Some(operator) = crate::cmplog::CmpLogOperator::from_op(&op)
         && let Some(entries) =
             crate::cmplog::serialize_to_cmp_values(env.raw(), left.raw(), right.raw())
     {
         for entry in entries {
-            crate::cmplog::push(entry);
+            crate::cmplog::push(entry, cmp_id, operator);
         }
     }
 

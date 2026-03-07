@@ -279,10 +279,14 @@ mod tests {
         let _first = fuzzer.begin_grimoire(corpus_id).unwrap();
 
         // Push CmpLog entries simulating target execution.
-        cmplog::push(CmpValues::Bytes((
-            make_cmplog_bytes(b"grimoire_test"),
-            make_cmplog_bytes(b"grimoire_data"),
-        )));
+        cmplog::push(
+            CmpValues::Bytes((
+                make_cmplog_bytes(b"grimoire_test"),
+                make_cmplog_bytes(b"grimoire_data"),
+            )),
+            0,
+            cmplog::CmpLogOperator::Equal,
+        );
 
         let _ = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
 
@@ -392,6 +396,7 @@ mod tests {
                 seed: None,
                 grimoire: Some(true),
                 unicode: None,
+                redqueen: None,
             }),
         )
         .unwrap();
@@ -416,6 +421,7 @@ mod tests {
                 seed: None,
                 grimoire: Some(false),
                 unicode: None,
+                redqueen: None,
             }),
         )
         .unwrap();

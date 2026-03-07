@@ -10,6 +10,7 @@ use libafl::feedbacks::{
     StateInitializer, TimeoutFeedback,
 };
 use libafl::inputs::BytesInput;
+use libafl::mutators::token_mutations::AflppRedQueen;
 use libafl::mutators::{HavocScheduledMutator, havoc_mutations, tokens_mutations};
 use libafl::observers::StdMapObserver;
 use libafl::observers::cmp::{CmpValues, CmpValuesMetadata, CmplogBytes};
@@ -29,6 +30,23 @@ use super::{
 };
 use crate::cmplog;
 use crate::types::{ExitKind, IterationResult};
+
+// # Safety patterns used throughout this module
+//
+// Most test helpers construct a `StdMapObserver::from_mut_ptr` from a raw
+// pointer into a `Vec<u8>` or napi `Buffer`. This is sound because:
+//
+// 1. The backing allocation (`Vec` / `Buffer`) is kept alive for the entire
+//    lifetime of the `Fuzzer` or the test scope — the observer never outlives
+//    the allocation it points into.
+// 2. Only one `StdMapObserver` over the same pointer is live at any time.
+//    Temporary observers (used to seed feedback history) are dropped inside
+//    the block before the function returns.
+// 3. `ptr::write_bytes` calls zero the coverage map between phases; the
+//    pointer and length originate from the same `Vec` / `Buffer`, so the
+//    write stays in bounds.
+//
+// The model for per-site SAFETY comments is `make_scheduler` (below).
 
 use libafl::corpus::SchedulerTestcaseMetadata;
 use libafl::mutators::grimoire::{
@@ -51,6 +69,7 @@ pub(crate) fn make_state_and_feedback(
     map_ptr: *mut u8,
     map_len: usize,
 ) -> (FuzzerState, FuzzerFeedback, CrashObjective) {
+    // SAFETY: map_ptr/map_len come from caller's Vec; observer is dropped before returning.
     let observer = unsafe { StdMapObserver::from_mut_ptr(EDGES_OBSERVER_NAME, map_ptr, map_len) };
     let mut feedback = MaxMapFeedback::new(&observer);
     let mut objective = CrashFeedback::new();
@@ -111,6 +130,7 @@ pub(crate) fn make_fuzzer(
     CrashObjective,
     TimeoutObjective,
 ) {
+    // SAFETY: map_ptr/map_len come from caller's Vec; observer consumed by track_indices below.
     let observer = unsafe { StdMapObserver::from_mut_ptr(EDGES_OBSERVER_NAME, map_ptr, map_len) };
     let mut feedback = MaxMapFeedback::new(&observer);
     let mut crash_objective = CrashFeedback::new();
@@ -148,6 +168,7 @@ pub(crate) fn make_test_fuzzer(map_size: usize) -> Fuzzer {
     let map_ptr = coverage_map.as_mut_ptr();
     let map_len = coverage_map.len();
 
+    // SAFETY: coverage_map Buffer outlives Fuzzer; observer is consumed by track_indices below.
     let temp_observer =
         unsafe { StdMapObserver::from_mut_ptr(EDGES_OBSERVER_NAME, map_ptr, map_len) };
 
@@ -215,6 +236,10 @@ pub(crate) fn make_test_fuzzer(map_size: usize) -> Fuzzer {
         mutator,
         i2s_mutator,
         grimoire_mutator,
+        redqueen_mutator: AflppRedQueen::with_cmplog_options(true, true),
+        redqueen_enabled: false,
+        redqueen_ran_for_entry: false,
+        redqueen_override: None,
         unicode_mutator,
         map_ptr,
         map_len,
@@ -262,15 +287,17 @@ pub(crate) fn make_fuzzer_ready_for_stage(map_size: usize) -> Fuzzer {
     let _ = fuzzer.get_next_input().unwrap();
 
     // Write novel coverage to trigger Interesting.
+    // SAFETY: index 42 is within map_size bounds; no other observer is live.
     unsafe {
         *fuzzer.map_ptr.add(42) = 1;
     }
 
     // Push CmpLog entries so beginStage has data to work with.
-    cmplog::push(CmpValues::Bytes((
-        make_cmplog_bytes(b"hello"),
-        make_cmplog_bytes(b"world"),
-    )));
+    cmplog::push(
+        CmpValues::Bytes((make_cmplog_bytes(b"hello"), make_cmplog_bytes(b"world"))),
+        0,
+        cmplog::CmpLogOperator::Equal,
+    );
 
     // report_result will evaluate coverage, drain CmpLog, and set
     // last_interesting_corpus_id if interesting.
@@ -284,6 +311,7 @@ pub(crate) fn make_fuzzer_ready_for_stage(map_size: usize) -> Fuzzer {
     // Simulate calibration (required before beginStage).
     // Write the same coverage for calibration runs.
     for _ in 0..3 {
+        // SAFETY: index 42 is within map_size bounds; no other observer is live.
         unsafe {
             *fuzzer.map_ptr.add(42) = 1;
         }
@@ -336,10 +364,12 @@ pub(crate) fn make_fuzzer_with_unicode_entry(map_size: usize, input: &[u8]) -> (
         .unwrap();
 
     // Establish coverage history.
+    // SAFETY: index 10 is within map_size bounds; no other observer is live.
     unsafe {
         *fuzzer.map_ptr.add(10) = 1;
     }
     {
+        // SAFETY: temporary observer; dropped at end of block before returning.
         let observer = unsafe {
             StdMapObserver::from_mut_ptr(EDGES_OBSERVER_NAME, fuzzer.map_ptr, fuzzer.map_len)
         };
@@ -354,6 +384,7 @@ pub(crate) fn make_fuzzer_with_unicode_entry(map_size: usize, input: &[u8]) -> (
             &LibaflExitKind::Ok,
         );
     }
+    // SAFETY: zeroes the full map; pointer and length from same Buffer.
     unsafe {
         std::ptr::write_bytes(fuzzer.map_ptr, 0, fuzzer.map_len);
     }
@@ -395,10 +426,12 @@ pub(crate) fn make_fuzzer_with_grimoire_entry(map_size: usize, input: &[u8]) -> 
         .unwrap();
 
     // Establish coverage history.
+    // SAFETY: index 10 is within map_size bounds; no other observer is live.
     unsafe {
         *fuzzer.map_ptr.add(10) = 1;
     }
     {
+        // SAFETY: temporary observer; dropped at end of block before returning.
         let observer = unsafe {
             StdMapObserver::from_mut_ptr(EDGES_OBSERVER_NAME, fuzzer.map_ptr, fuzzer.map_len)
         };
@@ -413,6 +446,7 @@ pub(crate) fn make_fuzzer_with_grimoire_entry(map_size: usize, input: &[u8]) -> 
             &LibaflExitKind::Ok,
         );
     }
+    // SAFETY: zeroes the full map; pointer and length from same Buffer.
     unsafe {
         std::ptr::write_bytes(fuzzer.map_ptr, 0, fuzzer.map_len);
     }
@@ -460,11 +494,13 @@ pub(crate) fn make_fuzzer_with_generalization_entry(
     // so they're recognized as "known" coverage.
     // Write coverage at novelty indices and evaluate to establish history.
     for &idx in novelty_indices {
+        // SAFETY: caller must supply indices within map_size; no other observer is live.
         unsafe {
             *fuzzer.map_ptr.add(idx) = 1;
         }
     }
     {
+        // SAFETY: temporary observer; dropped at end of block before returning.
         let observer = unsafe {
             StdMapObserver::from_mut_ptr(EDGES_OBSERVER_NAME, fuzzer.map_ptr, fuzzer.map_len)
         };
@@ -480,7 +516,7 @@ pub(crate) fn make_fuzzer_with_generalization_entry(
             &LibaflExitKind::Ok,
         );
     }
-    // Zero the map.
+    // SAFETY: zeroes the full map; pointer and length from same Buffer.
     unsafe {
         std::ptr::write_bytes(fuzzer.map_ptr, 0, fuzzer.map_len);
     }

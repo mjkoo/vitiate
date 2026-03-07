@@ -80,6 +80,9 @@ export async function runFuzzLoop(
   if (options.unicode !== undefined) {
     fuzzerConfig.unicode = options.unicode;
   }
+  if (options.redqueen !== undefined) {
+    fuzzerConfig.redqueen = options.redqueen;
+  }
 
   const fuzzer = new Fuzzer(coverageMap, fuzzerConfig);
 

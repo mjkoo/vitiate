@@ -13,12 +13,44 @@ use libafl::observers::cmp::{CmpValues, CmplogBytes};
 /// Maximum number of comparison entries per iteration.
 const MAX_ENTRIES: usize = 4096;
 
+/// Comparison operator type derived from the `op` string parameter in
+/// `__vitiate_trace_cmp()`. Used to populate `AflppCmpLogHeader` attributes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CmpLogOperator {
+    Equal,
+    NotEqual,
+    Less,
+    Greater,
+}
+
+impl CmpLogOperator {
+    /// Parse a JavaScript comparison operator string into a `CmpLogOperator`.
+    ///
+    /// Returns `None` for unknown operators. The SWC plugin only emits known
+    /// operators, but `trace_cmp` is a public NAPI function that can be called
+    /// with arbitrary strings from JS — returning `None` lets callers skip
+    /// CmpLog recording gracefully while the operator match in `trace_cmp`
+    /// returns the appropriate JS error.
+    pub fn from_op(op: &str) -> Option<Self> {
+        match op {
+            "===" | "==" => Some(Self::Equal),
+            "!==" | "!=" => Some(Self::NotEqual),
+            "<" | "<=" => Some(Self::Less),
+            ">" | ">=" => Some(Self::Greater),
+            _ => None,
+        }
+    }
+}
+
 /// Largest integer JavaScript can represent exactly (`2^53 - 1`).
 const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 
+/// Enriched CmpLog entry: comparison values, site ID, and operator type.
+pub type CmpLogEntry = (CmpValues, u32, CmpLogOperator);
+
 thread_local! {
     static CMPLOG_ENABLED: RefCell<bool> = const { RefCell::new(false) };
-    static CMPLOG_ENTRIES: RefCell<Vec<CmpValues>> = const { RefCell::new(Vec::new()) };
+    static CMPLOG_ENTRIES: RefCell<Vec<CmpLogEntry>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Enable CmpLog recording. Called when a Fuzzer is constructed.
@@ -43,25 +75,25 @@ pub fn is_enabled() -> bool {
     CMPLOG_ENABLED.with(|e| *e.borrow())
 }
 
-/// Push a comparison entry into the thread-local accumulator.
+/// Push an enriched comparison entry into the thread-local accumulator.
 ///
 /// Silently drops entries when disabled or at capacity (4096).
-pub fn push(entry: CmpValues) {
+pub fn push(entry: CmpValues, site_id: u32, operator: CmpLogOperator) {
     if !is_enabled() {
         return;
     }
     CMPLOG_ENTRIES.with(|entries| {
         let mut entries = entries.borrow_mut();
         if entries.len() < MAX_ENTRIES {
-            entries.push(entry);
+            entries.push((entry, site_id, operator));
         }
     });
 }
 
-/// Drain all accumulated entries and return them.
+/// Drain all accumulated enriched entries and return them.
 ///
 /// The accumulator is empty after this call.
-pub fn drain() -> Vec<CmpValues> {
+pub fn drain() -> Vec<CmpLogEntry> {
     CMPLOG_ENTRIES.with(|entries| std::mem::take(&mut *entries.borrow_mut()))
 }
 
@@ -247,7 +279,7 @@ mod tests {
         disable();
     }
 
-    // === Accumulator tests (Task 1.3) ===
+    // === Accumulator tests ===
 
     #[test]
     fn test_disabled_by_default() {
@@ -268,7 +300,7 @@ mod tests {
     fn test_push_when_enabled() {
         reset();
         enable();
-        push(CmpValues::U8((1, 2, false)));
+        push(CmpValues::U8((1, 2, false)), 0, CmpLogOperator::Equal);
         let entries = drain();
         assert_eq!(entries.len(), 1);
         disable();
@@ -277,7 +309,7 @@ mod tests {
     #[test]
     fn test_push_when_disabled() {
         reset();
-        push(CmpValues::U8((1, 2, false)));
+        push(CmpValues::U8((1, 2, false)), 0, CmpLogOperator::Equal);
         let entries = drain();
         assert!(entries.is_empty());
     }
@@ -287,7 +319,11 @@ mod tests {
         reset();
         enable();
         for i in 0..MAX_ENTRIES + 100 {
-            push(CmpValues::U8((i as u8, 0, false)));
+            push(
+                CmpValues::U8((i as u8, 0, false)),
+                i as u32,
+                CmpLogOperator::Equal,
+            );
         }
         let entries = drain();
         assert_eq!(entries.len(), MAX_ENTRIES);
@@ -298,12 +334,26 @@ mod tests {
     fn test_drain_returns_and_clears() {
         reset();
         enable();
-        push(CmpValues::U8((1, 2, false)));
-        push(CmpValues::U8((3, 4, false)));
+        push(CmpValues::U8((1, 2, false)), 0, CmpLogOperator::Equal);
+        push(CmpValues::U8((3, 4, false)), 1, CmpLogOperator::Less);
         let entries = drain();
         assert_eq!(entries.len(), 2);
         let entries2 = drain();
         assert!(entries2.is_empty());
+        disable();
+    }
+
+    #[test]
+    fn test_enriched_entry_preserves_site_id_and_operator() {
+        reset();
+        enable();
+        push(CmpValues::U8((10, 20, false)), 42, CmpLogOperator::Less);
+        let entries = drain();
+        assert_eq!(entries.len(), 1);
+        let (values, site_id, operator) = &entries[0];
+        assert_eq!(*site_id, 42);
+        assert_eq!(*operator, CmpLogOperator::Less);
+        assert_eq!(*values, CmpValues::U8((10, 20, false)));
         disable();
     }
 
@@ -472,7 +522,7 @@ mod tests {
     fn test_disable_drains_stale_entries() {
         reset();
         enable();
-        push(CmpValues::U8((1, 2, false)));
+        push(CmpValues::U8((1, 2, false)), 0, CmpLogOperator::Equal);
         // disable() should drain stale entries
         disable();
         // New session should not see entries from the prior one
@@ -480,5 +530,60 @@ mod tests {
         let entries = drain();
         assert!(entries.is_empty(), "disable() must drain stale entries");
         disable();
+    }
+
+    // === CmpLogOperator tests ===
+
+    #[test]
+    fn test_operator_from_strict_equal() {
+        assert_eq!(CmpLogOperator::from_op("==="), Some(CmpLogOperator::Equal));
+    }
+
+    #[test]
+    fn test_operator_from_loose_equal() {
+        assert_eq!(CmpLogOperator::from_op("=="), Some(CmpLogOperator::Equal));
+    }
+
+    #[test]
+    fn test_operator_from_strict_not_equal() {
+        assert_eq!(
+            CmpLogOperator::from_op("!=="),
+            Some(CmpLogOperator::NotEqual)
+        );
+    }
+
+    #[test]
+    fn test_operator_from_loose_not_equal() {
+        assert_eq!(
+            CmpLogOperator::from_op("!="),
+            Some(CmpLogOperator::NotEqual)
+        );
+    }
+
+    #[test]
+    fn test_operator_from_less_than() {
+        assert_eq!(CmpLogOperator::from_op("<"), Some(CmpLogOperator::Less));
+    }
+
+    #[test]
+    fn test_operator_from_less_than_or_equal() {
+        assert_eq!(CmpLogOperator::from_op("<="), Some(CmpLogOperator::Less));
+    }
+
+    #[test]
+    fn test_operator_from_greater_than() {
+        assert_eq!(CmpLogOperator::from_op(">"), Some(CmpLogOperator::Greater));
+    }
+
+    #[test]
+    fn test_operator_from_greater_than_or_equal() {
+        assert_eq!(CmpLogOperator::from_op(">="), Some(CmpLogOperator::Greater));
+    }
+
+    #[test]
+    fn test_operator_from_unknown_returns_none() {
+        assert_eq!(CmpLogOperator::from_op("??"), None);
+        assert_eq!(CmpLogOperator::from_op("???"), None);
+        assert_eq!(CmpLogOperator::from_op(""), None);
     }
 }

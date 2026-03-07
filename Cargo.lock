@@ -3026,6 +3026,7 @@ name = "vitiate_napi"
 version = "0.1.0"
 dependencies = [
  "cc",
+ "hashbrown 0.16.1",
  "libafl",
  "libafl_bolts",
  "libc",

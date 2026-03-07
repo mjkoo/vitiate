@@ -395,6 +395,7 @@ mod tests {
                 seed: None,
                 grimoire: None,
                 unicode: Some(true),
+                redqueen: None,
             }),
         )
         .unwrap();
@@ -414,6 +415,7 @@ mod tests {
                 seed: None,
                 grimoire: None,
                 unicode: Some(false),
+                redqueen: None,
             }),
         )
         .unwrap();
@@ -434,14 +436,16 @@ mod tests {
                 seed: None,
                 grimoire: Some(false),
                 unicode: Some(true),
+                redqueen: None,
             }),
         )
         .unwrap();
         assert!(!fuzzer.grimoire_enabled, "grimoire should be disabled");
         assert!(fuzzer.unicode_enabled, "unicode should be enabled");
+        // Deferred detection is still needed for REDQUEEN (redqueen: None).
         assert!(
-            fuzzer.deferred_detection_count.is_none(),
-            "no deferred detection when both explicitly configured"
+            fuzzer.deferred_detection_count.is_some(),
+            "deferred detection needed for REDQUEEN auto-detect"
         );
     }
 
@@ -530,6 +534,7 @@ mod tests {
                 seed: None,
                 grimoire: Some(true),
                 unicode: None,
+                redqueen: None,
             }),
         )
         .unwrap();
@@ -683,7 +688,11 @@ mod tests {
         }
 
         // Push some CmpLog entries before advancing.
-        cmplog::push(CmpValues::U8((1, 2, false)));
+        cmplog::push(
+            CmpValues::U8((1, 2, false)),
+            0,
+            cmplog::CmpLogOperator::Equal,
+        );
 
         let _ = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
 

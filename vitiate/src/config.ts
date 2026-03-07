@@ -30,6 +30,11 @@ export interface FuzzOptions {
    * `true` = force enable, `false` = force disable, absent = auto-detect from corpus UTF-8 content.
    */
   unicode?: boolean;
+  /**
+   * REDQUEEN transform-aware mutation control.
+   * `true` = force enable, `false` = force disable, absent = auto-detect (inverted: enabled for binary corpus).
+   */
+  redqueen?: boolean;
 }
 
 export interface FuzzDefaults extends FuzzOptions {
@@ -68,7 +73,10 @@ export function isFuzzingMode(): boolean {
 
 function validateFuzzOptions(obj: Record<string, unknown>): FuzzOptions {
   const valid: FuzzOptions = {};
-  const numericKeys: (keyof Omit<FuzzOptions, "grimoire" | "unicode">)[] = [
+  const numericKeys: (keyof Omit<
+    FuzzOptions,
+    "grimoire" | "unicode" | "redqueen"
+  >)[] = [
     "maxLen",
     "timeoutMs",
     "maxTotalTimeMs",
@@ -116,6 +124,17 @@ function validateFuzzOptions(obj: Record<string, unknown>): FuzzOptions {
   ) {
     process.stderr.write(
       `vitiate: warning: ignoring non-boolean VITIATE_FUZZ_OPTIONS.unicode: ${JSON.stringify(obj["unicode"])}\n`,
+    );
+  }
+  if ("redqueen" in obj && typeof obj["redqueen"] === "boolean") {
+    valid.redqueen = obj["redqueen"];
+  } else if (
+    "redqueen" in obj &&
+    obj["redqueen"] !== undefined &&
+    obj["redqueen"] !== null
+  ) {
+    process.stderr.write(
+      `vitiate: warning: ignoring non-boolean VITIATE_FUZZ_OPTIONS.redqueen: ${JSON.stringify(obj["redqueen"])}\n`,
     );
   }
   return valid;

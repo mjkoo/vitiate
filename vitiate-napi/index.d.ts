@@ -164,6 +164,11 @@ export interface FuzzerConfig {
    * `true` = force enable, `false` = force disable, absent = auto-detect from corpus UTF-8 content.
    */
   unicode?: boolean
+  /**
+   * REDQUEEN transform-aware mutation control.
+   * `true` = force enable, `false` = force disable, absent = auto-detect (inverted: enabled for binary corpus).
+   */
+  redqueen?: boolean
 }
 
 export interface FuzzerStats {
