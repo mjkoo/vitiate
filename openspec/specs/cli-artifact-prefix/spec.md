@@ -50,7 +50,7 @@ The artifact prefix SHALL be passed to both the fuzz loop (for JS-detected crash
 
 ### Requirement: Artifact prefix plumbing to child process
 
-When `-artifact_prefix` is provided, the CLI parent SHALL pass the value to the child process via the `VITIATE_ARTIFACT_PREFIX` environment variable. When `-artifact_prefix` is not provided, the CLI parent SHALL NOT set `VITIATE_ARTIFACT_PREFIX` — the child defaults to `./` when `VITIATE_LIBFUZZER_COMPAT=1` is set.
+When `-artifact_prefix` is provided, the CLI parent SHALL pass the value to the child process via the `artifactPrefix` field in the `VITIATE_CLI_IPC` JSON blob. When `-artifact_prefix` is not provided, the CLI parent SHALL omit `artifactPrefix` from the IPC blob — the child defaults to `./` when `libfuzzerCompat` is true.
 
 The fuzz loop SHALL resolve the artifact prefix as follows, using the `getArtifactPrefix()` and `isLibfuzzerCompat()` helpers from `config.ts`:
 1. If `getArtifactPrefix()` returns a value → use it.
@@ -61,17 +61,17 @@ The artifact prefix SHALL also be passed to the supervisor via `SupervisorOption
 
 #### Scenario: Child reads artifact prefix from env
 
-- **WHEN** the CLI parent sets `VITIATE_ARTIFACT_PREFIX=./out/`
+- **WHEN** the CLI parent sets `artifactPrefix: "./out/"` in the `VITIATE_CLI_IPC` blob
 - **AND** the child process starts and enters the fuzz loop
 - **THEN** the fuzz loop writes artifacts to `./out/crash-{hash}` or `./out/timeout-{hash}`
 
 #### Scenario: CLI child defaults to cwd when no prefix flag
 
-- **WHEN** `VITIATE_LIBFUZZER_COMPAT=1` is set
-- **AND** `VITIATE_ARTIFACT_PREFIX` is not set
+- **WHEN** `libfuzzerCompat` is true in the CLI IPC config
+- **AND** `artifactPrefix` is not set in the CLI IPC config
 - **THEN** the fuzz loop writes artifacts to `./crash-{hash}` or `./timeout-{hash}`
 
 #### Scenario: Vitest mode uses existing paths
 
-- **WHEN** neither `VITIATE_LIBFUZZER_COMPAT` nor `VITIATE_ARTIFACT_PREFIX` is set
+- **WHEN** `VITIATE_CLI_IPC` is not set
 - **THEN** the fuzz loop writes artifacts to `testdata/fuzz/{sanitizedName}/crash-{hash}` (existing behavior)

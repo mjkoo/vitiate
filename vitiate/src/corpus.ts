@@ -11,6 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { getProjectRoot, getResolvedCacheDir } from "./config.js";
 
 function contentHash(data: Buffer): string {
   return createHash("sha256").update(data).digest("hex");
@@ -80,19 +81,14 @@ export function loadCachedCorpus(
 }
 
 export function getCacheDir(): string {
-  const cacheDir = process.env["VITIATE_CACHE_DIR"];
-  const projectRoot = process.env["VITIATE_PROJECT_ROOT"];
+  const cacheDir = getResolvedCacheDir();
 
   if (cacheDir) {
-    // If absolute, use as-is; if relative, resolve against project root or cwd
-    if (path.isAbsolute(cacheDir)) {
-      return cacheDir;
-    }
-    return path.resolve(projectRoot ?? process.cwd(), cacheDir);
+    return cacheDir;
   }
 
   // Default: .vitiate-corpus relative to project root (if set) or cwd
-  return path.resolve(projectRoot ?? process.cwd(), ".vitiate-corpus");
+  return path.resolve(getProjectRoot(), ".vitiate-corpus");
 }
 
 export function loadCachedCorpusWithPaths(

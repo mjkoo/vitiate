@@ -1,5 +1,13 @@
 import path from "node:path";
 import { describe, it, expect, afterEach } from "vitest";
+import {
+  getCoverageMapSize,
+  resetCoverageMapSize,
+  getProjectRoot,
+  resetProjectRoot,
+  getResolvedCacheDir,
+  resetCacheDir,
+} from "./config.js";
 import { vitiatePlugin } from "./plugin.js";
 
 function callConfig(
@@ -25,19 +33,20 @@ describe("plugin", () => {
     expect(typeof plugin.transform).toBe("function");
   });
 
-  it("accepts the full options shape (fuzz + instrument)", () => {
+  it("accepts the full options shape (fuzz + instrument + coverageMapSize)", () => {
     const plugin = vitiatePlugin({
       instrument: { include: ["src/**/*.ts"], exclude: [] },
-      fuzz: { maxLen: 4096, timeoutMs: 5000, cacheDir: ".fuzz-cache" },
+      fuzz: { maxLen: 4096, timeoutMs: 5000 },
+      cacheDir: ".fuzz-cache",
+      coverageMapSize: 131072,
     });
     expect(plugin.name).toBe("vitiate");
     expect(plugin.enforce).toBe("post");
   });
 
   it("has a config function that adds setupFiles", () => {
-    const savedRoot = process.env["VITIATE_PROJECT_ROOT"];
+    resetProjectRoot();
     try {
-      delete process.env["VITIATE_PROJECT_ROOT"];
       const plugin = vitiatePlugin();
       expect(typeof plugin.config).toBe("function");
       // Call config to verify it returns test.setupFiles
@@ -49,93 +58,67 @@ describe("plugin", () => {
       expect(setupFiles).toHaveLength(1);
       expect(setupFiles[0]).toContain("setup");
     } finally {
-      if (savedRoot === undefined) {
-        delete process.env["VITIATE_PROJECT_ROOT"];
-      } else {
-        process.env["VITIATE_PROJECT_ROOT"] = savedRoot;
-      }
+      resetProjectRoot();
     }
   });
 
-  describe("config hook env vars", () => {
-    const savedEnv: Record<string, string | undefined> = {};
-    const envKeys = [
-      "VITIATE_PROJECT_ROOT",
-      "VITIATE_CACHE_DIR",
-      "VITIATE_FUZZ_OPTIONS",
-    ];
+  describe("config hook", () => {
+    const savedFuzzOptions = process.env["VITIATE_FUZZ_OPTIONS"];
 
     afterEach(() => {
-      for (const key of envKeys) {
-        if (savedEnv[key] === undefined) {
-          delete process.env[key];
-        } else {
-          process.env[key] = savedEnv[key];
-        }
+      if (savedFuzzOptions === undefined) {
+        delete process.env["VITIATE_FUZZ_OPTIONS"];
+      } else {
+        process.env["VITIATE_FUZZ_OPTIONS"] = savedFuzzOptions;
       }
+      resetProjectRoot();
+      resetCacheDir();
+      resetCoverageMapSize();
     });
 
-    function saveAndClearEnv(): void {
-      for (const key of envKeys) {
-        savedEnv[key] = process.env[key];
-        delete process.env[key];
-      }
-    }
-
-    it("sets VITIATE_PROJECT_ROOT from Vite config root", () => {
-      saveAndClearEnv();
+    it("sets project root from Vite config root", () => {
       const plugin = vitiatePlugin();
       callConfig(plugin, { root: "/my/project" });
-      expect(process.env["VITIATE_PROJECT_ROOT"]).toBe(
-        path.resolve("/my/project"),
-      );
+      expect(getProjectRoot()).toBe(path.resolve("/my/project"));
     });
 
     it("defaults project root to cwd when config.root is not set", () => {
-      saveAndClearEnv();
       const plugin = vitiatePlugin();
       callConfig(plugin, {});
-      expect(process.env["VITIATE_PROJECT_ROOT"]).toBe(process.cwd());
+      expect(getProjectRoot()).toBe(process.cwd());
     });
 
-    it("does not overwrite VITIATE_PROJECT_ROOT when already set", () => {
-      saveAndClearEnv();
-      process.env["VITIATE_PROJECT_ROOT"] = "/existing/root";
+    it("overwrites project root on each config() call", () => {
       const plugin = vitiatePlugin();
-      callConfig(plugin, { root: "/other/root" });
-      expect(process.env["VITIATE_PROJECT_ROOT"]).toBe("/existing/root");
+      callConfig(plugin, { root: "/first/root" });
+      expect(getProjectRoot()).toBe(path.resolve("/first/root"));
+      callConfig(plugin, { root: "/second/root" });
+      expect(getProjectRoot()).toBe(path.resolve("/second/root"));
     });
 
-    it("sets VITIATE_CACHE_DIR resolved relative to project root", () => {
-      saveAndClearEnv();
-      const plugin = vitiatePlugin({ fuzz: { cacheDir: ".fuzz-cache" } });
+    it("sets cache dir resolved relative to project root", () => {
+      const plugin = vitiatePlugin({ cacheDir: ".fuzz-cache" });
       callConfig(plugin, { root: "/my/project" });
-      expect(process.env["VITIATE_CACHE_DIR"]).toBe(
+      expect(getResolvedCacheDir()).toBe(
         path.resolve("/my/project", ".fuzz-cache"),
       );
     });
 
-    it("resolves cacheDir against pre-set VITIATE_PROJECT_ROOT, not Vite root", () => {
-      saveAndClearEnv();
-      process.env["VITIATE_PROJECT_ROOT"] = "/custom/root";
-      const plugin = vitiatePlugin({ fuzz: { cacheDir: ".cache" } });
+    it("resolves cacheDir against Vite root", () => {
+      const plugin = vitiatePlugin({ cacheDir: ".cache" });
       callConfig(plugin, { root: "/vite/root" });
-      expect(process.env["VITIATE_PROJECT_ROOT"]).toBe("/custom/root");
-      expect(process.env["VITIATE_CACHE_DIR"]).toBe(
-        path.resolve("/custom/root", ".cache"),
-      );
+      expect(getProjectRoot()).toBe(path.resolve("/vite/root"));
+      expect(getResolvedCacheDir()).toBe(path.resolve("/vite/root", ".cache"));
     });
 
-    it("does not overwrite VITIATE_CACHE_DIR when already set", () => {
-      saveAndClearEnv();
-      process.env["VITIATE_CACHE_DIR"] = "/existing/cache";
-      const plugin = vitiatePlugin({ fuzz: { cacheDir: ".fuzz-cache" } });
-      callConfig(plugin, { root: "/my/project" });
-      expect(process.env["VITIATE_CACHE_DIR"]).toBe("/existing/cache");
+    it("does not set cache dir when cacheDir option is not provided", () => {
+      const plugin = vitiatePlugin();
+      callConfig(plugin, {});
+      expect(getResolvedCacheDir()).toBeUndefined();
     });
 
     it("sets VITIATE_FUZZ_OPTIONS when fuzz options are provided", () => {
-      saveAndClearEnv();
+      delete process.env["VITIATE_FUZZ_OPTIONS"];
       const plugin = vitiatePlugin({
         fuzz: { maxLen: 4096, timeoutMs: 5000 },
       });
@@ -146,7 +129,6 @@ describe("plugin", () => {
     });
 
     it("does not overwrite VITIATE_FUZZ_OPTIONS when already set", () => {
-      saveAndClearEnv();
       process.env["VITIATE_FUZZ_OPTIONS"] = '{"maxLen":1024}';
       const plugin = vitiatePlugin({
         fuzz: { maxLen: 4096 },
@@ -156,7 +138,7 @@ describe("plugin", () => {
     });
 
     it("serializes boolean fuzz options to VITIATE_FUZZ_OPTIONS", () => {
-      saveAndClearEnv();
+      delete process.env["VITIATE_FUZZ_OPTIONS"];
       const plugin = vitiatePlugin({
         fuzz: { grimoire: true, unicode: false, redqueen: true },
       });
@@ -166,19 +148,37 @@ describe("plugin", () => {
       );
     });
 
-    it("does not set VITIATE_FUZZ_OPTIONS when only cacheDir is provided", () => {
-      saveAndClearEnv();
-      const plugin = vitiatePlugin({ fuzz: { cacheDir: ".cache" } });
+    it("does not set VITIATE_FUZZ_OPTIONS when no fuzz options are provided but cacheDir is", () => {
+      delete process.env["VITIATE_FUZZ_OPTIONS"];
+      const plugin = vitiatePlugin({ cacheDir: ".cache" });
       callConfig(plugin, {});
       expect(process.env["VITIATE_FUZZ_OPTIONS"]).toBeUndefined();
     });
 
-    it("does not set env vars when no fuzz options are provided", () => {
-      saveAndClearEnv();
+    it("does not set VITIATE_FUZZ_OPTIONS when no fuzz options are provided", () => {
+      delete process.env["VITIATE_FUZZ_OPTIONS"];
       const plugin = vitiatePlugin();
       callConfig(plugin, {});
-      expect(process.env["VITIATE_CACHE_DIR"]).toBeUndefined();
       expect(process.env["VITIATE_FUZZ_OPTIONS"]).toBeUndefined();
+    });
+
+    it("sets coverage map size via setCoverageMapSize when coverageMapSize is provided", () => {
+      const plugin = vitiatePlugin({ coverageMapSize: 131072 });
+      callConfig(plugin, {});
+      expect(getCoverageMapSize()).toBe(131072);
+    });
+
+    it("does not change coverage map size when coverageMapSize is not provided", () => {
+      const plugin = vitiatePlugin();
+      callConfig(plugin, {});
+      expect(getCoverageMapSize()).toBe(65536);
+    });
+
+    it("throws when coverageMapSize is invalid", () => {
+      const plugin = vitiatePlugin({ coverageMapSize: 100 });
+      expect(() => callConfig(plugin, {})).toThrow(
+        "coverageMapSize must be an integer in [256, 4194304]",
+      );
     });
   });
 

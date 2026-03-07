@@ -88,7 +88,7 @@ If the dictionary file does not exist, the system SHALL proceed without user-pro
 
 In CLI mode, the system SHALL accept a `-dict=<path>` flag specifying the path to a dictionary file. The path SHALL be resolved relative to the current working directory, matching libfuzzer behavior.
 
-The resolved absolute path SHALL be passed to the child process via the `VITIATE_DICTIONARY_PATH` environment variable.
+The resolved absolute path SHALL be passed to the child process via the `dictionaryPath` field in the `VITIATE_CLI_IPC` JSON blob.
 
 If `-dict` is provided and the file does not exist, the system SHALL exit with an error before starting the fuzzer.
 

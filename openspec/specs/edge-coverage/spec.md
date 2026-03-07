@@ -127,9 +127,11 @@ The plugin SHALL prepend a coverage counter to the body of `catch` clauses.
 
 ### Requirement: Function entry instrumentation
 
-The plugin SHALL prepend a coverage counter to the body of every function (function
-declarations, function expressions, arrow functions with block bodies, methods, getters,
-setters, constructors).
+The plugin SHALL insert a coverage counter at the entry of every function (function
+declarations, function expressions, arrow functions, methods, getters,
+setters, constructors). For block bodies, the counter is prepended as a statement. For
+arrow functions with expression bodies, the counter is inserted using the comma expression
+form: `(__vitiate_cov[ID]++, expr)`.
 
 #### Scenario: Function declaration
 
@@ -144,8 +146,8 @@ setters, constructors).
 #### Scenario: Arrow function with expression body
 
 - **WHEN** `const f = () => expr` is transformed
-- **THEN** the arrow function body is NOT modified (expression-body arrows have no block
-  to prepend to; the function entry is covered by the call site's edge)
+- **THEN** the body is wrapped as `() => (__vitiate_cov[ID]++, expr)` using the comma
+  expression form, preserving the return value while recording the function entry edge
 
 ### Requirement: Counter increment code shape
 

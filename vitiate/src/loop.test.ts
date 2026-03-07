@@ -11,11 +11,11 @@ import { tmpdir } from "node:os";
 import { runFuzzLoop } from "./loop.js";
 import { initGlobals } from "./globals.js";
 import { sanitizeTestName } from "./corpus.js";
+import { setCacheDir, resetCacheDir } from "./config.js";
 
 describe("fuzz loop", () => {
   let tmpDir: string;
   const originalFuzz = process.env["VITIATE_FUZZ"];
-  const originalCacheDir = process.env["VITIATE_CACHE_DIR"];
   const originalCliIpc = process.env["VITIATE_CLI_IPC"];
   const originalCov = globalThis.__vitiate_cov;
   const originalTrace = globalThis.__vitiate_trace_cmp;
@@ -26,11 +26,7 @@ describe("fuzz loop", () => {
     } else {
       process.env["VITIATE_FUZZ"] = originalFuzz;
     }
-    if (originalCacheDir === undefined) {
-      delete process.env["VITIATE_CACHE_DIR"];
-    } else {
-      process.env["VITIATE_CACHE_DIR"] = originalCacheDir;
-    }
+    resetCacheDir();
     if (originalCliIpc === undefined) {
       delete process.env["VITIATE_CLI_IPC"];
     } else {
@@ -51,7 +47,7 @@ describe("fuzz loop", () => {
       `vitiate-loop-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     );
     mkdirSync(tmpDir, { recursive: true });
-    process.env["VITIATE_CACHE_DIR"] = path.join(tmpDir, ".cache");
+    setCacheDir(path.join(tmpDir, ".cache"));
   }
 
   it("runs against a trivial target and terminates after runs limit", async () => {

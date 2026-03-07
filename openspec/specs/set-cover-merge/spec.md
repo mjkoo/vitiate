@@ -88,11 +88,11 @@ The coverage map is a 65,536-byte Buffer. The function SHALL iterate all bytes i
 
 ### Requirement: CLI merge mode
 
-When `-merge=1` is provided on the CLI, the system SHALL enter merge mode instead of fuzzing mode. The parent process SHALL use the existing supervisor pattern (`runSupervisor()`) to spawn and manage the child. The child process SHALL detect merge mode via the `VITIATE_MERGE=1` environment variable (set by the parent alongside `VITIATE_SUPERVISOR`).
+When `-merge=1` is provided on the CLI, the system SHALL enter merge mode instead of fuzzing mode. The parent process SHALL use the existing supervisor pattern (`runSupervisor()`) to spawn and manage the child. The child process SHALL detect merge mode via the `merge: true` field in the `VITIATE_CLI_IPC` JSON blob (set by the parent alongside `VITIATE_SUPERVISOR`).
 
 #### Control file
 
-The parent SHALL create a control file path in the system temp directory (`os.tmpdir()`) and pass it to the child via the `VITIATE_MERGE_CONTROL_FILE` environment variable.
+The parent SHALL create a control file path in the system temp directory (`os.tmpdir()`) and pass it to the child via the `mergeControlFile` field in the `VITIATE_CLI_IPC` JSON blob.
 
 The control file SHALL use JSON-lines format (one JSON object per line): `{"path": "<input-file-path>", "edges": [<edge-indices>]}`. The child SHALL append one line after each successful replay. The format is append-only; a partial last line (from a crash mid-write) SHALL be discarded on read.
 

@@ -79,11 +79,10 @@ The system SHALL provide a function to load seed corpus entries from `testdata/f
 
 The system SHALL provide a function to load cached corpus entries from the cache directory. The cache directory SHALL be resolved using the following precedence:
 
-1. The `VITIATE_CACHE_DIR` environment variable, if set. If the value is a relative path, it SHALL be resolved relative to `VITIATE_PROJECT_ROOT` (if set) or `process.cwd()`.
-2. `.vitiate-corpus/` resolved relative to `VITIATE_PROJECT_ROOT`, if set.
-3. `.vitiate-corpus/` resolved relative to `process.cwd()` (fallback).
+1. The resolved cache dir from `getResolvedCacheDir()` (set by the plugin's `cacheDir` option), if set.
+2. `.vitiate-corpus/` resolved relative to the project root from `getProjectRoot()` (set by the plugin, defaults to `process.cwd()`).
 
-Cached entries SHALL be stored at `{cacheDir}/{relativeFilePath}/{sanitizedTestName}/{hash}`, where `relativeFilePath` is the test file's path relative to `VITIATE_PROJECT_ROOT` (or `process.cwd()` if unset), and `{sanitizedTestName}` uses the hash-prefixed format. This file-qualified path prevents collisions between tests with the same `fuzz()` name in different files.
+Cached entries SHALL be stored at `{cacheDir}/{relativeFilePath}/{sanitizedTestName}/{hash}`, where `relativeFilePath` is the test file's path relative to the project root (or `process.cwd()` if the plugin has not run), and `{sanitizedTestName}` uses the hash-prefixed format. This file-qualified path prevents collisions between tests with the same `fuzz()` name in different files.
 
 The `loadCachedCorpus` function SHALL accept `testFilePath` (the test file's path relative to the project root) and `testName` as parameters.
 
@@ -92,9 +91,9 @@ The `loadCachedCorpus` function SHALL accept `testFilePath` (the test file's pat
 - **WHEN** `.vitiate-corpus/test/parsers/url.fuzz.ts/e7f3a1b2-parse_url/` contains files `a1b2c3d4` and `e5f6g7h8`
 - **THEN** two `Buffer` values are returned
 
-#### Scenario: Custom cache directory via env var
+#### Scenario: Custom cache directory via plugin option
 
-- **WHEN** `VITIATE_CACHE_DIR=/tmp/fuzz-cache` is set
+- **WHEN** `vitiatePlugin({ cacheDir: "/tmp/fuzz-cache" })` is configured
 - **THEN** cached entries are loaded from `/tmp/fuzz-cache/test/parsers/url.fuzz.ts/e7f3a1b2-parse_url/`
 
 #### Scenario: Cache directory does not exist
@@ -104,20 +103,14 @@ The `loadCachedCorpus` function SHALL accept `testFilePath` (the test file's pat
 
 #### Scenario: Cache dir resolves to project root when plugin is active
 
-- **WHEN** `VITIATE_PROJECT_ROOT=/home/user/project` is set (by the vitiate plugin)
-- **AND** `VITIATE_CACHE_DIR` is not set
+- **WHEN** the plugin has set the project root to `/home/user/project`
+- **AND** no `cacheDir` option is provided
 - **THEN** the cache directory is `/home/user/project/.vitiate-corpus`
 
-#### Scenario: Relative VITIATE_CACHE_DIR resolves against project root
+#### Scenario: Fallback to cwd when no plugin is active
 
-- **WHEN** `VITIATE_CACHE_DIR=.my-corpus` is set
-- **AND** `VITIATE_PROJECT_ROOT=/home/user/project` is set
-- **THEN** the cache directory is `/home/user/project/.my-corpus`
-
-#### Scenario: Fallback to cwd when no project root
-
-- **WHEN** `VITIATE_PROJECT_ROOT` is not set
-- **AND** `VITIATE_CACHE_DIR` is not set
+- **WHEN** the plugin has not run (project root not set)
+- **AND** no cache dir is set
 - **THEN** the cache directory is `path.resolve(".vitiate-corpus")` (relative to cwd)
 
 #### Scenario: Same test name in different files does not collide

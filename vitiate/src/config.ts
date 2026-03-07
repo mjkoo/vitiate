@@ -67,11 +67,6 @@ const CliIpcSchema = v.object({
 
 export type CliIpc = v.InferOutput<typeof CliIpcSchema>;
 
-export interface FuzzDefaults extends FuzzOptions {
-  /** Cache directory path, resolved relative to project root. */
-  cacheDir?: string;
-}
-
 export interface InstrumentOptions {
   /** Glob patterns for files to instrument. */
   include?: string[];
@@ -81,7 +76,11 @@ export interface InstrumentOptions {
 
 export interface VitiatePluginOptions {
   instrument?: InstrumentOptions;
-  fuzz?: FuzzDefaults;
+  fuzz?: FuzzOptions;
+  /** Cache directory path, resolved relative to project root. */
+  cacheDir?: string;
+  /** Coverage map size (number of edge counter slots). Default: 65536. Must be in [256, 4194304]. */
+  coverageMapSize?: number;
 }
 
 const DEFAULT_INCLUDE = ["**/*.{js,ts,jsx,tsx,mjs,cjs,mts,cts}"];
@@ -232,14 +231,40 @@ export function setCliIpc(ipc: CliIpc): void {
   cachedCliIpc = ipc;
 }
 
+let resolvedProjectRoot: string | undefined;
+
+export function setProjectRoot(root: string): void {
+  resolvedProjectRoot = root;
+}
+
+export function getProjectRoot(): string {
+  return resolvedProjectRoot ?? process.cwd();
+}
+
+export function resetProjectRoot(): void {
+  resolvedProjectRoot = undefined;
+}
+
+let resolvedCacheDir: string | undefined;
+
+export function setCacheDir(dir: string): void {
+  resolvedCacheDir = dir;
+}
+
+export function getResolvedCacheDir(): string | undefined {
+  return resolvedCacheDir;
+}
+
+export function resetCacheDir(): void {
+  resolvedCacheDir = undefined;
+}
+
 const KNOWN_VITIATE_ENV_VARS = new Set([
   "VITIATE_FUZZ",
   "VITIATE_FUZZ_TIME",
   "VITIATE_OPTIMIZE",
   "VITIATE_SUPERVISOR",
   "VITIATE_SHMEM",
-  "VITIATE_PROJECT_ROOT",
-  "VITIATE_CACHE_DIR",
   "VITIATE_FUZZ_OPTIONS",
   "VITIATE_CLI_IPC",
 ]);
@@ -319,6 +344,40 @@ export function getCliOptions(): FuzzOptions {
 }
 
 export const COVERAGE_MAP_SIZE = 65536;
+
+const MIN_COVERAGE_MAP_SIZE = 256;
+const MAX_COVERAGE_MAP_SIZE = 4_194_304;
+
+let resolvedCoverageMapSize: number | undefined;
+
+export function setCoverageMapSize(size: number): void {
+  if (
+    !Number.isInteger(size) ||
+    size < MIN_COVERAGE_MAP_SIZE ||
+    size > MAX_COVERAGE_MAP_SIZE
+  ) {
+    throw new Error(
+      `vitiate: coverageMapSize must be an integer in [${MIN_COVERAGE_MAP_SIZE}, ${MAX_COVERAGE_MAP_SIZE}], got ${size}`,
+    );
+  }
+  if ((size & (size - 1)) !== 0) {
+    process.stderr.write(
+      `vitiate: warning: coverageMapSize ${size} is not a power of two; this is allowed but may reduce hash distribution quality\n`,
+    );
+  }
+  resolvedCoverageMapSize = size;
+}
+
+export function getCoverageMapSize(): number {
+  return resolvedCoverageMapSize ?? COVERAGE_MAP_SIZE;
+}
+
+/**
+ * Reset the resolved coverage map size. For testing only.
+ */
+export function resetCoverageMapSize(): void {
+  resolvedCoverageMapSize = undefined;
+}
 
 /** Default max input length in bytes for shmem allocation. */
 export const DEFAULT_MAX_INPUT_LEN = 4096;

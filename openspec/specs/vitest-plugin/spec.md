@@ -16,7 +16,10 @@ The `options` parameter SHALL accept:
   - `fuzzTimeMs` (number, optional): Total fuzzing time limit in milliseconds.
   - `runs` (number, optional): Maximum number of fuzzing iterations.
   - `seed` (number, optional): RNG seed for reproducible fuzzing.
-  - `cacheDir` (string, optional): Cache directory path, resolved relative to project root.
+
+- `cacheDir` (string, optional): Cache directory path, resolved relative to project root.
+
+- `coverageMapSize` (number, optional, default 65536): Number of edge counter slots in the coverage map. Must be an integer in [256, 4194304]. Larger values reduce hash collisions for large applications. A warning is emitted if the value is not a power of two.
 
 #### Scenario: Default plugin creation
 
@@ -33,11 +36,11 @@ The `options` parameter SHALL accept:
 
 #### Scenario: Plugin with cacheDir
 
-- **WHEN** `vitiatePlugin({ fuzz: { cacheDir: ".fuzz-cache" } })` is called
-- **THEN** the plugin's `config()` hook sets `VITIATE_CACHE_DIR` to the absolute path of `.fuzz-cache` resolved relative to the Vite project root
-- **AND** the env var is only set if `VITIATE_CACHE_DIR` is not already defined
+- **WHEN** `vitiatePlugin({ cacheDir: ".fuzz-cache" })` is called
+- **THEN** the plugin's `config()` hook stores the absolute path of `.fuzz-cache` resolved relative to the Vite project root as module-scoped state
+- **AND** the corpus management module uses this value for cache directory resolution
 
-#### Scenario: Explicit env vars take precedence
+#### Scenario: Explicit VITIATE_FUZZ_OPTIONS env var takes precedence
 
 - **WHEN** `VITIATE_FUZZ_OPTIONS={"maxLen":1024}` is already set in the environment
 - **AND** `vitiatePlugin({ fuzz: { maxLen: 4096 } })` is called
@@ -84,21 +87,20 @@ Precedence (highest wins): `VITIATE_FUZZ_TIME` > `VITIATE_FUZZ_OPTIONS.fuzzTimeM
 
 ### Requirement: Project root communication
 
-The plugin's `config()` hook SHALL resolve the Vite project root and set `VITIATE_PROJECT_ROOT` in `process.env` if it is not already set. The project root SHALL be obtained from the Vite config's `root` property (which defaults to `process.cwd()` when not explicitly configured).
+The plugin's `config()` hook SHALL resolve the Vite project root and store it as module-scoped state via `setProjectRoot()`. The project root SHALL be obtained from the Vite config's `root` property (which defaults to `process.cwd()` when not explicitly configured).
 
-This env var is consumed by the corpus management module to anchor the cache directory.
+This value is consumed by the corpus management module to anchor the cache directory. No environment variable is needed because the plugin and corpus module run in the same process.
 
 #### Scenario: Project root is set from Vite config
 
 - **WHEN** the plugin's `config()` hook runs
-- **AND** `VITIATE_PROJECT_ROOT` is not set in the environment
-- **THEN** `VITIATE_PROJECT_ROOT` is set to the resolved absolute path of Vite's `root`
+- **THEN** the project root is set to the resolved absolute path of Vite's `root`
 
-#### Scenario: Explicit project root takes precedence
+#### Scenario: Project root defaults to cwd
 
-- **WHEN** `VITIATE_PROJECT_ROOT=/custom/root` is already set in the environment
-- **AND** the plugin's `config()` hook runs
-- **THEN** `VITIATE_PROJECT_ROOT` retains `/custom/root`
+- **WHEN** the plugin's `config()` hook runs
+- **AND** Vite's `root` is not configured
+- **THEN** the project root is set to `process.cwd()`
 
 ### Requirement: Transform hook instruments code via SWC
 

@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { initGlobals } from "../src/globals.js";
 import { loadSeedCorpus, writeArtifact } from "../src/corpus.js";
+import { setCacheDir, resetCacheDir } from "../src/config.js";
 import { parseCommand } from "./parser-target.js";
 
 const E2E_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -29,7 +30,6 @@ describe("e2e: regression mode with seeded corpus", () => {
 describe("e2e: fuzzing mode discovers planted bug", () => {
   let tmpDir: string;
   const originalFuzz = process.env["VITIATE_FUZZ"];
-  const originalCacheDir = process.env["VITIATE_CACHE_DIR"];
   const originalCov = globalThis.__vitiate_cov;
   const originalTrace = globalThis.__vitiate_trace_cmp;
 
@@ -39,11 +39,7 @@ describe("e2e: fuzzing mode discovers planted bug", () => {
     } else {
       process.env["VITIATE_FUZZ"] = originalFuzz;
     }
-    if (originalCacheDir === undefined) {
-      delete process.env["VITIATE_CACHE_DIR"];
-    } else {
-      process.env["VITIATE_CACHE_DIR"] = originalCacheDir;
-    }
+    resetCacheDir();
     globalThis.__vitiate_cov = originalCov;
     globalThis.__vitiate_trace_cmp = originalTrace;
     if (tmpDir) {
@@ -61,7 +57,7 @@ describe("e2e: fuzzing mode discovers planted bug", () => {
       `vitiate-e2e-replay-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     );
     mkdirSync(tmpDir, { recursive: true });
-    process.env["VITIATE_CACHE_DIR"] = path.join(tmpDir, ".cache");
+    setCacheDir(path.join(tmpDir, ".cache"));
 
     // Write a known crash input as a crash artifact
     const crashInput = Buffer.from("GET!");

@@ -17,6 +17,9 @@ import {
   getFuzzTime,
   resolveInstrumentOptions,
   COVERAGE_MAP_SIZE,
+  getCoverageMapSize,
+  setCoverageMapSize,
+  resetCoverageMapSize,
 } from "./config.js";
 
 describe("config", () => {
@@ -423,8 +426,6 @@ describe("config", () => {
         "VITIATE_OPTIMIZE",
         "VITIATE_SUPERVISOR",
         "VITIATE_SHMEM",
-        "VITIATE_PROJECT_ROOT",
-        "VITIATE_CACHE_DIR",
         "VITIATE_FUZZ_OPTIONS",
         "VITIATE_CLI_IPC",
       ];
@@ -1035,5 +1036,102 @@ describe("config", () => {
 
   it("COVERAGE_MAP_SIZE is 65536", () => {
     expect(COVERAGE_MAP_SIZE).toBe(65536);
+  });
+
+  describe("getCoverageMapSize / setCoverageMapSize", () => {
+    afterEach(() => {
+      resetCoverageMapSize();
+    });
+
+    it("returns default COVERAGE_MAP_SIZE when not set", () => {
+      expect(getCoverageMapSize()).toBe(65536);
+    });
+
+    it("returns the value set by setCoverageMapSize", () => {
+      setCoverageMapSize(1024);
+      expect(getCoverageMapSize()).toBe(1024);
+    });
+
+    it("accepts minimum valid size (256)", () => {
+      setCoverageMapSize(256);
+      expect(getCoverageMapSize()).toBe(256);
+    });
+
+    it("accepts maximum valid size (4194304)", () => {
+      setCoverageMapSize(4_194_304);
+      expect(getCoverageMapSize()).toBe(4_194_304);
+    });
+
+    it("throws for size below minimum", () => {
+      expect(() => setCoverageMapSize(255)).toThrow(
+        "coverageMapSize must be an integer in [256, 4194304]",
+      );
+    });
+
+    it("throws for size above maximum", () => {
+      expect(() => setCoverageMapSize(4_194_305)).toThrow(
+        "coverageMapSize must be an integer in [256, 4194304]",
+      );
+    });
+
+    it("throws for non-integer value", () => {
+      expect(() => setCoverageMapSize(1024.5)).toThrow(
+        "coverageMapSize must be an integer in [256, 4194304]",
+      );
+    });
+
+    it("throws for zero", () => {
+      expect(() => setCoverageMapSize(0)).toThrow(
+        "coverageMapSize must be an integer in [256, 4194304]",
+      );
+    });
+
+    it("throws for negative value", () => {
+      expect(() => setCoverageMapSize(-1)).toThrow(
+        "coverageMapSize must be an integer in [256, 4194304]",
+      );
+    });
+
+    it("warns when size is not a power of two", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        setCoverageMapSize(1000);
+        expect(getCoverageMapSize()).toBe(1000);
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toContain("not a power of two");
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+
+    it("does not warn when size is a power of two", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        setCoverageMapSize(2048);
+        expect(getCoverageMapSize()).toBe(2048);
+        expect(chunks.length).toBe(0);
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+
+    it("resetCoverageMapSize restores default", () => {
+      setCoverageMapSize(512);
+      expect(getCoverageMapSize()).toBe(512);
+      resetCoverageMapSize();
+      expect(getCoverageMapSize()).toBe(65536);
+    });
   });
 });

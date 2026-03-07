@@ -86,7 +86,7 @@ The CLI SHALL accept libFuzzer-style flags (hyphen prefix, `=` separator):
 - `-runs=N`: Exit after N executions. Passed to `FuzzOptions.runs`.
 - `-seed=N`: RNG seed. Passed to `FuzzerConfig.seed`.
 - `-artifact_prefix=<path>`: Prefix path for crash/timeout artifacts. See `cli-artifact-prefix` capability.
-- `-dict=<path>`: Path to an AFL/libfuzzer-format dictionary file. Resolved relative to cwd. The resolved absolute path SHALL be passed to the child process via the `VITIATE_DICTIONARY_PATH` environment variable. See `user-dictionary` capability.
+- `-dict=<path>`: Path to an AFL/libfuzzer-format dictionary file. Resolved relative to cwd. The resolved absolute path SHALL be passed to the child process via the `dictionaryPath` field in the `VITIATE_CLI_IPC` JSON blob. See `user-dictionary` capability.
 - `-fork=N`: Accepted for OSS-Fuzz compatibility. Vitiate always runs a single
   supervised worker; this flag is permanently ignored. `-fork=1` is silently
   accepted (matches the default architecture). `-fork=0` warns that non-fork
@@ -117,7 +117,7 @@ The CLI SHALL accept libFuzzer-style flags (hyphen prefix, `=` separator):
 - **WHEN** `npx vitiate ./test.ts -dict=./json.dict` is executed
 - **AND** `./json.dict` exists and contains valid dictionary entries
 - **THEN** the dictionary path SHALL be resolved to an absolute path
-- **AND** the child process SHALL receive `VITIATE_DICTIONARY_PATH` set to the absolute path
+- **AND** the child process SHALL receive the absolute path in the `dictionaryPath` field of `VITIATE_CLI_IPC`
 
 #### Scenario: Dictionary flag with nonexistent file
 
@@ -168,15 +168,17 @@ When no positional corpus directories are provided in CLI mode:
 - The fuzz loop SHALL NOT write new interesting inputs to disk. The in-memory corpus in the LibAFL engine retains all interesting inputs for the duration of the process, matching libFuzzer's behavior when no corpus directory is given.
 - Interesting inputs discovered before a crash/respawn are lost. This is expected — users who want corpus persistence must provide a corpus directory.
 
-The CLI SHALL ensure the following environment variables are set before the fuzz loop runs (following the existing pattern where the child process sets its own environment before starting Vitest):
+The CLI SHALL pass CLI-specific IPC configuration to the child process via the `VITIATE_CLI_IPC` environment variable, a JSON blob validated by the `CliIpcSchema` in `config.ts`. The blob includes:
 
-- `VITIATE_LIBFUZZER_COMPAT=1` — signals that the fuzz loop SHALL use libFuzzer path conventions for corpus writes and artifact paths.
-- `VITIATE_CORPUS_OUTPUT_DIR` — set to the first positional corpus directory when provided. Not set when no corpus dirs are given.
-- `VITIATE_ARTIFACT_PREFIX` — set to the `-artifact_prefix` flag value when provided. Not set when the flag is omitted (the child defaults to `./` under libFuzzer compat mode).
+- `libfuzzerCompat: true` — signals that the fuzz loop SHALL use libFuzzer path conventions for corpus writes and artifact paths.
+- `corpusOutputDir` — set to the first positional corpus directory when provided. Omitted when no corpus dirs are given.
+- `artifactPrefix` — set to the `-artifact_prefix` flag value when provided. Omitted when the flag is omitted (the child defaults to `./` under libFuzzer compat mode).
+- `corpusDirs` — array of corpus directory paths.
+- `dictionaryPath` — resolved absolute path to the dictionary file.
 
-These env vars SHALL be read via helper functions in `config.ts` (e.g., `isLibfuzzerCompat()`, `getCorpusOutputDir()`, `getArtifactPrefix()`), following the established pattern of `isFuzzingMode()` and `isSupervisorChild()` which use the private `envTruthy()` helper. `FuzzOptions` is defined via a valibot schema (`FuzzOptionsSchema`) and parsed by `getCliOptions()` using `v.safeParse` — the new env vars are separate from `VITIATE_FUZZ_OPTIONS` and do not require schema validation (they are simple string/boolean values).
+These fields SHALL be read via helper functions in `config.ts` (e.g., `isLibfuzzerCompat()`, `getCorpusOutputDir()`, `getArtifactPrefix()`) which delegate to `getCliIpc()`.
 
-In Vitest mode, none of these environment variables SHALL be set. The fuzz loop SHALL use the cache directory layout for corpus and `testdata/fuzz/{sanitizedName}/` for artifacts.
+In Vitest mode, `VITIATE_CLI_IPC` SHALL NOT be set. The fuzz loop SHALL use the cache directory layout for corpus and `testdata/fuzz/{sanitizedName}/` for artifacts.
 
 #### Scenario: Single corpus directory
 
@@ -209,6 +211,6 @@ In Vitest mode, none of these environment variables SHALL be set. The fuzz loop 
 #### Scenario: Vitest mode ignores corpus output dir
 
 - **WHEN** a fuzz test runs in Vitest mode
-- **AND** `VITIATE_CORPUS_OUTPUT_DIR` is not set
+- **AND** `VITIATE_CLI_IPC` is not set (or `corpusOutputDir` is absent)
 - **THEN** interesting inputs are written to the cache directory layout (existing behavior)
 

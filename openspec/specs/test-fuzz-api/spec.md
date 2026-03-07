@@ -155,7 +155,7 @@ The child picks up the same `vitest.config.ts` from the working directory, loads
 - **WHEN** the child Vitest process is spawned
 - **THEN** `VITIATE_SUPERVISOR=1` is set in the child's environment
 - **AND** `VITIATE_FUZZ=1` is set in the child's environment
-- **AND** all other parent env vars (including `VITIATE_FUZZ_OPTIONS`, `VITIATE_CACHE_DIR`, `VITIATE_PROJECT_ROOT`) are inherited
+- **AND** all other parent env vars (including `VITIATE_FUZZ_OPTIONS`) are inherited
 
 ### Requirement: fuzz.skip, fuzz.only, fuzz.todo modifiers
 

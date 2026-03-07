@@ -9,7 +9,12 @@ import {
   resolveVitestCli,
   buildTestNamePatternFromNames,
 } from "./fuzz.js";
-import { isFuzzingMode } from "./config.js";
+import {
+  isFuzzingMode,
+  getProjectRoot,
+  setCacheDir,
+  resetCacheDir,
+} from "./config.js";
 import { sanitizeTestName } from "./corpus.js";
 
 describe("fuzz API", () => {
@@ -42,30 +47,25 @@ describe("fuzz regression mode - smoke test with no corpus", () => {
 });
 
 describe("fuzz regression mode - replay corpus files", () => {
-  const cacheDir = path.join(
+  const cacheDirPath = path.join(
     tmpdir(),
     `vitiate-fuzz-api-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
-  const originalCacheDir = process.env["VITIATE_CACHE_DIR"];
   beforeAll(() => {
     // Set project root so the relative test file path is predictable
-    const projectRoot = process.env["VITIATE_PROJECT_ROOT"] ?? process.cwd();
+    const projectRoot = getProjectRoot();
     const thisFile = fileURLToPath(import.meta.url);
     const relativeFilePath = path.relative(projectRoot, thisFile);
     const sanitizedName = sanitizeTestName("regression-replay");
-    const seedDir = path.join(cacheDir, relativeFilePath, sanitizedName);
+    const seedDir = path.join(cacheDirPath, relativeFilePath, sanitizedName);
     mkdirSync(seedDir, { recursive: true });
     writeFileSync(path.join(seedDir, "seed-hello"), "hello");
-    process.env["VITIATE_CACHE_DIR"] = cacheDir;
+    setCacheDir(cacheDirPath);
   });
 
   afterAll(() => {
-    if (originalCacheDir === undefined) {
-      delete process.env["VITIATE_CACHE_DIR"];
-    } else {
-      process.env["VITIATE_CACHE_DIR"] = originalCacheDir;
-    }
-    rmSync(cacheDir, { recursive: true, force: true });
+    resetCacheDir();
+    rmSync(cacheDirPath, { recursive: true, force: true });
   });
 
   fuzz("regression-replay", (data) => {

@@ -21,6 +21,7 @@ import {
   getCorpusDirs,
   getMergeControlFile,
   getCliOptions,
+  getProjectRoot,
   DEFAULT_MAX_INPUT_LEN,
 } from "./config.js";
 import {
@@ -68,7 +69,7 @@ function getTestFilePath(): string {
 
 function getRelativeTestFilePath(): string {
   const absolutePath = getTestFilePath();
-  const projectRoot = process.env["VITIATE_PROJECT_ROOT"] ?? process.cwd();
+  const projectRoot = getProjectRoot();
   return path.relative(projectRoot, absolutePath);
 }
 

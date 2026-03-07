@@ -4,7 +4,7 @@
  * In regression mode: uses plain JS (no napi dependency).
  * In fuzzing mode: uses napi-backed buffer and traceCmp.
  */
-import { isFuzzingMode, COVERAGE_MAP_SIZE } from "./config.js";
+import { isFuzzingMode, getCoverageMapSize } from "./config.js";
 
 declare global {
   var __vitiate_cov: Uint8Array | Buffer;
@@ -28,7 +28,7 @@ type Orderable = string | number | bigint;
 export async function initGlobals(): Promise<void> {
   if (isFuzzingMode()) {
     const { createCoverageMap, traceCmp } = await import("vitiate-napi");
-    globalThis.__vitiate_cov = createCoverageMap(COVERAGE_MAP_SIZE);
+    globalThis.__vitiate_cov = createCoverageMap(getCoverageMapSize());
     globalThis.__vitiate_trace_cmp = traceCmp;
   } else {
     const ops: Record<string, (a: unknown, b: unknown) => boolean> = {
@@ -41,7 +41,7 @@ export async function initGlobals(): Promise<void> {
       "<=": (a, b) => (a as Orderable) <= (b as Orderable),
       ">=": (a, b) => (a as Orderable) >= (b as Orderable),
     };
-    globalThis.__vitiate_cov = new Uint8Array(COVERAGE_MAP_SIZE);
+    globalThis.__vitiate_cov = new Uint8Array(getCoverageMapSize());
     globalThis.__vitiate_trace_cmp = (
       left: unknown,
       right: unknown,

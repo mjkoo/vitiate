@@ -7,7 +7,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createFilter, type Plugin } from "vite";
 import type { VitiatePluginOptions } from "./config.js";
-import { resolveInstrumentOptions, COVERAGE_MAP_SIZE } from "./config.js";
+import {
+  resolveInstrumentOptions,
+  setCoverageMapSize,
+  getCoverageMapSize,
+  setProjectRoot,
+  setCacheDir,
+} from "./config.js";
 
 const require = createRequire(import.meta.url);
 
@@ -37,6 +43,8 @@ function resolveSetupPath(): string {
 export function vitiatePlugin(options?: VitiatePluginOptions): Plugin {
   const { include, exclude } = resolveInstrumentOptions(options?.instrument);
   const fuzz = options?.fuzz;
+  const cacheDir = options?.cacheDir;
+  const coverageMapSize = options?.coverageMapSize;
   // Always exclude vitiate's own package directories — setup/globals files must
   // run before the coverage map exists and cannot be instrumented, and the napi
   // native binding loader must not be instrumented either. In pnpm workspaces,
@@ -61,23 +69,23 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin {
     enforce: "post",
 
     config(config) {
-      // Resolve the Vite project root
+      // Resolve the Vite project root and store as module-scoped state
       const projectRoot = path.resolve(config.root ?? process.cwd());
-      const effectiveRoot = process.env["VITIATE_PROJECT_ROOT"] ?? projectRoot;
-      process.env["VITIATE_PROJECT_ROOT"] = effectiveRoot;
+      setProjectRoot(projectRoot);
 
-      // If fuzz.cacheDir is provided, resolve it relative to the effective project root
-      if (fuzz?.cacheDir && !process.env["VITIATE_CACHE_DIR"]) {
-        process.env["VITIATE_CACHE_DIR"] = path.resolve(
-          effectiveRoot,
-          fuzz.cacheDir,
-        );
+      // If cacheDir is provided, resolve it relative to the project root
+      if (cacheDir) {
+        setCacheDir(path.resolve(projectRoot, cacheDir));
       }
 
-      // Serialize FuzzOptions fields (excluding cacheDir) as VITIATE_FUZZ_OPTIONS
+      // Store coverage map size for globals.ts
+      if (coverageMapSize !== undefined) {
+        setCoverageMapSize(coverageMapSize);
+      }
+
+      // Serialize FuzzOptions as VITIATE_FUZZ_OPTIONS
       if (fuzz && !process.env["VITIATE_FUZZ_OPTIONS"]) {
-        const { cacheDir: _, ...fuzzOptions } = fuzz;
-        const serialized = JSON.stringify(fuzzOptions);
+        const serialized = JSON.stringify(fuzz);
         if (serialized !== "{}") {
           process.env["VITIATE_FUZZ_OPTIONS"] = serialized;
         }
@@ -106,7 +114,7 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin {
               [
                 wasmPath,
                 {
-                  coverageMapSize: COVERAGE_MAP_SIZE,
+                  coverageMapSize: getCoverageMapSize(),
                   traceCmp: true,
                   coverageGlobalName: "__vitiate_cov",
                   traceCmpGlobalName: "__vitiate_trace_cmp",
