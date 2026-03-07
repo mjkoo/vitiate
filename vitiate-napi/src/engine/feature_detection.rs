@@ -4,33 +4,33 @@ use libafl::state::HasCorpus;
 use super::FuzzerState;
 
 /// Number of interesting main-loop inputs before deferred auto-detection fires.
-pub(crate) const DEFERRED_DETECTION_THRESHOLD: usize = 10;
+pub(super) const DEFERRED_DETECTION_THRESHOLD: usize = 10;
 
 /// Tracks auto-detection state for Grimoire, unicode, and REDQUEEN features.
 /// Features can be explicitly configured (override) or auto-detected based on
 /// corpus UTF-8 content after a deferred threshold.
-pub(crate) struct FeatureDetection {
+pub(super) struct FeatureDetection {
     /// Whether Grimoire structure-aware fuzzing is enabled.
-    pub(crate) grimoire_enabled: bool,
+    pub(super) grimoire_enabled: bool,
     /// Whether unicode-aware mutations are enabled.
-    pub(crate) unicode_enabled: bool,
+    pub(super) unicode_enabled: bool,
     /// Whether REDQUEEN is enabled.
-    pub(crate) redqueen_enabled: bool,
+    pub(super) redqueen_enabled: bool,
     /// Original config override for grimoire. `None` = auto-detect.
-    pub(crate) grimoire_override: Option<bool>,
+    pub(super) grimoire_override: Option<bool>,
     /// Original config override for unicode. `None` = auto-detect.
-    pub(crate) unicode_override: Option<bool>,
+    pub(super) unicode_override: Option<bool>,
     /// Original config override for redqueen. `None` = auto-detect.
-    pub(crate) redqueen_override: Option<bool>,
+    pub(super) redqueen_override: Option<bool>,
     /// Count of interesting inputs for deferred detection. `None` = resolved.
-    pub(crate) deferred_detection_count: Option<usize>,
+    pub(super) deferred_detection_count: Option<usize>,
     /// Number of auto-seeded corpus entries to skip during scanning.
-    pub(crate) auto_seed_count: usize,
+    pub(super) auto_seed_count: usize,
 }
 
 impl FeatureDetection {
     /// Create feature detection state from config overrides and current corpus count.
-    pub(crate) fn new(
+    pub(super) fn new(
         grimoire_override: Option<bool>,
         unicode_override: Option<bool>,
         redqueen_override: Option<bool>,
@@ -76,7 +76,7 @@ impl FeatureDetection {
 
     /// Record an interesting input from the main loop and run deferred detection
     /// if the threshold is reached. Returns `true` if detection resolved.
-    pub(crate) fn record_interesting(&mut self, state: &FuzzerState) -> bool {
+    pub(super) fn record_interesting(&mut self, state: &FuzzerState) -> bool {
         if let Some(count) = self.deferred_detection_count.as_mut() {
             *count += 1;
             if *count >= DEFERRED_DETECTION_THRESHOLD {
@@ -102,7 +102,7 @@ impl FeatureDetection {
     }
 
     /// Set the auto-seed count after auto-seeding.
-    pub(crate) fn set_auto_seed_count(&mut self, count: usize) {
+    pub(super) fn set_auto_seed_count(&mut self, count: usize) {
         self.auto_seed_count = count;
     }
 
@@ -112,7 +112,7 @@ impl FeatureDetection {
     ///
     /// Assumes `InMemoryCorpus` yields IDs in insertion order, so `.skip(skip_count)`
     /// correctly skips the first N entries (the auto-seeds).
-    pub(crate) fn scan_corpus_utf8(state: &FuzzerState, skip_count: usize) -> bool {
+    pub(super) fn scan_corpus_utf8(state: &FuzzerState, skip_count: usize) -> bool {
         let mut utf8_count: usize = 0;
         let mut non_utf8_count: usize = 0;
         for id in state.corpus().ids().skip(skip_count) {

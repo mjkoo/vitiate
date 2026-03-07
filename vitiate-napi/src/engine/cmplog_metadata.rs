@@ -15,7 +15,7 @@ use super::FuzzerState;
 /// ProbabilitySamplingScheduler does not implement AflScheduler, so n_fuzz
 /// tracking is not automatic. Per-entry indexing (vs. path-hashing) is
 /// appropriate for probabilistic selection.
-pub(crate) fn set_n_fuzz_entry_for_corpus_id(state: &FuzzerState, id: CorpusId) -> Result<()> {
+pub(super) fn set_n_fuzz_entry_for_corpus_id(state: &FuzzerState, id: CorpusId) -> Result<()> {
     let mut tc = state
         .corpus()
         .get(id)
@@ -35,7 +35,7 @@ pub(crate) fn set_n_fuzz_entry_for_corpus_id(state: &FuzzerState, id: CorpusId) 
 /// Non-Bytes entries (U8, U16, U32, U64) are skipped — integer comparisons
 /// already produce a companion `CmpValues::Bytes` entry with decimal string
 /// representations.
-pub(crate) fn extract_tokens_from_cmplog(entries: &[crate::cmplog::CmpLogEntry]) -> Vec<Vec<u8>> {
+pub(super) fn extract_tokens_from_cmplog(entries: &[crate::cmplog::CmpLogEntry]) -> Vec<Vec<u8>> {
     let mut tokens = Vec::new();
 
     for (cmp_values, _site_id, _operator) in entries {
@@ -109,7 +109,7 @@ fn build_cmplog_header(shape: u8, attribute: u8) -> AflppCmpLogHeader {
 ///
 /// Groups entries by site ID into `orig_cmpvals`, derives headers from
 /// operator/size, and initializes `new_cmpvals` as empty.
-pub(crate) fn build_aflpp_cmp_metadata(
+pub(super) fn build_aflpp_cmp_metadata(
     entries: &[crate::cmplog::CmpLogEntry],
 ) -> AflppCmpValuesMetadata {
     let mut metadata = AflppCmpValuesMetadata::new();
@@ -137,103 +137,10 @@ pub(crate) fn build_aflpp_cmp_metadata(
 
 /// Flatten `AflppCmpValuesMetadata.orig_cmpvals` into a flat `Vec<CmpValues>`
 /// for I2S backward compatibility.
-pub(crate) fn flatten_orig_cmpvals(metadata: &AflppCmpValuesMetadata) -> Vec<CmpValues> {
+pub(super) fn flatten_orig_cmpvals(metadata: &AflppCmpValuesMetadata) -> Vec<CmpValues> {
     metadata
         .orig_cmpvals
         .values()
         .flat_map(|v| v.iter().cloned())
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::cmplog::CmpLogOperator;
-    use crate::engine::test_helpers::make_cmplog_bytes;
-    use libafl::observers::cmp::CmpValues;
-
-    #[test]
-    fn test_extract_tokens_from_mixed_cmpvalues() {
-        let entries: Vec<crate::cmplog::CmpLogEntry> = vec![
-            (
-                CmpValues::Bytes((make_cmplog_bytes(b"http"), make_cmplog_bytes(b"javascript"))),
-                0,
-                CmpLogOperator::Equal,
-            ),
-            (CmpValues::U8((10, 20, false)), 0, CmpLogOperator::Equal),
-            (
-                CmpValues::Bytes((make_cmplog_bytes(b"ftp"), make_cmplog_bytes(b"ssh"))),
-                0,
-                CmpLogOperator::Equal,
-            ),
-            (
-                CmpValues::U16((1000, 2000, false)),
-                0,
-                CmpLogOperator::Equal,
-            ),
-        ];
-
-        let tokens = extract_tokens_from_cmplog(&entries);
-
-        // Should extract both operands from each Bytes entry, skip numeric entries.
-        assert!(tokens.contains(&b"http".to_vec()));
-        assert!(tokens.contains(&b"javascript".to_vec()));
-        assert!(tokens.contains(&b"ftp".to_vec()));
-        assert!(tokens.contains(&b"ssh".to_vec()));
-        assert_eq!(tokens.len(), 4);
-    }
-
-    #[test]
-    fn test_extract_tokens_filters_empty_null_and_0xff() {
-        let entries: Vec<crate::cmplog::CmpLogEntry> = vec![
-            // Empty left operand — should be skipped.
-            (
-                CmpValues::Bytes((make_cmplog_bytes(b""), make_cmplog_bytes(b"valid"))),
-                0,
-                CmpLogOperator::Equal,
-            ),
-            // All-null operands — both should be skipped.
-            (
-                CmpValues::Bytes((
-                    make_cmplog_bytes(&[0x00, 0x00, 0x00, 0x00]),
-                    make_cmplog_bytes(b"also_valid"),
-                )),
-                0,
-                CmpLogOperator::Equal,
-            ),
-            // All-0xFF operand — should be skipped.
-            (
-                CmpValues::Bytes((
-                    make_cmplog_bytes(b"keep_this"),
-                    make_cmplog_bytes(&[0xFF, 0xFF]),
-                )),
-                0,
-                CmpLogOperator::Equal,
-            ),
-            // Mixed-with-nulls — should be kept (not all-null).
-            (
-                CmpValues::Bytes((
-                    make_cmplog_bytes(&[0x00, 0x41, 0x00]),
-                    make_cmplog_bytes(b"another"),
-                )),
-                0,
-                CmpLogOperator::Equal,
-            ),
-        ];
-
-        let tokens = extract_tokens_from_cmplog(&entries);
-
-        // Kept: "valid", "also_valid", "keep_this", [0x00, 0x41, 0x00], "another"
-        assert!(tokens.contains(&b"valid".to_vec()));
-        assert!(tokens.contains(&b"also_valid".to_vec()));
-        assert!(tokens.contains(&b"keep_this".to_vec()));
-        assert!(tokens.contains(&vec![0x00, 0x41, 0x00]));
-        assert!(tokens.contains(&b"another".to_vec()));
-        assert_eq!(tokens.len(), 5);
-
-        // Filtered: empty, all-null, all-0xFF
-        assert!(!tokens.contains(&vec![]));
-        assert!(!tokens.contains(&vec![0x00, 0x00, 0x00, 0x00]));
-        assert!(!tokens.contains(&vec![0xFF, 0xFF]));
-    }
 }

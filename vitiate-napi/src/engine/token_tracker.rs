@@ -12,13 +12,13 @@ use super::FuzzerState;
 /// in every execution that reaches a comparison; one-off garbled byte sequences
 /// produced by havoc mutations appear only once. A threshold of 3 effectively
 /// filters out noise while keeping real constants.
-pub(crate) const TOKEN_PROMOTION_THRESHOLD: usize = 3;
+pub(super) const TOKEN_PROMOTION_THRESHOLD: usize = 3;
 
 /// Maximum number of token candidates tracked before new candidates are
 /// dropped. Real comparison constants are promoted quickly (they appear in
 /// every execution that reaches the comparison), so this cap prevents unbounded
 /// growth from the long tail of one-off garbled byte sequences.
-pub(crate) const MAX_TOKEN_CANDIDATES: usize = 4096;
+pub(super) const MAX_TOKEN_CANDIDATES: usize = 4096;
 
 /// Maximum number of auto-discovered tokens in the mutation dictionary.
 /// Once this limit is reached, no further tokens are promoted. Real comparison
@@ -28,24 +28,24 @@ pub(crate) const MAX_TOKEN_CANDIDATES: usize = 4096;
 /// diluting the dictionary. Matches AFL++'s `MAX_AUTO_EXTRAS` order of magnitude
 /// but scaled down since our single-threaded loop benefits from a tighter
 /// dictionary.
-pub(crate) const MAX_DICTIONARY_SIZE: usize = 512;
+pub(super) const MAX_DICTIONARY_SIZE: usize = 512;
 
 /// Tracks CmpLog-derived token candidates and promotes frequent ones into
 /// the mutation dictionary.
-pub(crate) struct TokenTracker {
+pub(super) struct TokenTracker {
     /// Token candidates and their observation counts. Tokens are promoted
     /// into the mutation dictionary only after reaching `TOKEN_PROMOTION_THRESHOLD`
     /// observations, filtering out one-off garbled byte sequences from havoc.
-    pub(crate) candidates: HashMap<Vec<u8>, usize>,
+    pub(super) candidates: HashMap<Vec<u8>, usize>,
     /// Tokens already promoted to the mutation dictionary. Checked before
     /// inserting into `candidates` to prevent re-promotion cycles.
     /// Implicitly bounded by `MAX_DICTIONARY_SIZE` — tokens only enter this set
     /// via the promotion loop, which stops when the dictionary is full.
-    pub(crate) promoted: HashSet<Vec<u8>>,
+    pub(super) promoted: HashSet<Vec<u8>>,
 }
 
 impl TokenTracker {
-    pub(crate) fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             candidates: HashMap::new(),
             promoted: HashSet::new(),
@@ -54,7 +54,7 @@ impl TokenTracker {
 
     /// Process extracted tokens: track observation counts, promote tokens that
     /// reach the threshold into the state's `Tokens` metadata.
-    pub(crate) fn process(&mut self, extracted: &[Vec<u8>], state: &mut FuzzerState) {
+    pub(super) fn process(&mut self, extracted: &[Vec<u8>], state: &mut FuzzerState) {
         if extracted.is_empty() {
             return;
         }

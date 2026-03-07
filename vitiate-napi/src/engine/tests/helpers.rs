@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use libafl::HasMetadata;
-use libafl::corpus::{Corpus, CorpusId, InMemoryCorpus, Testcase};
+use libafl::corpus::{Corpus, CorpusId, InMemoryCorpus, SchedulerTestcaseMetadata, Testcase};
 use libafl::events::NopEventManager;
 use libafl::executors::ExitKind as LibaflExitKind;
 use libafl::feedbacks::{
@@ -15,16 +15,16 @@ use libafl::observers::map::CanTrack;
 use libafl::schedulers::minimizer::TopRatedsMetadata;
 use libafl::schedulers::powersched::{PowerSchedule, SchedulerMetadata};
 use libafl::schedulers::{MinimizerScheduler, ProbabilitySamplingScheduler, Scheduler};
-use libafl::state::HasCorpus;
+use libafl::state::{HasCorpus, StdState};
 use libafl_bolts::rands::StdRand;
 use libafl_bolts::tuples::tuple_list;
 use napi::bindgen_prelude::*;
 
-use super::{
+use crate::cmplog;
+use crate::engine::{
     CrashObjective, EDGES_OBSERVER_NAME, Fuzzer, FuzzerFeedback, FuzzerScheduler, FuzzerState,
     SEED_EXEC_TIME, StageState, TimeoutObjective,
 };
-use crate::cmplog;
 use crate::types::{ExitKind, FuzzerConfig, IterationResult};
 
 // # Safety patterns used throughout this module
@@ -44,16 +44,13 @@ use crate::types::{ExitKind, FuzzerConfig, IterationResult};
 //
 // The model for per-site SAFETY comments is `make_scheduler` (below).
 
-use libafl::corpus::SchedulerTestcaseMetadata;
-use libafl::state::StdState;
-
-pub(crate) fn make_coverage_map(size: usize) -> (*mut u8, Vec<u8>) {
+pub(super) fn make_coverage_map(size: usize) -> (*mut u8, Vec<u8>) {
     let mut map = vec![0u8; size];
     let ptr = map.as_mut_ptr();
     (ptr, map)
 }
 
-pub(crate) fn make_state_and_feedback(
+pub(super) fn make_state_and_feedback(
     map_ptr: *mut u8,
     map_len: usize,
 ) -> (FuzzerState, FuzzerFeedback, CrashObjective) {
@@ -87,7 +84,7 @@ pub(crate) fn make_state_and_feedback(
 /// by `track_indices()` and the tracking wrapper is dropped before returning,
 /// so no observer aliases persist. Callers must ensure no other live observer
 /// holds `map_ptr` at call time.
-pub(crate) fn make_scheduler(map_ptr: *mut u8, map_len: usize) -> FuzzerScheduler {
+pub(super) fn make_scheduler(map_ptr: *mut u8, map_len: usize) -> FuzzerScheduler {
     let observer = unsafe { StdMapObserver::from_mut_ptr(EDGES_OBSERVER_NAME, map_ptr, map_len) };
     let tracking = observer.track_indices();
     let scheduler = MinimizerScheduler::new(&tracking, ProbabilitySamplingScheduler::new());
@@ -97,7 +94,7 @@ pub(crate) fn make_scheduler(map_ptr: *mut u8, map_len: usize) -> FuzzerSchedule
 
 /// Create a seed testcase with scheduler metadata (required by CorpusPowerTestcaseScore)
 /// and empty MapIndexesMetadata (required by MinimizerScheduler::update_score).
-pub(crate) fn make_seed_testcase(data: &[u8]) -> Testcase<BytesInput> {
+pub(super) fn make_seed_testcase(data: &[u8]) -> Testcase<BytesInput> {
     let mut tc = Testcase::new(BytesInput::new(data.to_vec()));
     tc.set_exec_time(SEED_EXEC_TIME);
     let mut meta = SchedulerTestcaseMetadata::new(0);
@@ -108,7 +105,7 @@ pub(crate) fn make_seed_testcase(data: &[u8]) -> Testcase<BytesInput> {
 }
 
 /// Build a full Fuzzer for integration-style tests using raw pointer/map.
-pub(crate) fn make_fuzzer(
+pub(super) fn make_fuzzer(
     map_ptr: *mut u8,
     map_len: usize,
 ) -> (
@@ -151,7 +148,7 @@ pub(crate) fn make_fuzzer(
     )
 }
 
-pub(crate) fn make_cmplog_bytes(data: &[u8]) -> CmplogBytes {
+pub(super) fn make_cmplog_bytes(data: &[u8]) -> CmplogBytes {
     let len = data.len().min(32) as u8;
     let mut buf = [0u8; 32];
     buf[..len as usize].copy_from_slice(&data[..len as usize]);
@@ -162,7 +159,7 @@ pub(crate) fn make_cmplog_bytes(data: &[u8]) -> CmplogBytes {
 ///
 /// # Panics
 /// Panics if no iterative stage (I2S, Grimoire, Unicode) is active.
-pub(crate) fn force_single_iteration(fuzzer: &mut Fuzzer) {
+pub(super) fn force_single_iteration(fuzzer: &mut Fuzzer) {
     fuzzer.stage_state = match fuzzer.stage_state {
         StageState::I2S {
             corpus_id,
@@ -198,7 +195,7 @@ pub(crate) fn force_single_iteration(fuzzer: &mut Fuzzer) {
 /// Builder for constructing `Fuzzer` instances in tests. Wraps `Fuzzer::new()`
 /// with a synthetic `Buffer`, eliminating field-by-field drift between test
 /// construction and the real constructor.
-pub(crate) struct TestFuzzerBuilder {
+pub(super) struct TestFuzzerBuilder {
     map_size: usize,
     grimoire: Option<bool>,
     unicode: Option<bool>,
@@ -207,7 +204,7 @@ pub(crate) struct TestFuzzerBuilder {
 }
 
 impl TestFuzzerBuilder {
-    pub(crate) fn new(map_size: usize) -> Self {
+    pub(super) fn new(map_size: usize) -> Self {
         Self {
             map_size,
             grimoire: None,
@@ -217,30 +214,30 @@ impl TestFuzzerBuilder {
         }
     }
 
-    pub(crate) fn grimoire(mut self, enabled: bool) -> Self {
+    pub(super) fn grimoire(mut self, enabled: bool) -> Self {
         self.grimoire = Some(enabled);
         self
     }
 
-    pub(crate) fn unicode(mut self, enabled: bool) -> Self {
+    pub(super) fn unicode(mut self, enabled: bool) -> Self {
         self.unicode = Some(enabled);
         self
     }
 
     #[allow(dead_code)]
-    pub(crate) fn redqueen(mut self, enabled: bool) -> Self {
+    pub(super) fn redqueen(mut self, enabled: bool) -> Self {
         self.redqueen = Some(enabled);
         self
     }
 
     #[allow(dead_code)]
-    pub(crate) fn max_input_len(mut self, len: u32) -> Self {
+    pub(super) fn max_input_len(mut self, len: u32) -> Self {
         self.max_input_len = Some(len);
         self
     }
 
     /// Build a basic `Fuzzer` instance via `Fuzzer::new()`.
-    pub(crate) fn build(self) -> Fuzzer {
+    pub(super) fn build(self) -> Fuzzer {
         let config = FuzzerConfig {
             max_input_len: self.max_input_len,
             seed: Some(42), // deterministic seed for tests
@@ -254,7 +251,7 @@ impl TestFuzzerBuilder {
 
     /// Build a `Fuzzer` ready for stage testing: seeded, with novel coverage
     /// reported and calibration completed.
-    pub(crate) fn build_ready_for_stage(self) -> Fuzzer {
+    pub(super) fn build_ready_for_stage(self) -> Fuzzer {
         cmplog::disable();
         cmplog::drain();
         // Fuzzer::new (called by build) re-enables cmplog.
@@ -306,7 +303,7 @@ impl TestFuzzerBuilder {
     ///
     /// When feature overrides are set (grimoire/unicode/redqueen), deferred
     /// detection is disabled to prevent interference.
-    pub(crate) fn build_with_corpus_entry(
+    pub(super) fn build_with_corpus_entry(
         self,
         input: &[u8],
         novelty_indices: &[usize],
@@ -370,7 +367,7 @@ impl TestFuzzerBuilder {
 
     /// Build a `Fuzzer` with a corpus entry that has `GeneralizedInputMetadata`,
     /// ready for the Grimoire stage. Novelty index is hardcoded to `[10]`.
-    pub(crate) fn build_with_grimoire_entry(self, input: &[u8]) -> (Fuzzer, CorpusId) {
+    pub(super) fn build_with_grimoire_entry(self, input: &[u8]) -> (Fuzzer, CorpusId) {
         cmplog::disable();
         cmplog::drain();
         let has_feature_override =
