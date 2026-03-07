@@ -4,27 +4,38 @@
 
 import * as v from "valibot";
 
-const NonNegativeNumber = v.pipe(v.number(), v.finite(), v.minValue(0));
-const FiniteNumber = v.pipe(v.number(), v.finite());
+const NonNegativeInteger = v.pipe(
+  v.number(),
+  v.integer(),
+  v.finite(),
+  v.minValue(0),
+);
+const PositiveInteger = v.pipe(
+  v.number(),
+  v.integer(),
+  v.finite(),
+  v.minValue(1),
+);
+const AnyInteger = v.pipe(v.number(), v.integer(), v.finite());
 
 const FuzzOptionsSchema = v.object({
-  /** Maximum input length in bytes. */
-  maxLen: v.optional(NonNegativeNumber),
+  /** Maximum input length in bytes (must be at least 1). */
+  maxLen: v.optional(PositiveInteger),
   /**
-   * Per-execution timeout in milliseconds.
+   * Per-execution timeout in milliseconds. 0 disables the timeout.
    * Enforced by the native watchdog thread for both sync and async targets.
    */
-  timeoutMs: v.optional(NonNegativeNumber),
+  timeoutMs: v.optional(NonNegativeInteger),
   /** Total fuzzing time limit in milliseconds. */
-  maxTotalTimeMs: v.optional(NonNegativeNumber),
+  maxTotalTimeMs: v.optional(NonNegativeInteger),
   /** Maximum number of fuzzing iterations. */
-  runs: v.optional(NonNegativeNumber),
+  runs: v.optional(NonNegativeInteger),
   /** RNG seed for reproducible fuzzing. */
-  seed: v.optional(FiniteNumber),
+  seed: v.optional(AnyInteger),
   /** Maximum target re-executions during crash minimization. Default: 10,000. */
-  minimizeBudget: v.optional(NonNegativeNumber),
-  /** Wall-clock time limit in ms for crash minimization. Default: 5,000. */
-  minimizeTimeLimitMs: v.optional(NonNegativeNumber),
+  minimizeBudget: v.optional(NonNegativeInteger),
+  /** Wall-clock time limit in ms for crash minimization. 0 disables the limit. Default: 5,000. */
+  minimizeTimeLimitMs: v.optional(NonNegativeInteger),
   /**
    * Grimoire structure-aware fuzzing control.
    * `true` = force enable, `false` = force disable, absent = auto-detect from corpus UTF-8 content.
@@ -124,9 +135,16 @@ export function getCliOptions(): FuzzOptions {
   if (result.success) return result.output;
 
   const flat = v.flatten(result.issues);
-  for (const [key, messages] of Object.entries(flat.nested ?? {})) {
+  if (flat.nested) {
+    for (const [key, messages] of Object.entries(flat.nested)) {
+      if (!messages?.length) continue;
+      process.stderr.write(
+        `vitiate: warning: invalid VITIATE_FUZZ_OPTIONS.${key}: ${messages[0]}\n`,
+      );
+    }
+  } else if (flat.root) {
     process.stderr.write(
-      `vitiate: warning: invalid VITIATE_FUZZ_OPTIONS.${key}: ${messages?.[0]}\n`,
+      `vitiate: warning: invalid VITIATE_FUZZ_OPTIONS: ${flat.root[0]}\n`,
     );
   }
   return {};

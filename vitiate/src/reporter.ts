@@ -25,7 +25,7 @@ export function startReporting(
   state.startTime = Date.now();
   state.lastCorpusSize = getStats().corpusSize;
   state.intervalId = setInterval(() => {
-    printStatus(state, getStats());
+    reportStatus(state, getStats());
   }, intervalMs);
   state.intervalId.unref();
 }
@@ -37,12 +37,15 @@ export function stopReporting(state: ReporterState): void {
   }
 }
 
-export function printStatus(state: ReporterState, stats: FuzzerStats): void {
+export function reportStatus(state: ReporterState, stats: FuzzerStats): void {
   const elapsed = Math.floor((Date.now() - state.startTime) / 1000);
-  const newCorpus = stats.corpusSize - state.lastCorpusSize;
+  const newCorpus = Math.max(0, stats.corpusSize - state.lastCorpusSize);
   state.lastCorpusSize = stats.corpusSize;
+  const execsPerSec = Number.isFinite(stats.execsPerSec)
+    ? Math.floor(stats.execsPerSec)
+    : 0;
   process.stderr.write(
-    `fuzz: elapsed: ${elapsed}s, execs: ${stats.totalExecs} (${Math.floor(stats.execsPerSec)}/sec), corpus: ${stats.corpusSize} (${newCorpus} new), edges: ${stats.coverageEdges}\n`,
+    `fuzz: elapsed: ${elapsed}s, execs: ${stats.totalExecs} (${execsPerSec}/sec), corpus: ${stats.corpusSize} (${newCorpus} new), edges: ${stats.coverageEdges}\n`,
   );
 }
 

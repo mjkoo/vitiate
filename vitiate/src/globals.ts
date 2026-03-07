@@ -16,16 +16,7 @@ declare global {
   ) => boolean;
 }
 
-const ops: Record<string, (a: unknown, b: unknown) => boolean> = {
-  "===": (a, b) => a === b,
-  "!==": (a, b) => a !== b,
-  "==": (a, b) => a == b,
-  "!=": (a, b) => a != b,
-  "<": (a, b) => (a as number) < (b as number),
-  ">": (a, b) => (a as number) > (b as number),
-  "<=": (a, b) => (a as number) <= (b as number),
-  ">=": (a, b) => (a as number) >= (b as number),
-};
+type Orderable = string | number | bigint;
 
 export async function initGlobals(): Promise<void> {
   if (isFuzzingMode()) {
@@ -33,6 +24,16 @@ export async function initGlobals(): Promise<void> {
     globalThis.__vitiate_cov = createCoverageMap(COVERAGE_MAP_SIZE);
     globalThis.__vitiate_trace_cmp = traceCmp;
   } else {
+    const ops: Record<string, (a: unknown, b: unknown) => boolean> = {
+      "===": (a, b) => a === b,
+      "!==": (a, b) => a !== b,
+      "==": (a, b) => a == b,
+      "!=": (a, b) => a != b,
+      "<": (a, b) => (a as Orderable) < (b as Orderable),
+      ">": (a, b) => (a as Orderable) > (b as Orderable),
+      "<=": (a, b) => (a as Orderable) <= (b as Orderable),
+      ">=": (a, b) => (a as Orderable) >= (b as Orderable),
+    };
     globalThis.__vitiate_cov = new Uint8Array(COVERAGE_MAP_SIZE);
     globalThis.__vitiate_trace_cmp = (
       left: unknown,

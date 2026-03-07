@@ -6,9 +6,9 @@
  */
 
 export interface MinimizeOptions {
-  /** Maximum number of target re-executions. Default: 10,000. */
+  /** Maximum number of target re-executions. Default: 10,000. 0 means unlimited. */
   maxIterations?: number;
-  /** Maximum wall-clock time in ms for the entire minimization phase. Default: 5,000. */
+  /** Maximum wall-clock time in ms for the entire minimization phase. Default: 5,000. 0 means unlimited. */
   timeLimitMs?: number;
 }
 
@@ -20,7 +20,8 @@ const DEFAULT_TIME_LIMIT_MS = 5_000;
  * the crash. Uses a two-pass strategy:
  *
  * 1. Truncation: binary search on input prefix length (O(log n) executions).
- * 2. Byte deletion: walk and remove one byte at a time (O(n) executions).
+ * 2. Byte deletion: walk and remove one byte at a time (O(n) executions in the
+ *    length of the post-truncation input).
  *
  * :param input: The original crashing input.
  * :param testCandidate: Returns true if the candidate still crashes.
@@ -36,7 +37,7 @@ export async function minimize(
   const timeLimitMs = options?.timeLimitMs ?? DEFAULT_TIME_LIMIT_MS;
   const startTime = Date.now();
   let execCount = 0;
-  let best: Buffer = input;
+  let best: Buffer = Buffer.from(input);
 
   process.stderr.write(
     `vitiate: minimizing crash input (${input.length} bytes)...\n`,
@@ -53,34 +54,29 @@ export async function minimize(
     return testCandidate(candidate);
   }
 
-  // Pass 1: Truncation — binary search on input prefix length
+  // Pass 1: Truncation — binary search on input prefix length.
+  // lo is the shortest known-bad length, hi is the longest known-good length.
+  // We converge on the minimal prefix that still crashes.
   if (best.length > 0 && !budgetExhausted()) {
     let lo = 0;
     let hi = best.length;
 
     while (lo < hi && !budgetExhausted()) {
       const mid = lo + Math.floor((hi - lo) / 2);
-      if (mid === 0 && lo === 0) {
-        // Try empty buffer
-        const candidate = best.subarray(0, 0);
-        if (await tryCandidate(candidate)) {
-          best = Buffer.from(candidate);
-          break;
-        }
-        lo = 1;
-        continue;
-      }
-
       const candidate = best.subarray(0, mid);
       if (await tryCandidate(candidate)) {
-        // Shorter prefix still crashes — keep it and search shorter
-        best = Buffer.from(candidate);
-        hi = best.length;
-        lo = 0;
+        // Prefix of length mid still crashes — try shorter
+        hi = mid;
       } else {
         // Too short — need more bytes
         lo = mid + 1;
       }
+    }
+
+    if (hi < best.length) {
+      // Copy: best is used as the source for subarray in pass 2, so it must
+      // own its own memory rather than aliasing the original input.
+      best = Buffer.from(best.subarray(0, hi));
     }
   }
 

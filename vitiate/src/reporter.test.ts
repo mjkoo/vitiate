@@ -4,7 +4,7 @@ import {
   createReporter,
   startReporting,
   stopReporting,
-  printStatus,
+  reportStatus,
   printCrash,
   printSummary,
 } from "./reporter.js";
@@ -21,7 +21,7 @@ describe("reporter", () => {
     stderrSpy.mockRestore();
   });
 
-  it("printStatus writes a status line to stderr", () => {
+  it("reportStatus writes a status line to stderr", () => {
     const state = createReporter();
     const stats: FuzzerStats = {
       totalExecs: 50000,
@@ -31,7 +31,7 @@ describe("reporter", () => {
       execsPerSec: 25000,
     };
 
-    printStatus(state, stats);
+    reportStatus(state, stats);
 
     expect(stderrSpy).toHaveBeenCalledOnce();
     const output = stderrSpy.mock.calls[0]![0] as string;
@@ -73,7 +73,7 @@ describe("reporter", () => {
     expect(output).toContain("edges: 800");
   });
 
-  it("first printStatus after startReporting shows 0 new when corpus hasn't grown", () => {
+  it("first reportStatus after startReporting shows 0 new when corpus hasn't grown", () => {
     const state = createReporter();
     const stats: FuzzerStats = {
       totalExecs: 0,
@@ -85,7 +85,7 @@ describe("reporter", () => {
 
     startReporting(state, () => stats, 100_000);
     // After startReporting, lastCorpusSize should snapshot the initial corpusSize
-    printStatus(state, stats);
+    reportStatus(state, stats);
     stopReporting(state);
 
     expect(stderrSpy).toHaveBeenCalledOnce();

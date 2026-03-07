@@ -183,6 +183,49 @@ describe("minimize", () => {
     });
   });
 
+  describe("truncation executions are O(log n)", () => {
+    it("uses at most ceil(log2(n)) + 1 executions for the truncation pass", async () => {
+      // Input: 1024 bytes, crash requires only first byte.
+      // Truncation should find length=1 in ~11 steps (ceil(log2(1024)) + 1).
+      // With the old restart-from-zero approach this was O(log²n) ≈ 100 steps.
+      const input = Buffer.alloc(1024);
+      input[0] = 0xaa;
+      let execCount = 0;
+      const testCandidate = async (candidate: Buffer): Promise<boolean> => {
+        execCount++;
+        return candidate.includes(0xaa);
+      };
+
+      // Use a tight iteration budget to prove we finish truncation quickly.
+      // ceil(log2(1024)) + 1 = 11. Allow a small margin for the byte deletion pass.
+      const opts: MinimizeOptions = {
+        maxIterations: 100_000,
+        timeLimitMs: 60_000,
+      };
+      const result = await minimize(input, testCandidate, opts);
+
+      expect(result.length).toBe(1);
+      // Truncation: ceil(log2(1024)) + 1 = 11 execs.
+      // Byte deletion on a 1-byte input: 1 exec (try removing the only byte — fails).
+      // Total should be ~12, well under 20.
+      expect(execCount).toBeLessThanOrEqual(20);
+    });
+  });
+
+  describe("does not mutate the input buffer", () => {
+    it("returns a new buffer without modifying the original", async () => {
+      const input = Buffer.from([0xaa, 0x00, 0x00, 0xbb]);
+      const originalCopy = Buffer.from(input);
+      const testCandidate = crashesIfContainsAll([0xaa, 0xbb]);
+
+      const result = await minimize(input, testCandidate);
+
+      expect(result.length).toBe(2);
+      // Original input must be unchanged
+      expect(input.equals(originalCopy)).toBe(true);
+    });
+  });
+
   describe("zero-means-unlimited", () => {
     it("maxIterations=0 means unlimited iteration budget", async () => {
       // Small input so minimization completes quickly

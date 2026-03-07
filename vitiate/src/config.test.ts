@@ -125,6 +125,48 @@ describe("config", () => {
       }
     });
 
+    it("rejects non-integer numeric values and warns on stderr", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+          runs: 1.5,
+        });
+        const opts = getCliOptions();
+        expect(opts).toEqual({});
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toContain("VITIATE_FUZZ_OPTIONS.runs");
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+
+    it("rejects maxLen: 0 because zero-length allocation is invalid", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+          maxLen: 0,
+        });
+        const opts = getCliOptions();
+        expect(opts).toEqual({});
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toContain("VITIATE_FUZZ_OPTIONS.maxLen");
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+
     it("preserves zero values for fields where zero means unlimited", () => {
       const chunks: string[] = [];
       const originalWrite = process.stderr.write;

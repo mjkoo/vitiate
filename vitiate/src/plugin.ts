@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createFilter, type Plugin } from "vite";
-import type { VitiatePluginOptions, FuzzOptions } from "./config.js";
+import type { VitiatePluginOptions } from "./config.js";
 import { resolveInstrumentOptions, COVERAGE_MAP_SIZE } from "./config.js";
 
 const require = createRequire(import.meta.url);
@@ -54,6 +54,8 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin {
   const wasmPath = resolveWasmPath();
   const setupPath = resolveSetupPath();
 
+  let swcModule: Promise<typeof import("@swc/core")> | undefined;
+
   return {
     name: "vitiate",
     enforce: "post",
@@ -61,13 +63,11 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin {
     config(config) {
       // Resolve the Vite project root
       const projectRoot = path.resolve(config.root ?? process.cwd());
-      if (!process.env["VITIATE_PROJECT_ROOT"]) {
-        process.env["VITIATE_PROJECT_ROOT"] = projectRoot;
-      }
+      const effectiveRoot = process.env["VITIATE_PROJECT_ROOT"] ?? projectRoot;
+      process.env["VITIATE_PROJECT_ROOT"] = effectiveRoot;
 
       // If fuzz.cacheDir is provided, resolve it relative to the effective project root
       if (fuzz?.cacheDir && !process.env["VITIATE_CACHE_DIR"]) {
-        const effectiveRoot = process.env["VITIATE_PROJECT_ROOT"]!;
         process.env["VITIATE_CACHE_DIR"] = path.resolve(
           effectiveRoot,
           fuzz.cacheDir,
@@ -77,27 +77,9 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin {
       // Serialize FuzzOptions fields (excluding cacheDir) as VITIATE_FUZZ_OPTIONS
       if (fuzz && !process.env["VITIATE_FUZZ_OPTIONS"]) {
         const { cacheDir: _, ...fuzzOptions } = fuzz;
-        const opts: FuzzOptions = {};
-        for (const key of [
-          "maxLen",
-          "timeoutMs",
-          "maxTotalTimeMs",
-          "runs",
-          "seed",
-          "minimizeBudget",
-          "minimizeTimeLimitMs",
-        ] as const) {
-          if (fuzzOptions[key] !== undefined) {
-            opts[key] = fuzzOptions[key];
-          }
-        }
-        for (const key of ["grimoire", "unicode", "redqueen"] as const) {
-          if (fuzzOptions[key] !== undefined) {
-            opts[key] = fuzzOptions[key];
-          }
-        }
-        if (Object.keys(opts).length > 0) {
-          process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify(opts);
+        const serialized = JSON.stringify(fuzzOptions);
+        if (serialized !== "{}") {
+          process.env["VITIATE_FUZZ_OPTIONS"] = serialized;
         }
       }
 
@@ -111,7 +93,8 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin {
     async transform(code, id) {
       if (!filter(id)) return null;
 
-      const { transform } = await import("@swc/core");
+      swcModule ??= import("@swc/core");
+      const { transform } = await swcModule;
       const result = await transform(code, {
         filename: id,
         sourceMaps: true,

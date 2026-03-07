@@ -8,7 +8,6 @@ import {
   readdirSync,
   readFileSync,
   writeFileSync,
-  type WriteFileOptions,
 } from "node:fs";
 import path from "node:path";
 
@@ -28,19 +27,21 @@ export function sanitizeTestName(name: string): string {
   return `${hash}-${slug}`;
 }
 
+function readCorpusDir(dir: string): Buffer[] {
+  if (!existsSync(dir)) {
+    return [];
+  }
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isFile() && !e.name.startsWith("."))
+    .map((e) => readFileSync(path.join(dir, e.name)));
+}
+
 export function getFuzzTestDataDir(testDir: string, testName: string): string {
   return path.join(testDir, "testdata", "fuzz", sanitizeTestName(testName));
 }
 
 export function loadSeedCorpus(testDir: string, testName: string): Buffer[] {
-  const dir = getFuzzTestDataDir(testDir, testName);
-  if (!existsSync(dir)) {
-    return [];
-  }
-  const entries = readdirSync(dir, { withFileTypes: true });
-  return entries
-    .filter((e) => e.isFile())
-    .map((e) => readFileSync(path.join(dir, e.name)));
+  return readCorpusDir(getFuzzTestDataDir(testDir, testName));
 }
 
 export function loadCachedCorpus(
@@ -49,13 +50,7 @@ export function loadCachedCorpus(
   testName: string,
 ): Buffer[] {
   const dir = path.join(cacheDir, testFilePath, sanitizeTestName(testName));
-  if (!existsSync(dir)) {
-    return [];
-  }
-  const entries = readdirSync(dir, { withFileTypes: true });
-  return entries
-    .filter((e) => e.isFile())
-    .map((e) => readFileSync(path.join(dir, e.name)));
+  return readCorpusDir(dir);
 }
 
 export function getCacheDir(): string {
@@ -75,17 +70,7 @@ export function getCacheDir(): string {
 }
 
 export function loadCorpusFromDirs(dirs: string[]): Buffer[] {
-  const entries: Buffer[] = [];
-  for (const dir of dirs) {
-    if (!existsSync(dir)) continue;
-    const files = readdirSync(dir, { withFileTypes: true });
-    for (const f of files) {
-      if (f.isFile()) {
-        entries.push(readFileSync(path.join(dir, f.name)));
-      }
-    }
-  }
-  return entries;
+  return dirs.flatMap((dir) => readCorpusDir(dir));
 }
 
 export function writeCorpusEntry(
@@ -121,7 +106,7 @@ export function writeArtifact(
 
 function writeExclusive(filePath: string, data: Buffer): void {
   try {
-    writeFileSync(filePath, data, { flag: "wx" } as WriteFileOptions);
+    writeFileSync(filePath, data, { flag: "wx" });
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "EEXIST") {
       throw e;
