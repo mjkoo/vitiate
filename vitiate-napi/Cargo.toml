@@ -32,3 +32,6 @@ windows-sys = { version = "0.59", features = [
 [build-dependencies]
 cc.workspace = true
 napi-build.workspace = true
+
+[dev-dependencies]
+tempfile = { workspace = true }

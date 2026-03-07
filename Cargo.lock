@@ -3035,6 +3035,7 @@ dependencies = [
  "napi-derive",
  "ryu-js",
  "sha2",
+ "tempfile",
  "windows-sys 0.59.0",
 ]
 

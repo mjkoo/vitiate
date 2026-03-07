@@ -11,12 +11,17 @@ import {
   installExceptionHandler,
 } from "vitiate-napi";
 import type { FuzzerConfig } from "vitiate-napi";
-import { isSupervisorChild, type FuzzOptions } from "./config.js";
+import {
+  isSupervisorChild,
+  getDictionaryPathEnv,
+  type FuzzOptions,
+} from "./config.js";
 import {
   loadSeedCorpus,
   loadCachedCorpus,
   loadCorpusFromDirs,
   getCacheDir,
+  getDictionaryPath,
   writeCorpusEntry,
   writeCorpusEntryToDir,
   writeArtifactWithPrefix,
@@ -294,6 +299,13 @@ export async function runFuzzLoop(
   }
   const cacheDir = getCacheDir();
 
+  // Resolve dictionary path: env var (from CLI -dict flag) takes precedence.
+  // Convention-based discovery only applies in Vitest mode — CLI mode uses
+  // only the explicit -dict flag, never convention-based discovery.
+  const dictionaryPath =
+    getDictionaryPathEnv() ??
+    (libfuzzerCompat ? undefined : getDictionaryPath(testDir, testName));
+
   const fuzzerConfig: FuzzerConfig = {};
   if (options.maxLen !== undefined) {
     fuzzerConfig.maxInputLen = options.maxLen;
@@ -309,6 +321,9 @@ export async function runFuzzLoop(
   }
   if (options.redqueen !== undefined) {
     fuzzerConfig.redqueen = options.redqueen;
+  }
+  if (dictionaryPath !== undefined) {
+    fuzzerConfig.dictionaryPath = dictionaryPath;
   }
 
   const fuzzer = new Fuzzer(coverageMap, fuzzerConfig);

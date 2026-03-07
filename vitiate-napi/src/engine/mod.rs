@@ -10,6 +10,7 @@ use libafl::feedbacks::{
     StateInitializer, TimeoutFeedback,
 };
 use libafl::inputs::BytesInput;
+use libafl::mutators::Tokens;
 use libafl::mutators::grimoire::{
     GrimoireExtensionMutator, GrimoireRandomDeleteMutator, GrimoireRecursiveReplacementMutator,
     GrimoireStringReplacementMutator,
@@ -285,6 +286,7 @@ impl Fuzzer {
         let grimoire_override = config.as_ref().and_then(|c| c.grimoire);
         let unicode_override = config.as_ref().and_then(|c| c.unicode);
         let redqueen_override = config.as_ref().and_then(|c| c.redqueen);
+        let dictionary_path = config.as_ref().and_then(|c| c.dictionary_path.clone());
 
         let map_ptr = coverage_map.as_mut_ptr();
         let map_len = coverage_map.len();
@@ -378,6 +380,15 @@ impl Fuzzer {
         // Initialize minimizer scheduler state: TopRatedsMetadata tracks the best
         // corpus entry per coverage edge for the MinimizerScheduler.
         state.add_metadata(TopRatedsMetadata::new());
+
+        // Load user-provided dictionary tokens into state metadata before any
+        // fuzz iterations, so TokenInsert/TokenReplace can use them from iteration one.
+        if let Some(ref dict_path) = dictionary_path {
+            let tokens = Tokens::from_file(dict_path).map_err(|e| {
+                Error::from_reason(format!("Failed to load dictionary file '{dict_path}': {e}"))
+            })?;
+            state.add_metadata(tokens);
+        }
 
         Ok(Self {
             features: FeatureDetection::new(

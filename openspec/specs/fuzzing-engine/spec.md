@@ -12,6 +12,7 @@ The config SHALL support the following fields, all optional with defaults:
 - `maxInputLen` (number, default 4096): Maximum byte length of generated inputs.
 - `seed` (bigint, optional): RNG seed for reproducible mutation sequences. If omitted,
   a random seed is used.
+- `dictionaryPath` (string, optional): Absolute path to an AFL/libfuzzer-format dictionary file. If provided, the file SHALL be parsed via `Tokens::from_file()` during construction and the resulting tokens SHALL be added as `Tokens` state metadata before any fuzz iterations execute. If the file does not exist or contains malformed content, construction SHALL fail with an error indicating the file path and nature of the failure.
 
 On construction, the Fuzzer SHALL enable the CmpLog accumulator so that `traceCmp` calls
 record comparison operands. The Fuzzer SHALL also initialize `CmpValuesMetadata` on the
@@ -38,12 +39,31 @@ On construction, the Fuzzer SHALL additionally initialize:
 - **AND** `SchedulerMetadata` with `PowerSchedule::fast()` is present on the state
 - **AND** `TopRatedsMetadata` is present on the state with an empty edge-to-corpus-ID map
 - **AND** the havoc mutator includes token mutations
+- **AND** no `Tokens` metadata is present on the state (no dictionary provided)
 
 #### Scenario: Create with custom config
 
 - **WHEN** `new Fuzzer(createCoverageMap(32768), { maxInputLen: 1024, seed: 42n })` is called
 - **THEN** a Fuzzer instance is created with the specified configuration
 - **AND** the CmpLog accumulator is enabled
+
+#### Scenario: Create with dictionary path
+
+- **WHEN** `new Fuzzer(coverageMap, { dictionaryPath: "/path/to/json.dict" })` is called
+- **AND** the file contains valid AFL/libfuzzer dictionary entries
+- **THEN** the `Tokens` state metadata SHALL contain the parsed tokens from the file
+- **AND** the tokens SHALL be available to `TokenInsert` and `TokenReplace` from the first `getNextInput()` call
+
+#### Scenario: Create with nonexistent dictionary path
+
+- **WHEN** `new Fuzzer(coverageMap, { dictionaryPath: "/nonexistent.dict" })` is called
+- **THEN** construction SHALL fail with an error indicating the file was not found
+
+#### Scenario: Create with malformed dictionary
+
+- **WHEN** `new Fuzzer(coverageMap, { dictionaryPath: "/path/to/bad.dict" })` is called
+- **AND** the file contains malformed content
+- **THEN** construction SHALL fail with an error indicating the parse failure
 
 #### Scenario: Reproducible with same seed
 

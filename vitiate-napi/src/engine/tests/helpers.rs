@@ -246,6 +246,7 @@ impl TestFuzzerBuilder {
             grimoire: self.grimoire,
             unicode: self.unicode,
             redqueen: self.redqueen,
+            dictionary_path: None,
         };
         let coverage_map: Buffer = vec![0u8; self.map_size].into();
         Fuzzer::new(coverage_map, Some(config)).unwrap()

@@ -1,4 +1,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
+import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { parseArgs } from "./cli.js";
 import { getCliOptions } from "./config.js";
 
@@ -259,6 +262,54 @@ describe("zero-value CLI flags (0 = unlimited convention)", () => {
   it("-minimize_budget=0 converts to minimizeBudget: 0", () => {
     const result = parseArgs(argv("./test.ts", "-minimize_budget=0"));
     expect(result.fuzzOptions.minimizeBudget).toBe(0);
+  });
+});
+
+describe("-dict flag", () => {
+  let tmpDir: string;
+
+  afterEach(() => {
+    if (tmpDir) {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("parses -dict flag and resolves to absolute path", () => {
+    tmpDir = path.join(
+      tmpdir(),
+      `vitiate-dict-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    mkdirSync(tmpDir, { recursive: true });
+    const dictPath = path.join(tmpDir, "test.dict");
+    writeFileSync(dictPath, '"keyword"\n');
+
+    const result = parseArgs(argv("./test.ts", `-dict=${dictPath}`));
+    expect(result.dictPath).toBe(dictPath);
+  });
+
+  it("exits with error for nonexistent dictionary file", () => {
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("process.exit called");
+    }) as typeof process.exit);
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+
+    try {
+      expect(() =>
+        parseArgs(argv("./test.ts", "-dict=/nonexistent/dict.dict")),
+      ).toThrow("process.exit called");
+      expect(stderrSpy).toHaveBeenCalledWith(
+        expect.stringContaining("dictionary file not found"),
+      );
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    } finally {
+      exitSpy.mockRestore();
+      stderrSpy.mockRestore();
+    }
+  });
+
+  it("returns undefined dictPath when -dict is not provided", () => {
+    const result = parseArgs(argv("./test.ts"));
+    expect(result.dictPath).toBeUndefined();
   });
 });
 

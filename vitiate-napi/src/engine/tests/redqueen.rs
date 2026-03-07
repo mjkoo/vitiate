@@ -118,6 +118,7 @@ fn test_redqueen_explicit_enable() {
             grimoire: None,
             unicode: None,
             redqueen: Some(true),
+            dictionary_path: None,
         }),
     )
     .unwrap();
@@ -138,6 +139,7 @@ fn test_redqueen_explicit_disable() {
             grimoire: None,
             unicode: None,
             redqueen: Some(false),
+            dictionary_path: None,
         }),
     )
     .unwrap();
@@ -158,6 +160,7 @@ fn test_redqueen_auto_detect_empty_corpus_defaults_false() {
             grimoire: None,
             unicode: None,
             redqueen: None,
+            dictionary_path: None,
         }),
     )
     .unwrap();

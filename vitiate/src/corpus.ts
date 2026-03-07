@@ -40,6 +40,19 @@ export function getFuzzTestDataDir(testDir: string, testName: string): string {
   return path.join(testDir, "testdata", "fuzz", sanitizeTestName(testName));
 }
 
+export function getDictionaryPath(
+  testDir: string,
+  testName: string,
+): string | undefined {
+  const dictPath = path.join(
+    testDir,
+    "testdata",
+    "fuzz",
+    `${sanitizeTestName(testName)}.dict`,
+  );
+  return existsSync(dictPath) ? path.resolve(dictPath) : undefined;
+}
+
 export function loadSeedCorpus(testDir: string, testName: string): Buffer[] {
   return readCorpusDir(getFuzzTestDataDir(testDir, testName));
 }

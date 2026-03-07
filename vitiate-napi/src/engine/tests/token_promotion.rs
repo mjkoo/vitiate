@@ -1,6 +1,8 @@
 use super::helpers::{TestFuzzerBuilder, make_cmplog_bytes};
 use crate::cmplog;
-use crate::engine::token_tracker::{MAX_TOKEN_CANDIDATES, TOKEN_PROMOTION_THRESHOLD};
+use crate::engine::token_tracker::{
+    MAX_DICTIONARY_SIZE, MAX_TOKEN_CANDIDATES, TOKEN_PROMOTION_THRESHOLD,
+};
 use crate::types::ExitKind;
 use libafl::HasMetadata;
 use libafl::mutators::Tokens;
@@ -206,6 +208,114 @@ fn test_promoted_tokens_not_reinserted_into_candidates() {
     assert_eq!(
         dict_len_before, dict_len_after,
         "dictionary should not grow from re-observed promoted tokens"
+    );
+
+    cmplog::disable();
+}
+
+#[test]
+fn user_provided_tokens_present_in_state_with_cmplog_promotion() {
+    cmplog::disable();
+    cmplog::drain();
+
+    // Create a fuzzer with a user-provided dictionary.
+    let dir = tempfile::tempdir().unwrap();
+    let dict_path = dir.path().join("test.dict");
+    std::fs::write(&dict_path, "\"user_token_a\"\n\"user_token_b\"\n").unwrap();
+
+    let coverage_map: Buffer = vec![0u8; 256].into();
+    let config = crate::types::FuzzerConfig {
+        max_input_len: None,
+        seed: Some(42),
+        grimoire: None,
+        unicode: None,
+        redqueen: None,
+        dictionary_path: Some(dict_path.to_str().unwrap().to_string()),
+    };
+    let mut fuzzer = crate::engine::Fuzzer::new(coverage_map, Some(config)).unwrap();
+    fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+
+    // User tokens should already be present.
+    let tokens = fuzzer.state.metadata::<Tokens>().unwrap();
+    let token_list: Vec<&[u8]> = tokens.tokens().iter().map(|t| t.as_slice()).collect();
+    assert!(token_list.contains(&b"user_token_a".as_slice()));
+    assert!(token_list.contains(&b"user_token_b".as_slice()));
+
+    // Now promote a CmpLog token.
+    for _ in 0..TOKEN_PROMOTION_THRESHOLD {
+        let _input = fuzzer.get_next_input().unwrap();
+        cmplog::push(
+            CmpValues::Bytes((
+                make_cmplog_bytes(b"cmplog_tok"),
+                make_cmplog_bytes(b"other"),
+            )),
+            0,
+            cmplog::CmpLogOperator::Equal,
+        );
+        fuzzer.report_result(ExitKind::Ok, 50_000.0).unwrap();
+    }
+
+    // User tokens and at least one CmpLog token should be present.
+    let tokens = fuzzer.state.metadata::<Tokens>().unwrap();
+    let token_list: Vec<&[u8]> = tokens.tokens().iter().map(|t| t.as_slice()).collect();
+    assert!(token_list.contains(&b"user_token_a".as_slice()));
+    assert!(token_list.contains(&b"user_token_b".as_slice()));
+    assert!(token_list.contains(&b"cmplog_tok".as_slice()));
+
+    cmplog::disable();
+}
+
+#[test]
+fn user_tokens_do_not_count_toward_cmplog_cap() {
+    cmplog::disable();
+    cmplog::drain();
+
+    // Create a dictionary with MAX_DICTIONARY_SIZE + 100 user tokens.
+    let dir = tempfile::tempdir().unwrap();
+    let dict_path = dir.path().join("big.dict");
+    let mut dict_content = String::new();
+    for i in 0..(MAX_DICTIONARY_SIZE + 100) {
+        dict_content.push_str(&format!("\"user_{i:06}\"\n"));
+    }
+    std::fs::write(&dict_path, &dict_content).unwrap();
+
+    let coverage_map: Buffer = vec![0u8; 256].into();
+    let config = crate::types::FuzzerConfig {
+        max_input_len: None,
+        seed: Some(42),
+        grimoire: None,
+        unicode: None,
+        redqueen: None,
+        dictionary_path: Some(dict_path.to_str().unwrap().to_string()),
+    };
+    let mut fuzzer = crate::engine::Fuzzer::new(coverage_map, Some(config)).unwrap();
+    fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+
+    // User tokens exceed MAX_DICTIONARY_SIZE — they should all be present.
+    let user_token_count = fuzzer.state.metadata::<Tokens>().unwrap().tokens().len();
+    assert_eq!(user_token_count, MAX_DICTIONARY_SIZE + 100);
+
+    // CmpLog promotion should still work (promoted set is empty).
+    assert_eq!(fuzzer.token_tracker.promoted.len(), 0);
+    for _ in 0..TOKEN_PROMOTION_THRESHOLD {
+        let _input = fuzzer.get_next_input().unwrap();
+        cmplog::push(
+            CmpValues::Bytes((
+                make_cmplog_bytes(b"cmplog_new"),
+                make_cmplog_bytes(b"other_new"),
+            )),
+            0,
+            cmplog::CmpLogOperator::Equal,
+        );
+        fuzzer.report_result(ExitKind::Ok, 50_000.0).unwrap();
+    }
+
+    // The CmpLog token should have been promoted despite user tokens exceeding cap.
+    let tokens = fuzzer.state.metadata::<Tokens>().unwrap();
+    let token_list: Vec<&[u8]> = tokens.tokens().iter().map(|t| t.as_slice()).collect();
+    assert!(
+        token_list.contains(&b"cmplog_new".as_slice()),
+        "CmpLog token should be promoted even when user tokens exceed MAX_DICTIONARY_SIZE"
     );
 
     cmplog::disable();

@@ -19,6 +19,7 @@ import {
   sanitizeTestName,
   getCacheDir,
   loadCorpusFromDirs,
+  getDictionaryPath,
 } from "./corpus.js";
 
 describe("corpus", () => {
@@ -427,6 +428,34 @@ describe("corpus", () => {
       expect(result).toHaveLength(2);
       const contents = result.map((b) => b.toString()).sort();
       expect(contents).toEqual(["aaa", "bbb"]);
+    });
+  });
+
+  describe("getDictionaryPath", () => {
+    it("returns path when .dict file exists", () => {
+      const dirName = sanitizeTestName("parse-json");
+      const dictPath = path.join(tmpDir, "testdata", "fuzz", `${dirName}.dict`);
+      mkdirSync(path.dirname(dictPath), { recursive: true });
+      writeFileSync(dictPath, '"true"\n"false"\n');
+
+      const result = getDictionaryPath(tmpDir, "parse-json");
+      expect(result).toBe(dictPath);
+    });
+
+    it("returns undefined when .dict file does not exist", () => {
+      const result = getDictionaryPath(tmpDir, "nonexistent-test");
+      expect(result).toBeUndefined();
+    });
+
+    it("does not confuse seed corpus directory with dictionary file", () => {
+      const dirName = sanitizeTestName("my-test");
+      const corpusDir = path.join(tmpDir, "testdata", "fuzz", dirName);
+      mkdirSync(corpusDir, { recursive: true });
+      writeFileSync(path.join(corpusDir, "seed1"), "data");
+      // No .dict file — only the corpus directory exists.
+
+      const result = getDictionaryPath(tmpDir, "my-test");
+      expect(result).toBeUndefined();
     });
   });
 });

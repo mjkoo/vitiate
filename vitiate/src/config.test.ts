@@ -4,6 +4,7 @@ import {
   isLibfuzzerCompat,
   getCorpusOutputDir,
   getArtifactPrefix,
+  getDictionaryPathEnv,
   getCliOptions,
   getFuzzTime,
   resolveInstrumentOptions,
@@ -136,6 +137,33 @@ describe("config", () => {
     it("returns the value when set", () => {
       process.env["VITIATE_ARTIFACT_PREFIX"] = "./out/";
       expect(getArtifactPrefix()).toBe("./out/");
+    });
+  });
+
+  describe("getDictionaryPathEnv", () => {
+    const original = process.env["VITIATE_DICTIONARY_PATH"];
+
+    afterEach(() => {
+      if (original === undefined) {
+        delete process.env["VITIATE_DICTIONARY_PATH"];
+      } else {
+        process.env["VITIATE_DICTIONARY_PATH"] = original;
+      }
+    });
+
+    it("returns undefined when not set", () => {
+      delete process.env["VITIATE_DICTIONARY_PATH"];
+      expect(getDictionaryPathEnv()).toBeUndefined();
+    });
+
+    it("returns undefined when empty", () => {
+      process.env["VITIATE_DICTIONARY_PATH"] = "";
+      expect(getDictionaryPathEnv()).toBeUndefined();
+    });
+
+    it("returns the value when set", () => {
+      process.env["VITIATE_DICTIONARY_PATH"] = "/path/to/dict.dict";
+      expect(getDictionaryPathEnv()).toBe("/path/to/dict.dict");
     });
   });
 

@@ -1,0 +1,8 @@
+# Dictionary for validate-scheme fuzz test.
+# These tokens accelerate discovery of the planted "javascript" scheme bug.
+scheme_http="http"
+scheme_https="https"
+scheme_ftp="ftp"
+scheme_ws="ws"
+scheme_javascript="javascript"
+separator="://"

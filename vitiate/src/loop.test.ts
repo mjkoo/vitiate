@@ -10,11 +10,13 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 import { runFuzzLoop } from "./loop.js";
 import { initGlobals } from "./globals.js";
+import { sanitizeTestName } from "./corpus.js";
 
 describe("fuzz loop", () => {
   let tmpDir: string;
   const originalFuzz = process.env["VITIATE_FUZZ"];
   const originalCacheDir = process.env["VITIATE_CACHE_DIR"];
+  const originalDictPath = process.env["VITIATE_DICTIONARY_PATH"];
   const originalCov = globalThis.__vitiate_cov;
   const originalTrace = globalThis.__vitiate_trace_cmp;
 
@@ -28,6 +30,11 @@ describe("fuzz loop", () => {
       delete process.env["VITIATE_CACHE_DIR"];
     } else {
       process.env["VITIATE_CACHE_DIR"] = originalCacheDir;
+    }
+    if (originalDictPath === undefined) {
+      delete process.env["VITIATE_DICTIONARY_PATH"];
+    } else {
+      process.env["VITIATE_DICTIONARY_PATH"] = originalDictPath;
     }
     globalThis.__vitiate_cov = originalCov;
     globalThis.__vitiate_trace_cmp = originalTrace;
@@ -851,6 +858,61 @@ describe("fuzz loop", () => {
       expect(result.totalExecs).toBe(50);
       // callCount > runs because of calibration attempts (even though they crash).
       expect(callCount).toBeGreaterThan(50);
+    });
+  });
+
+  describe("convention-based dictionary discovery", () => {
+    it("libfuzzerCompat mode does not load convention-based dictionary", async () => {
+      await setupFuzzingMode();
+      delete process.env["VITIATE_DICTIONARY_PATH"];
+
+      // Place a malformed .dict file at the convention path. If loaded, it
+      // would cause a parse error. In libfuzzerCompat mode it must be ignored.
+      const testName = "dict-compat-test";
+      const dictDir = path.join(tmpDir, "testdata", "fuzz");
+      mkdirSync(dictDir, { recursive: true });
+      writeFileSync(
+        path.join(dictDir, `${sanitizeTestName(testName)}.dict`),
+        "not a valid line",
+      );
+
+      const target = (_data: Buffer): void => {};
+      const result = await runFuzzLoop(
+        target,
+        tmpDir,
+        testName,
+        "test.fuzz.ts",
+        { runs: 10, grimoire: false, unicode: false, redqueen: false },
+        { libfuzzerCompat: true },
+      );
+
+      expect(result.crashed).toBe(false);
+      expect(result.totalExecs).toBe(10);
+    });
+
+    it("vitest mode loads convention-based dictionary", async () => {
+      await setupFuzzingMode();
+      delete process.env["VITIATE_DICTIONARY_PATH"];
+
+      // Same malformed .dict file. In Vitest mode (no libfuzzerCompat),
+      // convention-based discovery should find it and fail to parse.
+      const testName = "dict-vitest-test";
+      const dictDir = path.join(tmpDir, "testdata", "fuzz");
+      mkdirSync(dictDir, { recursive: true });
+      writeFileSync(
+        path.join(dictDir, `${sanitizeTestName(testName)}.dict`),
+        "not a valid line",
+      );
+
+      const target = (_data: Buffer): void => {};
+      await expect(
+        runFuzzLoop(target, tmpDir, testName, "test.fuzz.ts", {
+          runs: 10,
+          grimoire: false,
+          unicode: false,
+          redqueen: false,
+        }),
+      ).rejects.toThrow("Failed to load dictionary file");
     });
   });
 }, 60000);

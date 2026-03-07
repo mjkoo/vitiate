@@ -8,6 +8,7 @@ mod cmplog_metadata;
 mod colorization;
 mod deferred_detection;
 mod depth_tracking;
+mod dictionary;
 mod generalization;
 mod grimoire;
 mod input_handling;

@@ -227,6 +227,7 @@ fn test_unicode_explicit_enable_through_constructor() {
             grimoire: None,
             unicode: Some(true),
             redqueen: None,
+            dictionary_path: None,
         }),
     )
     .unwrap();
@@ -247,6 +248,7 @@ fn test_unicode_explicit_disable_through_constructor() {
             grimoire: None,
             unicode: Some(false),
             redqueen: None,
+            dictionary_path: None,
         }),
     )
     .unwrap();
@@ -268,6 +270,7 @@ fn test_unicode_and_grimoire_independent_explicit_control() {
             grimoire: Some(false),
             unicode: Some(true),
             redqueen: None,
+            dictionary_path: None,
         }),
     )
     .unwrap();
@@ -368,6 +371,7 @@ fn test_shared_deferred_threshold_with_one_feature_explicit() {
             grimoire: Some(true),
             unicode: None,
             redqueen: None,
+            dictionary_path: None,
         }),
     )
     .unwrap();

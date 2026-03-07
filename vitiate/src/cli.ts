@@ -9,7 +9,7 @@
  *   in fuzzing mode, and runs the fuzz loop.
  */
 import { spawn } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { object } from "@optique/core/constructs";
@@ -34,6 +34,7 @@ export interface CliArgs {
   corpusDirs: readonly string[];
   testName?: string;
   artifactPrefix?: string;
+  dictPath?: string;
   fuzzOptions: FuzzOptions;
 }
 
@@ -57,6 +58,8 @@ export const cliParser = object({
   ),
   // Artifact prefix
   artifactPrefix: optional(option("-artifact_prefix", string())),
+  // Dictionary file
+  dict: optional(option("-dict", string())),
   // libFuzzer-compatible flags: accepted for OSS-Fuzz compatibility
   fork: optional(option("-fork", integer({ min: 0 }))),
   jobs: optional(option("-jobs", integer({ min: 0 }))),
@@ -101,12 +104,28 @@ function toCliArgs(parsed: InferValue<typeof cliParser>): CliArgs {
     maxTotalTime,
     minimizeBudget,
     minimizeTimeLimit,
+    dict,
   } = parsed;
+
+  // Validate and resolve -dict path
+  let dictPath: string | undefined;
+  if (dict !== undefined) {
+    const resolved = path.resolve(dict);
+    if (!existsSync(resolved)) {
+      process.stderr.write(
+        `vitiate: error: dictionary file not found: ${dict}\n`,
+      );
+      process.exit(1);
+    }
+    dictPath = resolved;
+  }
+
   return {
     testFile,
     corpusDirs,
     testName,
     artifactPrefix,
+    dictPath,
     fuzzOptions: {
       maxLen,
       timeoutMs: timeout != null ? timeout * 1000 : undefined,
@@ -178,6 +197,7 @@ async function runChildMode(
   fuzzOptions: FuzzOptions,
   testName?: string,
   artifactPrefix?: string,
+  dictPath?: string,
 ): Promise<void> {
   // Activate fuzzing mode
   process.env["VITIATE_FUZZ"] = "1";
@@ -199,6 +219,11 @@ async function runChildMode(
   // the "./" default when libfuzzerCompat is set and no prefix is given.
   if (artifactPrefix !== undefined) {
     process.env["VITIATE_ARTIFACT_PREFIX"] = artifactPrefix;
+  }
+
+  // Forward dictionary path to child process for the fuzz loop to pick up.
+  if (dictPath !== undefined) {
+    process.env["VITIATE_DICTIONARY_PATH"] = dictPath;
   }
 
   const { startVitest } = await import("vitest/node");
@@ -227,13 +252,19 @@ async function runChildMode(
 }
 
 async function main(): Promise<void> {
-  const { testFile, corpusDirs, testName, artifactPrefix, fuzzOptions } =
-    toCliArgs(
-      runSync(cliParser, {
-        programName: "vitiate",
-        help: "option",
-      }),
-    );
+  const {
+    testFile,
+    corpusDirs,
+    testName,
+    artifactPrefix,
+    dictPath,
+    fuzzOptions,
+  } = toCliArgs(
+    runSync(cliParser, {
+      programName: "vitiate",
+      help: "option",
+    }),
+  );
 
   if (isSupervisorChild()) {
     // Child mode: shmem is already set up by the parent
@@ -243,6 +274,7 @@ async function main(): Promise<void> {
       fuzzOptions,
       testName,
       artifactPrefix,
+      dictPath,
     );
   } else {
     // Parent mode: allocate shmem, spawn child, supervise

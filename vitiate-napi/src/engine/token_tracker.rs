@@ -39,8 +39,8 @@ pub(super) struct TokenTracker {
     pub(super) candidates: HashMap<Vec<u8>, usize>,
     /// Tokens already promoted to the mutation dictionary. Checked before
     /// inserting into `candidates` to prevent re-promotion cycles.
-    /// Implicitly bounded by `MAX_DICTIONARY_SIZE` — tokens only enter this set
-    /// via the promotion loop, which stops when the dictionary is full.
+    /// Bounded by `MAX_DICTIONARY_SIZE` — the cap is enforced on this set's
+    /// length, so user-provided dictionary tokens are exempt from the cap.
     pub(super) promoted: HashSet<Vec<u8>>,
 }
 
@@ -61,8 +61,7 @@ impl TokenTracker {
         if !state.has_metadata::<Tokens>() {
             state.add_metadata(Tokens::default());
         }
-        // PANIC: Tokens metadata is guaranteed to exist — inserted above if absent.
-        let dict_full = state.metadata::<Tokens>().unwrap().tokens().len() >= MAX_DICTIONARY_SIZE;
+        let dict_full = self.promoted.len() >= MAX_DICTIONARY_SIZE;
         if dict_full {
             return;
         }
@@ -88,10 +87,10 @@ impl TokenTracker {
             self.candidates.remove(token);
             self.promoted.insert(token.clone());
             // PANIC: Tokens metadata is guaranteed to exist — inserted at the
-            // top of process() if absent.
+            // top of process() if absent, or by Fuzzer::new() when a user dictionary is loaded.
             let tokens = state.metadata_mut::<Tokens>().unwrap();
             tokens.add_token(token);
-            if tokens.tokens().len() >= MAX_DICTIONARY_SIZE {
+            if self.promoted.len() >= MAX_DICTIONARY_SIZE {
                 break;
             }
         }

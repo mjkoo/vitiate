@@ -120,6 +120,10 @@ export function getFuzzTime(): number | undefined {
   return parsed * 1000;
 }
 
+export function getDictionaryPathEnv(): string | undefined {
+  return process.env["VITIATE_DICTIONARY_PATH"] || undefined;
+}
+
 export function getCorpusOutputDir(): string | undefined {
   return process.env["VITIATE_CORPUS_OUTPUT_DIR"] || undefined;
 }

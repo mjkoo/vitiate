@@ -13,6 +13,10 @@ pub struct FuzzerConfig {
     /// REDQUEEN transform-aware mutation control.
     /// `true` = force enable, `false` = force disable, absent = auto-detect (inverted: enabled for binary corpus).
     pub redqueen: Option<bool>,
+    /// Absolute path to an AFL/libfuzzer-format dictionary file.
+    /// If provided, tokens are parsed via `Tokens::from_file()` and seeded
+    /// into state metadata before any fuzz iterations execute.
+    pub dictionary_path: Option<String>,
 }
 
 #[napi]

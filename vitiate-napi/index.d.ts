@@ -170,6 +170,12 @@ export interface FuzzerConfig {
    * `true` = force enable, `false` = force disable, absent = auto-detect (inverted: enabled for binary corpus).
    */
   redqueen?: boolean
+  /**
+   * Absolute path to an AFL/libfuzzer-format dictionary file.
+   * If provided, tokens are parsed via `Tokens::from_file()` and seeded
+   * into state metadata before any fuzz iterations execute.
+   */
+  dictionaryPath?: string
 }
 
 export interface FuzzerStats {
