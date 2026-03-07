@@ -746,7 +746,8 @@ mod tests {
 
     #[test]
     fn test_begin_redqueen_skips_without_taint_metadata() {
-        let mut fuzzer = super::super::test_helpers::make_fuzzer_ready_for_stage(64);
+        let mut fuzzer =
+            super::super::test_helpers::TestFuzzerBuilder::new(64).build_ready_for_stage();
 
         // Add a corpus entry.
         let input = libafl::inputs::BytesInput::new(vec![1, 2, 3, 4]);
@@ -780,7 +781,8 @@ mod tests {
 
     #[test]
     fn test_begin_redqueen_skips_without_cmp_metadata() {
-        let mut fuzzer = super::super::test_helpers::make_fuzzer_ready_for_stage(64);
+        let mut fuzzer =
+            super::super::test_helpers::TestFuzzerBuilder::new(64).build_ready_for_stage();
 
         // Add a corpus entry.
         let input = libafl::inputs::BytesInput::new(vec![1, 2, 3, 4]);
@@ -803,7 +805,8 @@ mod tests {
 
     #[test]
     fn test_begin_redqueen_skips_with_empty_orig_cmpvals() {
-        let mut fuzzer = super::super::test_helpers::make_fuzzer_ready_for_stage(64);
+        let mut fuzzer =
+            super::super::test_helpers::TestFuzzerBuilder::new(64).build_ready_for_stage();
 
         // Add a corpus entry.
         let input = libafl::inputs::BytesInput::new(vec![1, 2, 3, 4]);
@@ -830,7 +833,8 @@ mod tests {
     fn test_begin_redqueen_sets_corpus_id() {
         use libafl::corpus::HasCurrentCorpusId;
 
-        let mut fuzzer = super::super::test_helpers::make_fuzzer_ready_for_stage(64);
+        let mut fuzzer =
+            super::super::test_helpers::TestFuzzerBuilder::new(64).build_ready_for_stage();
 
         // Add a corpus entry with data that can produce comparison matches.
         let input = libafl::inputs::BytesInput::new(vec![0x41, 0x42, 0x43, 0x44]);

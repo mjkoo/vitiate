@@ -1,5 +1,4 @@
-use std::collections::{HashMap, HashSet};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use libafl::HasMetadata;
 use libafl::corpus::{Corpus, CorpusId, InMemoryCorpus, Testcase};
@@ -10,26 +9,23 @@ use libafl::feedbacks::{
     StateInitializer, TimeoutFeedback,
 };
 use libafl::inputs::BytesInput;
-use libafl::mutators::token_mutations::AflppRedQueen;
-use libafl::mutators::{HavocScheduledMutator, havoc_mutations, tokens_mutations};
 use libafl::observers::StdMapObserver;
 use libafl::observers::cmp::{CmpValues, CmpValuesMetadata, CmplogBytes};
 use libafl::observers::map::CanTrack;
 use libafl::schedulers::minimizer::TopRatedsMetadata;
 use libafl::schedulers::powersched::{PowerSchedule, SchedulerMetadata};
 use libafl::schedulers::{MinimizerScheduler, ProbabilitySamplingScheduler, Scheduler};
-use libafl::state::{HasCorpus, HasMaxSize};
+use libafl::state::HasCorpus;
 use libafl_bolts::rands::StdRand;
-use libafl_bolts::tuples::{Merge, tuple_list};
+use libafl_bolts::tuples::tuple_list;
 use napi::bindgen_prelude::*;
 
 use super::{
-    CrashObjective, DEFAULT_MAX_INPUT_LEN, EDGES_OBSERVER_NAME, Fuzzer, FuzzerFeedback,
-    FuzzerScheduler, FuzzerState, GRIMOIRE_MAX_STACK_POW, I2SSpliceReplace, SEED_EXEC_TIME,
-    StageState, TimeoutObjective, UNICODE_MAX_STACK_POW,
+    CrashObjective, EDGES_OBSERVER_NAME, Fuzzer, FuzzerFeedback, FuzzerScheduler, FuzzerState,
+    SEED_EXEC_TIME, StageState, TimeoutObjective,
 };
 use crate::cmplog;
-use crate::types::{ExitKind, IterationResult};
+use crate::types::{ExitKind, FuzzerConfig, IterationResult};
 
 // # Safety patterns used throughout this module
 //
@@ -49,14 +45,6 @@ use crate::types::{ExitKind, IterationResult};
 // The model for per-site SAFETY comments is `make_scheduler` (below).
 
 use libafl::corpus::SchedulerTestcaseMetadata;
-use libafl::mutators::grimoire::{
-    GrimoireExtensionMutator, GrimoireRandomDeleteMutator, GrimoireRecursiveReplacementMutator,
-    GrimoireStringReplacementMutator,
-};
-use libafl::mutators::unicode::{
-    UnicodeCategoryRandMutator, UnicodeCategoryTokenReplaceMutator, UnicodeSubcategoryRandMutator,
-    UnicodeSubcategoryTokenReplaceMutator,
-};
 use libafl::state::StdState;
 
 pub(crate) fn make_coverage_map(size: usize) -> (*mut u8, Vec<u8>) {
@@ -163,168 +151,6 @@ pub(crate) fn make_fuzzer(
     )
 }
 
-pub(crate) fn make_test_fuzzer(map_size: usize) -> Fuzzer {
-    let mut coverage_map: Buffer = vec![0u8; map_size].into();
-    let map_ptr = coverage_map.as_mut_ptr();
-    let map_len = coverage_map.len();
-
-    // SAFETY: coverage_map Buffer outlives Fuzzer; observer is consumed by track_indices below.
-    let temp_observer =
-        unsafe { StdMapObserver::from_mut_ptr(EDGES_OBSERVER_NAME, map_ptr, map_len) };
-
-    let mut feedback = MaxMapFeedback::new(&temp_observer);
-    let mut crash_objective = CrashFeedback::new();
-    let mut timeout_objective = TimeoutFeedback::new();
-
-    let mut state = StdState::new(
-        StdRand::with_seed(42),
-        InMemoryCorpus::<BytesInput>::new(),
-        InMemoryCorpus::new(),
-        &mut feedback,
-        &mut crash_objective,
-    )
-    .unwrap();
-
-    timeout_objective.init_state(&mut state).unwrap();
-
-    let tracking_observer = temp_observer.track_indices();
-    let scheduler =
-        MinimizerScheduler::new(&tracking_observer, ProbabilitySamplingScheduler::new());
-    let mutator = HavocScheduledMutator::new(havoc_mutations().merge(tokens_mutations()));
-    let i2s_mutator = I2SSpliceReplace::new();
-    let grimoire_mutator = HavocScheduledMutator::with_max_stack_pow(
-        tuple_list!(
-            GrimoireExtensionMutator::new(),
-            GrimoireRecursiveReplacementMutator::new(),
-            GrimoireStringReplacementMutator::new(),
-            // Two delete mutators: matches LibAFL's default grimoire mutations,
-            // which intentionally double-weights deletions.
-            GrimoireRandomDeleteMutator::new(),
-            GrimoireRandomDeleteMutator::new(),
-        ),
-        GRIMOIRE_MAX_STACK_POW,
-    );
-    let unicode_mutator = HavocScheduledMutator::with_max_stack_pow(
-        tuple_list!(
-            UnicodeCategoryRandMutator,
-            UnicodeSubcategoryRandMutator,
-            UnicodeSubcategoryRandMutator,
-            UnicodeSubcategoryRandMutator,
-            UnicodeSubcategoryRandMutator,
-            UnicodeCategoryTokenReplaceMutator,
-            UnicodeSubcategoryTokenReplaceMutator,
-            UnicodeSubcategoryTokenReplaceMutator,
-            UnicodeSubcategoryTokenReplaceMutator,
-            UnicodeSubcategoryTokenReplaceMutator,
-        ),
-        UNICODE_MAX_STACK_POW,
-    );
-
-    drop(tracking_observer);
-
-    state.set_max_size(DEFAULT_MAX_INPUT_LEN as usize);
-    state.metadata_map_mut().insert(CmpValuesMetadata::new());
-    state.add_metadata(SchedulerMetadata::new(Some(PowerSchedule::fast())));
-    state.add_metadata(TopRatedsMetadata::new());
-
-    Fuzzer {
-        state,
-        scheduler,
-        feedback,
-        crash_objective,
-        timeout_objective,
-        mutator,
-        i2s_mutator,
-        grimoire_mutator,
-        redqueen_mutator: AflppRedQueen::with_cmplog_options(true, true),
-        redqueen_enabled: false,
-        redqueen_ran_for_entry: false,
-        redqueen_override: None,
-        unicode_mutator,
-        map_ptr,
-        map_len,
-        _coverage_map: coverage_map,
-        max_input_len: DEFAULT_MAX_INPUT_LEN,
-        total_execs: 0,
-        solution_count: 0,
-        start_time: Instant::now(),
-        last_input: None,
-        last_corpus_id: None,
-        calibration_corpus_id: None,
-        calibration_first_map: None,
-        calibration_history_map: None,
-        calibration_total_time: Duration::ZERO,
-        calibration_iterations: 0,
-        calibration_has_unstable: false,
-        unstable_entries: HashSet::new(),
-        token_candidates: HashMap::new(),
-        promoted_tokens: HashSet::new(),
-        stage_state: StageState::None,
-        last_interesting_corpus_id: None,
-        last_stage_input: None,
-        grimoire_enabled: false,
-        unicode_enabled: false,
-        grimoire_override: None,
-        unicode_override: None,
-        deferred_detection_count: Some(0),
-        auto_seed_count: 0,
-    }
-}
-
-pub(crate) fn make_fuzzer_ready_for_stage(map_size: usize) -> Fuzzer {
-    cmplog::disable();
-    cmplog::drain();
-
-    let mut fuzzer = make_test_fuzzer(map_size);
-    cmplog::enable();
-
-    // Add a seed so the scheduler has something to select.
-    fuzzer
-        .add_seed(Buffer::from(b"seed_for_stage_test".to_vec()))
-        .unwrap();
-
-    // Simulate getNextInput to set last_input and last_corpus_id.
-    let _ = fuzzer.get_next_input().unwrap();
-
-    // Write novel coverage to trigger Interesting.
-    // SAFETY: index 42 is within map_size bounds; no other observer is live.
-    unsafe {
-        *fuzzer.map_ptr.add(42) = 1;
-    }
-
-    // Push CmpLog entries so beginStage has data to work with.
-    cmplog::push(
-        CmpValues::Bytes((make_cmplog_bytes(b"hello"), make_cmplog_bytes(b"world"))),
-        0,
-        cmplog::CmpLogOperator::Equal,
-    );
-
-    // report_result will evaluate coverage, drain CmpLog, and set
-    // last_interesting_corpus_id if interesting.
-    let result = fuzzer.report_result(ExitKind::Ok, 50_000.0).unwrap();
-    assert_eq!(
-        result,
-        IterationResult::Interesting,
-        "should be Interesting for novel coverage"
-    );
-
-    // Simulate calibration (required before beginStage).
-    // Write the same coverage for calibration runs.
-    for _ in 0..3 {
-        // SAFETY: index 42 is within map_size bounds; no other observer is live.
-        unsafe {
-            *fuzzer.map_ptr.add(42) = 1;
-        }
-        let needs_more = fuzzer.calibrate_run(50_000.0).unwrap();
-        if !needs_more {
-            break;
-        }
-    }
-    fuzzer.calibrate_finish().unwrap();
-
-    fuzzer
-}
-
 pub(crate) fn make_cmplog_bytes(data: &[u8]) -> CmplogBytes {
     let len = data.len().min(32) as u8;
     let mut buf = [0u8; 32];
@@ -332,194 +158,275 @@ pub(crate) fn make_cmplog_bytes(data: &[u8]) -> CmplogBytes {
     CmplogBytes::from_buf_and_len(buf, len)
 }
 
-/// Create a fuzzer with a UTF-8 corpus entry ready for unicode stage testing.
+/// Force the current stage to complete on the next `advance_stage()` call.
 ///
-/// Returns `(Fuzzer, CorpusId)` where the corpus entry contains the provided
-/// input bytes and the fuzzer has `unicode_enabled = true`.
-pub(crate) fn make_fuzzer_with_unicode_entry(map_size: usize, input: &[u8]) -> (Fuzzer, CorpusId) {
-    cmplog::disable();
-    cmplog::drain();
-
-    let mut fuzzer = make_test_fuzzer(map_size);
-    fuzzer.unicode_enabled = true;
-    fuzzer.deferred_detection_count = None;
-    cmplog::enable();
-
-    // Add a seed so scheduler works.
-    fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
-
-    // Add a corpus entry (UTF-8 input).
-    let mut testcase = Testcase::new(BytesInput::new(input.to_vec()));
-    testcase.add_metadata(MapNoveltiesMetadata::new(vec![10]));
-    let mut sched_meta = SchedulerTestcaseMetadata::new(0);
-    sched_meta.set_n_fuzz_entry(0);
-    testcase.add_metadata(sched_meta);
-    testcase.add_metadata(MapIndexesMetadata::new(vec![10]));
-    *testcase.exec_time_mut() = Some(Duration::from_micros(100));
-
-    let corpus_id = fuzzer.state.corpus_mut().add(testcase).unwrap();
-    fuzzer
-        .scheduler
-        .on_add(&mut fuzzer.state, corpus_id)
-        .unwrap();
-
-    // Establish coverage history.
-    // SAFETY: index 10 is within map_size bounds; no other observer is live.
-    unsafe {
-        *fuzzer.map_ptr.add(10) = 1;
-    }
-    {
-        // SAFETY: temporary observer; dropped at end of block before returning.
-        let observer = unsafe {
-            StdMapObserver::from_mut_ptr(EDGES_OBSERVER_NAME, fuzzer.map_ptr, fuzzer.map_len)
-        };
-        let observers = tuple_list!(observer);
-        let mut mgr = NopEventManager::new();
-        let bytes_input = BytesInput::new(input.to_vec());
-        let _ = fuzzer.feedback.is_interesting(
-            &mut fuzzer.state,
-            &mut mgr,
-            &bytes_input,
-            &observers,
-            &LibaflExitKind::Ok,
-        );
-    }
-    // SAFETY: zeroes the full map; pointer and length from same Buffer.
-    unsafe {
-        std::ptr::write_bytes(fuzzer.map_ptr, 0, fuzzer.map_len);
-    }
-
-    (fuzzer, corpus_id)
+/// # Panics
+/// Panics if no iterative stage (I2S, Grimoire, Unicode) is active.
+pub(crate) fn force_single_iteration(fuzzer: &mut Fuzzer) {
+    fuzzer.stage_state = match fuzzer.stage_state {
+        StageState::I2S {
+            corpus_id,
+            iteration,
+            ..
+        } => StageState::I2S {
+            corpus_id,
+            iteration,
+            max_iterations: iteration + 1,
+        },
+        StageState::Grimoire {
+            corpus_id,
+            iteration,
+            ..
+        } => StageState::Grimoire {
+            corpus_id,
+            iteration,
+            max_iterations: iteration + 1,
+        },
+        StageState::Unicode {
+            corpus_id,
+            iteration,
+            ..
+        } => StageState::Unicode {
+            corpus_id,
+            iteration,
+            max_iterations: iteration + 1,
+        },
+        _ => panic!("force_single_iteration: no iterative stage active"),
+    };
 }
 
-/// Create a fuzzer with a corpus entry that has GeneralizedInputMetadata,
-/// ready for the Grimoire stage. Used by grimoire tests and pipeline tests.
-pub(crate) fn make_fuzzer_with_grimoire_entry(map_size: usize, input: &[u8]) -> (Fuzzer, CorpusId) {
-    cmplog::disable();
-    cmplog::drain();
-
-    let mut fuzzer = make_test_fuzzer(map_size);
-    fuzzer.grimoire_enabled = true;
-    fuzzer.deferred_detection_count = None;
-    cmplog::enable();
-
-    // Add a seed so scheduler works.
-    fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
-
-    // Add a corpus entry with GeneralizedInputMetadata.
-    let mut testcase = Testcase::new(BytesInput::new(input.to_vec()));
-    testcase.add_metadata(MapNoveltiesMetadata::new(vec![10]));
-    let mut sched_meta = SchedulerTestcaseMetadata::new(0);
-    sched_meta.set_n_fuzz_entry(0);
-    testcase.add_metadata(sched_meta);
-    testcase.add_metadata(MapIndexesMetadata::new(vec![10]));
-    *testcase.exec_time_mut() = Some(Duration::from_micros(100));
-
-    // Create a simple GeneralizedInputMetadata.
-    let payload: Vec<Option<u8>> = input.iter().map(|&b| Some(b)).collect();
-    testcase.add_metadata(Fuzzer::payload_to_generalized(&payload));
-
-    let corpus_id = fuzzer.state.corpus_mut().add(testcase).unwrap();
-    fuzzer
-        .scheduler
-        .on_add(&mut fuzzer.state, corpus_id)
-        .unwrap();
-
-    // Establish coverage history.
-    // SAFETY: index 10 is within map_size bounds; no other observer is live.
-    unsafe {
-        *fuzzer.map_ptr.add(10) = 1;
-    }
-    {
-        // SAFETY: temporary observer; dropped at end of block before returning.
-        let observer = unsafe {
-            StdMapObserver::from_mut_ptr(EDGES_OBSERVER_NAME, fuzzer.map_ptr, fuzzer.map_len)
-        };
-        let observers = tuple_list!(observer);
-        let mut mgr = NopEventManager::new();
-        let bytes_input = BytesInput::new(input.to_vec());
-        let _ = fuzzer.feedback.is_interesting(
-            &mut fuzzer.state,
-            &mut mgr,
-            &bytes_input,
-            &observers,
-            &LibaflExitKind::Ok,
-        );
-    }
-    // SAFETY: zeroes the full map; pointer and length from same Buffer.
-    unsafe {
-        std::ptr::write_bytes(fuzzer.map_ptr, 0, fuzzer.map_len);
-    }
-
-    (fuzzer, corpus_id)
-}
-
-/// Create a fuzzer with grimoire enabled and a corpus entry at the given
-/// novelty map indices. Returns (fuzzer, corpus_id).
-/// Used by generalization tests and pipeline tests.
-pub(crate) fn make_fuzzer_with_generalization_entry(
+/// Builder for constructing `Fuzzer` instances in tests. Wraps `Fuzzer::new()`
+/// with a synthetic `Buffer`, eliminating field-by-field drift between test
+/// construction and the real constructor.
+pub(crate) struct TestFuzzerBuilder {
     map_size: usize,
-    input: &[u8],
-    novelty_indices: &[usize],
-) -> (Fuzzer, CorpusId) {
-    cmplog::disable();
-    cmplog::drain();
+    grimoire: Option<bool>,
+    unicode: Option<bool>,
+    redqueen: Option<bool>,
+    max_input_len: Option<u32>,
+}
 
-    let mut fuzzer = make_test_fuzzer(map_size);
-    fuzzer.grimoire_enabled = true;
-    fuzzer.deferred_detection_count = None;
-    cmplog::enable();
-
-    // Add a seed so the scheduler has something.
-    fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
-
-    // Manually add a corpus entry with the given input and novelty metadata.
-    let mut testcase = Testcase::new(BytesInput::new(input.to_vec()));
-    testcase.add_metadata(MapNoveltiesMetadata::new(novelty_indices.to_vec()));
-
-    // We need to add scheduler metadata too.
-    let mut sched_meta = SchedulerTestcaseMetadata::new(0);
-    sched_meta.set_n_fuzz_entry(0);
-    testcase.add_metadata(sched_meta);
-    testcase.add_metadata(MapIndexesMetadata::new(novelty_indices.to_vec()));
-    *testcase.exec_time_mut() = Some(Duration::from_micros(100));
-
-    let corpus_id = fuzzer.state.corpus_mut().add(testcase).unwrap();
-    fuzzer
-        .scheduler
-        .on_add(&mut fuzzer.state, corpus_id)
-        .unwrap();
-
-    // Also need to make sure the feedback history knows about these indices
-    // so they're recognized as "known" coverage.
-    // Write coverage at novelty indices and evaluate to establish history.
-    for &idx in novelty_indices {
-        // SAFETY: caller must supply indices within map_size; no other observer is live.
-        unsafe {
-            *fuzzer.map_ptr.add(idx) = 1;
+impl TestFuzzerBuilder {
+    pub(crate) fn new(map_size: usize) -> Self {
+        Self {
+            map_size,
+            grimoire: None,
+            unicode: None,
+            redqueen: None,
+            max_input_len: None,
         }
     }
-    {
-        // SAFETY: temporary observer; dropped at end of block before returning.
-        let observer = unsafe {
-            StdMapObserver::from_mut_ptr(EDGES_OBSERVER_NAME, fuzzer.map_ptr, fuzzer.map_len)
-        };
-        let observers = tuple_list!(observer);
-        let mut mgr = NopEventManager::new();
-        let bytes_input = BytesInput::new(input.to_vec());
-        // This call updates the feedback's history map.
-        let _ = fuzzer.feedback.is_interesting(
-            &mut fuzzer.state,
-            &mut mgr,
-            &bytes_input,
-            &observers,
-            &LibaflExitKind::Ok,
-        );
-    }
-    // SAFETY: zeroes the full map; pointer and length from same Buffer.
-    unsafe {
-        std::ptr::write_bytes(fuzzer.map_ptr, 0, fuzzer.map_len);
+
+    pub(crate) fn grimoire(mut self, enabled: bool) -> Self {
+        self.grimoire = Some(enabled);
+        self
     }
 
-    (fuzzer, corpus_id)
+    pub(crate) fn unicode(mut self, enabled: bool) -> Self {
+        self.unicode = Some(enabled);
+        self
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn redqueen(mut self, enabled: bool) -> Self {
+        self.redqueen = Some(enabled);
+        self
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn max_input_len(mut self, len: u32) -> Self {
+        self.max_input_len = Some(len);
+        self
+    }
+
+    /// Build a basic `Fuzzer` instance via `Fuzzer::new()`.
+    pub(crate) fn build(self) -> Fuzzer {
+        let config = FuzzerConfig {
+            max_input_len: self.max_input_len,
+            seed: Some(42), // deterministic seed for tests
+            grimoire: self.grimoire,
+            unicode: self.unicode,
+            redqueen: self.redqueen,
+        };
+        let coverage_map: Buffer = vec![0u8; self.map_size].into();
+        Fuzzer::new(coverage_map, Some(config)).unwrap()
+    }
+
+    /// Build a `Fuzzer` ready for stage testing: seeded, with novel coverage
+    /// reported and calibration completed.
+    pub(crate) fn build_ready_for_stage(self) -> Fuzzer {
+        cmplog::disable();
+        cmplog::drain();
+        // Fuzzer::new (called by build) re-enables cmplog.
+        let mut fuzzer = self.build();
+
+        fuzzer
+            .add_seed(Buffer::from(b"seed_for_stage_test".to_vec()))
+            .unwrap();
+        let _ = fuzzer.get_next_input().unwrap();
+
+        // Write novel coverage to trigger Interesting.
+        // SAFETY: index 42 is within map_size bounds; no other observer is live.
+        unsafe {
+            *fuzzer.map_ptr.add(42) = 1;
+        }
+
+        // Push CmpLog entries so beginStage has data to work with.
+        cmplog::push(
+            CmpValues::Bytes((make_cmplog_bytes(b"hello"), make_cmplog_bytes(b"world"))),
+            0,
+            cmplog::CmpLogOperator::Equal,
+        );
+
+        let result = fuzzer.report_result(ExitKind::Ok, 50_000.0).unwrap();
+        assert_eq!(
+            result,
+            IterationResult::Interesting,
+            "should be Interesting for novel coverage"
+        );
+
+        // Simulate calibration (required before beginStage).
+        for _ in 0..3 {
+            // SAFETY: index 42 is within map_size bounds; no other observer is live.
+            unsafe {
+                *fuzzer.map_ptr.add(42) = 1;
+            }
+            let needs_more = fuzzer.calibrate_run(50_000.0).unwrap();
+            if !needs_more {
+                break;
+            }
+        }
+        fuzzer.calibrate_finish().unwrap();
+
+        fuzzer
+    }
+
+    /// Build a `Fuzzer` with a corpus entry at the given novelty map indices.
+    /// Returns `(Fuzzer, CorpusId)`.
+    ///
+    /// When feature overrides are set (grimoire/unicode/redqueen), deferred
+    /// detection is disabled to prevent interference.
+    pub(crate) fn build_with_corpus_entry(
+        self,
+        input: &[u8],
+        novelty_indices: &[usize],
+    ) -> (Fuzzer, CorpusId) {
+        cmplog::disable();
+        cmplog::drain();
+        let has_feature_override =
+            self.grimoire.is_some() || self.unicode.is_some() || self.redqueen.is_some();
+        // Fuzzer::new (called by build) re-enables cmplog.
+        let mut fuzzer = self.build();
+        if has_feature_override {
+            fuzzer.features.deferred_detection_count = None;
+        }
+
+        fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+
+        let mut testcase = Testcase::new(BytesInput::new(input.to_vec()));
+        testcase.add_metadata(MapNoveltiesMetadata::new(novelty_indices.to_vec()));
+        let mut sched_meta = SchedulerTestcaseMetadata::new(0);
+        sched_meta.set_n_fuzz_entry(0);
+        testcase.add_metadata(sched_meta);
+        testcase.add_metadata(MapIndexesMetadata::new(novelty_indices.to_vec()));
+        *testcase.exec_time_mut() = Some(Duration::from_micros(100));
+
+        let corpus_id = fuzzer.state.corpus_mut().add(testcase).unwrap();
+        fuzzer
+            .scheduler
+            .on_add(&mut fuzzer.state, corpus_id)
+            .unwrap();
+
+        // Establish coverage history at novelty indices.
+        for &idx in novelty_indices {
+            // SAFETY: caller must supply indices within map_size; no other observer is live.
+            unsafe {
+                *fuzzer.map_ptr.add(idx) = 1;
+            }
+        }
+        {
+            // SAFETY: temporary observer; dropped at end of block before returning.
+            let observer = unsafe {
+                StdMapObserver::from_mut_ptr(EDGES_OBSERVER_NAME, fuzzer.map_ptr, fuzzer.map_len)
+            };
+            let observers = tuple_list!(observer);
+            let mut mgr = NopEventManager::new();
+            let bytes_input = BytesInput::new(input.to_vec());
+            let _ = fuzzer.feedback.is_interesting(
+                &mut fuzzer.state,
+                &mut mgr,
+                &bytes_input,
+                &observers,
+                &LibaflExitKind::Ok,
+            );
+        }
+        // SAFETY: zeroes the full map; pointer and length from same Buffer.
+        unsafe {
+            std::ptr::write_bytes(fuzzer.map_ptr, 0, fuzzer.map_len);
+        }
+
+        (fuzzer, corpus_id)
+    }
+
+    /// Build a `Fuzzer` with a corpus entry that has `GeneralizedInputMetadata`,
+    /// ready for the Grimoire stage. Novelty index is hardcoded to `[10]`.
+    pub(crate) fn build_with_grimoire_entry(self, input: &[u8]) -> (Fuzzer, CorpusId) {
+        cmplog::disable();
+        cmplog::drain();
+        let has_feature_override =
+            self.grimoire.is_some() || self.unicode.is_some() || self.redqueen.is_some();
+        // Fuzzer::new (called by build) re-enables cmplog.
+        let mut fuzzer = self.build();
+        if has_feature_override {
+            fuzzer.features.deferred_detection_count = None;
+        }
+
+        fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+
+        let mut testcase = Testcase::new(BytesInput::new(input.to_vec()));
+        testcase.add_metadata(MapNoveltiesMetadata::new(vec![10]));
+        let mut sched_meta = SchedulerTestcaseMetadata::new(0);
+        sched_meta.set_n_fuzz_entry(0);
+        testcase.add_metadata(sched_meta);
+        testcase.add_metadata(MapIndexesMetadata::new(vec![10]));
+        *testcase.exec_time_mut() = Some(Duration::from_micros(100));
+
+        // Create GeneralizedInputMetadata from the input bytes.
+        let payload: Vec<Option<u8>> = input.iter().map(|&b| Some(b)).collect();
+        testcase.add_metadata(Fuzzer::payload_to_generalized(&payload));
+
+        let corpus_id = fuzzer.state.corpus_mut().add(testcase).unwrap();
+        fuzzer
+            .scheduler
+            .on_add(&mut fuzzer.state, corpus_id)
+            .unwrap();
+
+        // Establish coverage history at index 10.
+        // SAFETY: index 10 is within map_size bounds; no other observer is live.
+        unsafe {
+            *fuzzer.map_ptr.add(10) = 1;
+        }
+        {
+            // SAFETY: temporary observer; dropped at end of block before returning.
+            let observer = unsafe {
+                StdMapObserver::from_mut_ptr(EDGES_OBSERVER_NAME, fuzzer.map_ptr, fuzzer.map_len)
+            };
+            let observers = tuple_list!(observer);
+            let mut mgr = NopEventManager::new();
+            let bytes_input = BytesInput::new(input.to_vec());
+            let _ = fuzzer.feedback.is_interesting(
+                &mut fuzzer.state,
+                &mut mgr,
+                &bytes_input,
+                &observers,
+                &LibaflExitKind::Ok,
+            );
+        }
+        // SAFETY: zeroes the full map; pointer and length from same Buffer.
+        unsafe {
+            std::ptr::write_bytes(fuzzer.map_ptr, 0, fuzzer.map_len);
+        }
+
+        (fuzzer, corpus_id)
+    }
 }

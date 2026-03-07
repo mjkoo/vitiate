@@ -14,7 +14,7 @@ impl Fuzzer {
     /// `GeneralizedInputMetadata`. Returns the first mutated input, or `None`
     /// if the entry has no metadata.
     pub(super) fn begin_grimoire(&mut self, corpus_id: CorpusId) -> Result<Option<Buffer>> {
-        if !self.grimoire_enabled {
+        if !self.features.grimoire_enabled {
             return Ok(None);
         }
 
@@ -145,16 +145,16 @@ mod tests {
 
     use super::*;
     use crate::cmplog;
-    use crate::engine::test_helpers::{
-        make_cmplog_bytes, make_fuzzer_with_grimoire_entry, make_test_fuzzer,
-    };
+    use crate::engine::test_helpers::{TestFuzzerBuilder, make_cmplog_bytes};
     use crate::types::{ExitKind, FuzzerConfig};
 
     // -----------------------------------------------------------------------
     // Grimoire mutational stage tests
     #[test]
     fn test_grimoire_stage_begins_with_metadata() {
-        let (mut fuzzer, corpus_id) = make_fuzzer_with_grimoire_entry(256, b"fn foo() {}");
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .grimoire(true)
+            .build_with_grimoire_entry(b"fn foo() {}");
 
         let first = fuzzer.begin_grimoire(corpus_id).unwrap();
         assert!(
@@ -174,10 +174,8 @@ mod tests {
         cmplog::disable();
         cmplog::drain();
 
-        let mut fuzzer = make_test_fuzzer(256);
-        fuzzer.grimoire_enabled = true;
-        fuzzer.deferred_detection_count = None;
-        cmplog::enable();
+        let mut fuzzer = TestFuzzerBuilder::new(256).grimoire(true).build();
+        fuzzer.features.deferred_detection_count = None;
 
         // Add a corpus entry WITHOUT GeneralizedInputMetadata.
         let testcase = Testcase::new(BytesInput::new(b"test".to_vec()));
@@ -194,8 +192,10 @@ mod tests {
 
     #[test]
     fn test_grimoire_stage_skipped_when_disabled() {
-        let (mut fuzzer, corpus_id) = make_fuzzer_with_grimoire_entry(256, b"fn foo() {}");
-        fuzzer.grimoire_enabled = false;
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .grimoire(true)
+            .build_with_grimoire_entry(b"fn foo() {}");
+        fuzzer.features.grimoire_enabled = false;
 
         let result = fuzzer.begin_grimoire(corpus_id).unwrap();
         assert!(
@@ -208,7 +208,9 @@ mod tests {
 
     #[test]
     fn test_grimoire_stage_completes_after_iterations() {
-        let (mut fuzzer, corpus_id) = make_fuzzer_with_grimoire_entry(256, b"fn foo() {}");
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .grimoire(true)
+            .build_with_grimoire_entry(b"fn foo() {}");
 
         let first = fuzzer.begin_grimoire(corpus_id).unwrap();
         assert!(first.is_some());
@@ -243,7 +245,9 @@ mod tests {
 
     #[test]
     fn test_grimoire_execution_counting() {
-        let (mut fuzzer, corpus_id) = make_fuzzer_with_grimoire_entry(256, b"fn foo() {}");
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .grimoire(true)
+            .build_with_grimoire_entry(b"fn foo() {}");
 
         let total_before = fuzzer.total_execs;
 
@@ -274,7 +278,9 @@ mod tests {
 
     #[test]
     fn test_grimoire_cmplog_drained() {
-        let (mut fuzzer, corpus_id) = make_fuzzer_with_grimoire_entry(256, b"fn foo() {}");
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .grimoire(true)
+            .build_with_grimoire_entry(b"fn foo() {}");
 
         let _first = fuzzer.begin_grimoire(corpus_id).unwrap();
 
@@ -302,7 +308,9 @@ mod tests {
 
     #[test]
     fn test_grimoire_max_input_len_enforced() {
-        let (mut fuzzer, corpus_id) = make_fuzzer_with_grimoire_entry(256, b"fn foo() {}");
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .grimoire(true)
+            .build_with_grimoire_entry(b"fn foo() {}");
         fuzzer.max_input_len = 5;
 
         let first = fuzzer.begin_grimoire(corpus_id).unwrap();
@@ -321,7 +329,9 @@ mod tests {
     #[test]
     fn test_grimoire_non_cumulative_mutations() {
         let input = b"fn foo() {}";
-        let (mut fuzzer, corpus_id) = make_fuzzer_with_grimoire_entry(256, input);
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .grimoire(true)
+            .build_with_grimoire_entry(input);
 
         let _first = fuzzer.begin_grimoire(corpus_id).unwrap();
 
@@ -362,7 +372,9 @@ mod tests {
 
     #[test]
     fn test_grimoire_abort_transitions_to_none() {
-        let (mut fuzzer, corpus_id) = make_fuzzer_with_grimoire_entry(256, b"fn foo() {}");
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .grimoire(true)
+            .build_with_grimoire_entry(b"fn foo() {}");
 
         let _first = fuzzer.begin_grimoire(corpus_id).unwrap();
         assert!(matches!(fuzzer.stage_state, StageState::Grimoire { .. }));
@@ -401,12 +413,12 @@ mod tests {
         )
         .unwrap();
         assert!(
-            fuzzer.grimoire_enabled,
+            fuzzer.features.grimoire_enabled,
             "grimoire_enabled should be true when config.grimoire = Some(true)"
         );
         // unicode needs auto-detect, so deferred count is still Some.
         assert!(
-            fuzzer.deferred_detection_count.is_some(),
+            fuzzer.features.deferred_detection_count.is_some(),
             "deferred_detection_count should be Some when unicode needs auto-detect"
         );
     }
@@ -426,12 +438,12 @@ mod tests {
         )
         .unwrap();
         assert!(
-            !fuzzer.grimoire_enabled,
+            !fuzzer.features.grimoire_enabled,
             "grimoire_enabled should be false when config.grimoire = Some(false)"
         );
         // unicode needs auto-detect, so deferred count is still Some.
         assert!(
-            fuzzer.deferred_detection_count.is_some(),
+            fuzzer.features.deferred_detection_count.is_some(),
             "deferred_detection_count should be Some when unicode needs auto-detect"
         );
     }
@@ -445,7 +457,9 @@ mod tests {
         // Verify that the iteration counter advances on each advance_stage call,
         // regardless of whether the underlying Grimoire mutator returns Mutated
         // or Skipped.
-        let (mut fuzzer, corpus_id) = make_fuzzer_with_grimoire_entry(256, b"fn foo() {}");
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .grimoire(true)
+            .build_with_grimoire_entry(b"fn foo() {}");
 
         let first = fuzzer.begin_grimoire(corpus_id).unwrap();
         assert!(first.is_some(), "grimoire should start");

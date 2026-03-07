@@ -13,7 +13,7 @@ impl Fuzzer {
     /// Begin the unicode mutation stage for a corpus entry.
     /// Returns `None` if unicode is disabled, or if the entry has no valid UTF-8 regions.
     pub(super) fn begin_unicode(&mut self, corpus_id: CorpusId) -> Result<Option<Buffer>> {
-        if !self.unicode_enabled {
+        if !self.features.unicode_enabled {
             return Ok(None);
         }
 
@@ -182,8 +182,7 @@ mod tests {
 
     use crate::cmplog;
     use crate::engine::test_helpers::{
-        make_coverage_map, make_fuzzer_with_unicode_entry, make_state_and_feedback,
-        make_test_fuzzer,
+        TestFuzzerBuilder, make_coverage_map, make_state_and_feedback,
     };
     use crate::engine::{Fuzzer, StageState, UnicodeInput};
     use crate::types::{ExitKind, FuzzerConfig, IterationResult};
@@ -400,7 +399,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            fuzzer.unicode_enabled,
+            fuzzer.features.unicode_enabled,
             "unicode should be enabled when config.unicode = Some(true)"
         );
     }
@@ -420,7 +419,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            !fuzzer.unicode_enabled,
+            !fuzzer.features.unicode_enabled,
             "unicode should be disabled when config.unicode = Some(false)"
         );
     }
@@ -440,11 +439,14 @@ mod tests {
             }),
         )
         .unwrap();
-        assert!(!fuzzer.grimoire_enabled, "grimoire should be disabled");
-        assert!(fuzzer.unicode_enabled, "unicode should be enabled");
+        assert!(
+            !fuzzer.features.grimoire_enabled,
+            "grimoire should be disabled"
+        );
+        assert!(fuzzer.features.unicode_enabled, "unicode should be enabled");
         // Deferred detection is still needed for REDQUEEN (redqueen: None).
         assert!(
-            fuzzer.deferred_detection_count.is_some(),
+            fuzzer.features.deferred_detection_count.is_some(),
             "deferred detection needed for REDQUEEN auto-detect"
         );
     }
@@ -454,13 +456,12 @@ mod tests {
         cmplog::disable();
         cmplog::drain();
 
-        let mut fuzzer = make_test_fuzzer(256);
-        cmplog::enable();
+        let mut fuzzer = TestFuzzerBuilder::new(256).build();
 
         // Both grimoire and unicode start disabled with deferred detection.
-        assert!(!fuzzer.grimoire_enabled);
-        assert!(!fuzzer.unicode_enabled);
-        assert_eq!(fuzzer.deferred_detection_count, Some(0));
+        assert!(!fuzzer.features.grimoire_enabled);
+        assert!(!fuzzer.features.unicode_enabled);
+        assert_eq!(fuzzer.features.deferred_detection_count, Some(0));
 
         // Add UTF-8 seeds so auto-seed skip count is bypassed and the corpus
         // contains enough UTF-8 entries for the scan to succeed.
@@ -506,17 +507,17 @@ mod tests {
 
         // After 10 interesting inputs, deferred detection should resolve.
         assert!(
-            fuzzer.deferred_detection_count.is_none(),
+            fuzzer.features.deferred_detection_count.is_none(),
             "deferred detection should be resolved"
         );
         // The corpus has majority UTF-8 entries (seeds + manually added entries),
         // so both should be enabled.
         assert!(
-            fuzzer.grimoire_enabled,
+            fuzzer.features.grimoire_enabled,
             "grimoire should be enabled after deferred detection"
         );
         assert!(
-            fuzzer.unicode_enabled,
+            fuzzer.features.unicode_enabled,
             "unicode should be enabled after deferred detection"
         );
 
@@ -538,13 +539,16 @@ mod tests {
             }),
         )
         .unwrap();
-        assert!(fuzzer.grimoire_enabled, "grimoire explicitly enabled");
         assert!(
-            !fuzzer.unicode_enabled,
+            fuzzer.features.grimoire_enabled,
+            "grimoire explicitly enabled"
+        );
+        assert!(
+            !fuzzer.features.unicode_enabled,
             "unicode starts disabled (pending deferred)"
         );
         assert!(
-            fuzzer.deferred_detection_count.is_some(),
+            fuzzer.features.deferred_detection_count.is_some(),
             "deferred detection should be active for unicode"
         );
     }
@@ -555,7 +559,9 @@ mod tests {
 
     #[test]
     fn test_begin_unicode_returns_some_for_utf8_entry() {
-        let (mut fuzzer, corpus_id) = make_fuzzer_with_unicode_entry(256, b"hello world");
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .unicode(true)
+            .build_with_corpus_entry(b"hello world", &[10]);
         let result = fuzzer.begin_unicode(corpus_id).unwrap();
         assert!(
             result.is_some(),
@@ -570,8 +576,10 @@ mod tests {
 
     #[test]
     fn test_begin_unicode_returns_none_when_disabled() {
-        let (mut fuzzer, corpus_id) = make_fuzzer_with_unicode_entry(256, b"hello world");
-        fuzzer.unicode_enabled = false;
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .unicode(true)
+            .build_with_corpus_entry(b"hello world", &[10]);
+        fuzzer.features.unicode_enabled = false;
         let result = fuzzer.begin_unicode(corpus_id).unwrap();
         assert!(
             result.is_none(),
@@ -583,7 +591,9 @@ mod tests {
     #[test]
     fn test_begin_unicode_returns_none_for_non_utf8_entry() {
         let non_utf8 = vec![0xFF, 0xFE, 0xFD, 0xFC, 0xFB];
-        let (mut fuzzer, corpus_id) = make_fuzzer_with_unicode_entry(256, &non_utf8);
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .unicode(true)
+            .build_with_corpus_entry(&non_utf8, &[10]);
         let result = fuzzer.begin_unicode(corpus_id).unwrap();
         assert!(
             result.is_none(),
@@ -594,7 +604,9 @@ mod tests {
 
     #[test]
     fn test_unicode_stage_iteration_counting() {
-        let (mut fuzzer, corpus_id) = make_fuzzer_with_unicode_entry(256, b"hello world");
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .unicode(true)
+            .build_with_corpus_entry(b"hello world", &[10]);
         let first = fuzzer.begin_unicode(corpus_id).unwrap();
         assert!(first.is_some());
 
@@ -632,7 +644,9 @@ mod tests {
     #[test]
     fn test_unicode_stage_non_cumulative_mutations() {
         let input = b"hello world test";
-        let (mut fuzzer, corpus_id) = make_fuzzer_with_unicode_entry(256, input);
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .unicode(true)
+            .build_with_corpus_entry(input, &[10]);
         let first = fuzzer.begin_unicode(corpus_id).unwrap();
         assert!(first.is_some());
 
@@ -669,7 +683,9 @@ mod tests {
 
     #[test]
     fn test_unicode_stage_cmplog_drained() {
-        let (mut fuzzer, corpus_id) = make_fuzzer_with_unicode_entry(256, b"hello world");
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .unicode(true)
+            .build_with_corpus_entry(b"hello world", &[10]);
         let first = fuzzer.begin_unicode(corpus_id).unwrap();
         assert!(first.is_some());
 
@@ -708,7 +724,9 @@ mod tests {
 
     #[test]
     fn test_unicode_stage_abort_transitions_to_none() {
-        let (mut fuzzer, corpus_id) = make_fuzzer_with_unicode_entry(256, b"hello world");
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .unicode(true)
+            .build_with_corpus_entry(b"hello world", &[10]);
         let first = fuzzer.begin_unicode(corpus_id).unwrap();
         assert!(first.is_some());
 
@@ -731,7 +749,9 @@ mod tests {
     #[test]
     fn test_unicode_stage_max_input_length_enforcement() {
         let input = b"hello world";
-        let (mut fuzzer, corpus_id) = make_fuzzer_with_unicode_entry(256, input);
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .unicode(true)
+            .build_with_corpus_entry(input, &[10]);
         fuzzer.max_input_len = 5; // Restrict to 5 bytes.
         let result = fuzzer.begin_unicode(corpus_id).unwrap();
         if let Some(buf) = result {
@@ -745,7 +765,9 @@ mod tests {
 
     #[test]
     fn test_unicode_stage_metadata_cached_on_testcase() {
-        let (mut fuzzer, corpus_id) = make_fuzzer_with_unicode_entry(256, b"hello world");
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .unicode(true)
+            .build_with_corpus_entry(b"hello world", &[10]);
         let _ = fuzzer.begin_unicode(corpus_id).unwrap();
 
         // Verify metadata was cached.
@@ -767,7 +789,9 @@ mod tests {
     fn test_unicode_stage_skipped_when_no_valid_utf8_regions() {
         // Entry with no valid UTF-8 → begin_unicode returns None.
         let non_utf8 = vec![0xFF, 0xFE, 0xFD, 0xFC, 0xFB];
-        let (mut fuzzer, corpus_id) = make_fuzzer_with_unicode_entry(256, &non_utf8);
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .unicode(true)
+            .build_with_corpus_entry(&non_utf8, &[10]);
 
         // Set up for beginStage.
         fuzzer.last_interesting_corpus_id = Some(corpus_id);
@@ -791,7 +815,9 @@ mod tests {
     #[test]
     fn test_unicode_enabled_drives_stage_transitions() {
         // When unicode is enabled, pipeline transitions should reach Unicode stage.
-        let (mut fuzzer, corpus_id) = make_fuzzer_with_unicode_entry(256, b"test input");
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .unicode(true)
+            .build_with_corpus_entry(b"test input", &[10]);
 
         // Simulate beginStage with no CmpLog and no grimoire.
         fuzzer.last_interesting_corpus_id = Some(corpus_id);
@@ -813,7 +839,7 @@ mod tests {
         {
             fuzzer.stage_state = StageState::None;
         }
-        fuzzer.unicode_enabled = false;
+        fuzzer.features.unicode_enabled = false;
         fuzzer.last_interesting_corpus_id = Some(corpus_id);
 
         let result2 = fuzzer.begin_stage().unwrap();
@@ -827,7 +853,9 @@ mod tests {
 
     #[test]
     fn test_unicode_stage_exec_counter_increments() {
-        let (mut fuzzer, corpus_id) = make_fuzzer_with_unicode_entry(256, b"hello world");
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .unicode(true)
+            .build_with_corpus_entry(b"hello world", &[10]);
         let first = fuzzer.begin_unicode(corpus_id).unwrap();
         assert!(first.is_some());
 

@@ -100,7 +100,7 @@ impl Fuzzer {
     /// Returns the first candidate (the original input for verification),
     /// or `None` if preconditions are not met.
     pub(super) fn begin_generalization(&mut self, corpus_id: CorpusId) -> Result<Option<Buffer>> {
-        if !self.grimoire_enabled {
+        if !self.features.grimoire_enabled {
             return Ok(None);
         }
 
@@ -672,9 +672,7 @@ mod tests {
 
     use super::*;
     use crate::cmplog;
-    use crate::engine::test_helpers::{
-        make_cmplog_bytes, make_fuzzer_with_generalization_entry, make_test_fuzzer,
-    };
+    use crate::engine::test_helpers::{TestFuzzerBuilder, make_cmplog_bytes};
     use crate::engine::{MAX_GENERALIZED_LEN, StageState};
     use crate::types::ExitKind;
 
@@ -684,9 +682,10 @@ mod tests {
 
     #[test]
     fn test_generalization_skipped_when_grimoire_disabled() {
-        let (mut fuzzer, corpus_id) =
-            make_fuzzer_with_generalization_entry(256, b"fn foo() {}", &[10, 20]);
-        fuzzer.grimoire_enabled = false;
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .grimoire(true)
+            .build_with_corpus_entry(b"fn foo() {}", &[10, 20]);
+        fuzzer.features.grimoire_enabled = false;
 
         let result = fuzzer.begin_generalization(corpus_id).unwrap();
         assert!(
@@ -701,8 +700,9 @@ mod tests {
     #[test]
     fn test_generalization_skipped_for_large_input() {
         let large_input = vec![b'A'; MAX_GENERALIZED_LEN + 1];
-        let (mut fuzzer, corpus_id) =
-            make_fuzzer_with_generalization_entry(256, &large_input, &[10]);
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .grimoire(true)
+            .build_with_corpus_entry(&large_input, &[10]);
 
         let result = fuzzer.begin_generalization(corpus_id).unwrap();
         assert!(
@@ -718,10 +718,8 @@ mod tests {
         cmplog::disable();
         cmplog::drain();
 
-        let mut fuzzer = make_test_fuzzer(256);
-        fuzzer.grimoire_enabled = true;
-        fuzzer.deferred_detection_count = None;
-        cmplog::enable();
+        let mut fuzzer = TestFuzzerBuilder::new(256).grimoire(true).build();
+        fuzzer.features.deferred_detection_count = None;
 
         // Add a corpus entry WITHOUT MapNoveltiesMetadata.
         let testcase = Testcase::new(BytesInput::new(b"test".to_vec()));
@@ -738,8 +736,9 @@ mod tests {
 
     #[test]
     fn test_generalization_skipped_when_already_generalized() {
-        let (mut fuzzer, corpus_id) =
-            make_fuzzer_with_generalization_entry(256, b"fn foo() {}", &[10, 20]);
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .grimoire(true)
+            .build_with_corpus_entry(b"fn foo() {}", &[10, 20]);
 
         // Manually add GeneralizedInputMetadata to simulate prior generalization.
         let payload: Vec<Option<u8>> = b"fn foo() {}".iter().map(|&b| Some(b)).collect();
@@ -765,8 +764,9 @@ mod tests {
     fn test_generalization_verification_succeeds() {
         let input = b"fn foo() {}";
         let novelty_indices = vec![10, 20];
-        let (mut fuzzer, corpus_id) =
-            make_fuzzer_with_generalization_entry(256, input, &novelty_indices);
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .grimoire(true)
+            .build_with_corpus_entry(input, &novelty_indices);
 
         // Begin generalization — should return the original input for verification.
         let first = fuzzer.begin_generalization(corpus_id).unwrap();
@@ -813,8 +813,9 @@ mod tests {
     fn test_generalization_verification_fails() {
         let input = b"fn foo() {}";
         let novelty_indices = vec![10, 20];
-        let (mut fuzzer, corpus_id) =
-            make_fuzzer_with_generalization_entry(256, input, &novelty_indices);
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .grimoire(true)
+            .build_with_corpus_entry(input, &novelty_indices);
 
         let first = fuzzer.begin_generalization(corpus_id).unwrap();
         assert!(first.is_some());
@@ -847,8 +848,9 @@ mod tests {
         // Use a small input so offset-0 pass tests each byte individually.
         let input = b"ab";
         let novelty_indices = vec![10];
-        let (mut fuzzer, corpus_id) =
-            make_fuzzer_with_generalization_entry(256, input, &novelty_indices);
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .grimoire(true)
+            .build_with_corpus_entry(input, &novelty_indices);
 
         // Begin generalization.
         let first = fuzzer.begin_generalization(corpus_id).unwrap();
@@ -856,7 +858,7 @@ mod tests {
 
         // Disable Grimoire after starting generalization so finalize_generalization
         // doesn't transition to Grimoire stage (this test isolates generalization).
-        fuzzer.grimoire_enabled = false;
+        fuzzer.features.grimoire_enabled = false;
 
         // Verification: set novelty index.
         unsafe {
@@ -915,15 +917,16 @@ mod tests {
         // meaning those bytes are structural.
         let input = b"test";
         let novelty_indices = vec![10];
-        let (mut fuzzer, corpus_id) =
-            make_fuzzer_with_generalization_entry(256, input, &novelty_indices);
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .grimoire(true)
+            .build_with_corpus_entry(input, &novelty_indices);
 
         let first = fuzzer.begin_generalization(corpus_id).unwrap();
         assert!(first.is_some());
 
         // Disable Grimoire after starting generalization so finalize_generalization
         // doesn't transition to Grimoire stage (this test isolates generalization).
-        fuzzer.grimoire_enabled = false;
+        fuzzer.features.grimoire_enabled = false;
 
         // Verification: pass.
         unsafe {
@@ -984,8 +987,9 @@ mod tests {
     fn test_generalization_execution_counting() {
         let input = b"ab";
         let novelty_indices = vec![10];
-        let (mut fuzzer, corpus_id) =
-            make_fuzzer_with_generalization_entry(256, input, &novelty_indices);
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .grimoire(true)
+            .build_with_corpus_entry(input, &novelty_indices);
 
         let total_before = fuzzer.total_execs;
         let state_execs_before = *fuzzer.state.executions();
@@ -994,7 +998,7 @@ mod tests {
 
         // Disable Grimoire after starting generalization so finalize_generalization
         // doesn't transition to Grimoire stage (this test isolates generalization).
-        fuzzer.grimoire_enabled = false;
+        fuzzer.features.grimoire_enabled = false;
 
         // Verification.
         unsafe {
@@ -1041,8 +1045,9 @@ mod tests {
     fn test_generalization_cmplog_drained() {
         let input = b"fn foo() {}";
         let novelty_indices = vec![10];
-        let (mut fuzzer, corpus_id) =
-            make_fuzzer_with_generalization_entry(256, input, &novelty_indices);
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .grimoire(true)
+            .build_with_corpus_entry(input, &novelty_indices);
 
         let _first = fuzzer.begin_generalization(corpus_id).unwrap();
 
@@ -1167,14 +1172,15 @@ mod tests {
         // Use "line1\nline2" and test that the delimiter pass can split on \n.
         let input = b"line1\nline2";
         let novelty_indices = vec![10];
-        let (mut fuzzer, corpus_id) =
-            make_fuzzer_with_generalization_entry(256, input, &novelty_indices);
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .grimoire(true)
+            .build_with_corpus_entry(input, &novelty_indices);
 
         let _first = fuzzer.begin_generalization(corpus_id).unwrap();
 
         // Disable Grimoire after starting generalization so finalize_generalization
         // doesn't transition to Grimoire stage (this test isolates generalization).
-        fuzzer.grimoire_enabled = false;
+        fuzzer.features.grimoire_enabled = false;
 
         // Verification pass.
         unsafe {
@@ -1253,11 +1259,12 @@ mod tests {
         // cause the candidate to be added to the corpus with MapNoveltiesMetadata.
         let input = b"abcdefgh";
         let novelty_indices = vec![10];
-        let (mut fuzzer, corpus_id) =
-            make_fuzzer_with_generalization_entry(256, input, &novelty_indices);
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .grimoire(true)
+            .build_with_corpus_entry(input, &novelty_indices);
 
         let _first = fuzzer.begin_generalization(corpus_id).unwrap();
-        fuzzer.grimoire_enabled = false;
+        fuzzer.features.grimoire_enabled = false;
 
         // Verification pass: set novelty so it passes.
         unsafe {
@@ -1344,11 +1351,12 @@ mod tests {
         // open and close bracket should be marked as gaps.
         let input = b"(abc)";
         let novelty_indices = vec![10];
-        let (mut fuzzer, corpus_id) =
-            make_fuzzer_with_generalization_entry(256, input, &novelty_indices);
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .grimoire(true)
+            .build_with_corpus_entry(input, &novelty_indices);
 
         let _first = fuzzer.begin_generalization(corpus_id).unwrap();
-        fuzzer.grimoire_enabled = false;
+        fuzzer.features.grimoire_enabled = false;
 
         advance_to_bracket_phase(&mut fuzzer, &novelty_indices);
 
@@ -1402,11 +1410,12 @@ mod tests {
         // should be added during bracket phase.
         let input = b"(abc)";
         let novelty_indices = vec![10];
-        let (mut fuzzer, corpus_id) =
-            make_fuzzer_with_generalization_entry(256, input, &novelty_indices);
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .grimoire(true)
+            .build_with_corpus_entry(input, &novelty_indices);
 
         let _first = fuzzer.begin_generalization(corpus_id).unwrap();
-        fuzzer.grimoire_enabled = false;
+        fuzzer.features.grimoire_enabled = false;
 
         advance_to_bracket_phase(&mut fuzzer, &novelty_indices);
 
@@ -1439,11 +1448,12 @@ mod tests {
         // Input with quotes: "'hello'". Same-character pairs should work.
         let input = b"'hello'";
         let novelty_indices = vec![10];
-        let (mut fuzzer, corpus_id) =
-            make_fuzzer_with_generalization_entry(256, input, &novelty_indices);
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .grimoire(true)
+            .build_with_corpus_entry(input, &novelty_indices);
 
         let _first = fuzzer.begin_generalization(corpus_id).unwrap();
-        fuzzer.grimoire_enabled = false;
+        fuzzer.features.grimoire_enabled = false;
 
         advance_to_bracket_phase(&mut fuzzer, &novelty_indices);
 
@@ -1481,11 +1491,12 @@ mod tests {
         // generalization to completion and verify it doesn't hang.
         let input = b"(abc";
         let novelty_indices = vec![10];
-        let (mut fuzzer, corpus_id) =
-            make_fuzzer_with_generalization_entry(256, input, &novelty_indices);
+        let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+            .grimoire(true)
+            .build_with_corpus_entry(input, &novelty_indices);
 
         let _first = fuzzer.begin_generalization(corpus_id).unwrap();
-        fuzzer.grimoire_enabled = false;
+        fuzzer.features.grimoire_enabled = false;
 
         // Verification pass.
         unsafe {
