@@ -84,7 +84,14 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin {
           "maxTotalTimeMs",
           "runs",
           "seed",
+          "minimizeBudget",
+          "minimizeTimeLimitMs",
         ] as const) {
+          if (fuzzOptions[key] !== undefined) {
+            opts[key] = fuzzOptions[key];
+          }
+        }
+        for (const key of ["grimoire", "unicode", "redqueen"] as const) {
           if (fuzzOptions[key] !== undefined) {
             opts[key] = fuzzOptions[key];
           }

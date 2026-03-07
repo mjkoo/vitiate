@@ -155,6 +155,17 @@ describe("plugin", () => {
       expect(process.env["VITIATE_FUZZ_OPTIONS"]).toBe('{"maxLen":1024}');
     });
 
+    it("serializes boolean fuzz options to VITIATE_FUZZ_OPTIONS", () => {
+      saveAndClearEnv();
+      const plugin = vitiatePlugin({
+        fuzz: { grimoire: true, unicode: false, redqueen: true },
+      });
+      callConfig(plugin, {});
+      expect(process.env["VITIATE_FUZZ_OPTIONS"]).toBe(
+        '{"grimoire":true,"unicode":false,"redqueen":true}',
+      );
+    });
+
     it("does not set VITIATE_FUZZ_OPTIONS when only cacheDir is provided", () => {
       saveAndClearEnv();
       const plugin = vitiatePlugin({ fuzz: { cacheDir: ".cache" } });

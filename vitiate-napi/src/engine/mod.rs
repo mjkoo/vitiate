@@ -360,18 +360,20 @@ fn cmp_values_shape(cmp_values: &CmpValues) -> u8 {
     }
 }
 
+/// AFL++ CmpLog attribute bitflags (mirrored from
+/// `libafl/src/mutators/token_mutations.rs`; not publicly exported by libafl).
+const CMP_ATTRIBUTE_IS_EQUAL: u8 = 1;
+const CMP_ATTRIBUTE_IS_GREATER: u8 = 2;
+const CMP_ATTRIBUTE_IS_LESSER: u8 = 4;
+
 /// Convert a `CmpLogOperator` to the AFL++ CMP_ATTRIBUTE bitflags.
 fn operator_to_attribute(op: crate::cmplog::CmpLogOperator) -> u8 {
     use crate::cmplog::CmpLogOperator;
-    // AFL++ constants (from libafl/src/mutators/token_mutations.rs):
-    // CMP_ATTTRIBUTE_IS_EQUAL = 1
-    // CMP_ATTRIBUTE_IS_GREATER = 2
-    // CMP_ATTRIBUTE_IS_LESSER = 4
     match op {
-        CmpLogOperator::Equal => 1,    // CMP_ATTTRIBUTE_IS_EQUAL
-        CmpLogOperator::NotEqual => 0, // No specific attribute for not-equal
-        CmpLogOperator::Greater => 2,  // CMP_ATTRIBUTE_IS_GREATER
-        CmpLogOperator::Less => 4,     // CMP_ATTRIBUTE_IS_LESSER
+        CmpLogOperator::Equal => CMP_ATTRIBUTE_IS_EQUAL,
+        CmpLogOperator::NotEqual => 0,
+        CmpLogOperator::Greater => CMP_ATTRIBUTE_IS_GREATER,
+        CmpLogOperator::Less => CMP_ATTRIBUTE_IS_LESSER,
     }
 }
 
@@ -1104,9 +1106,16 @@ impl Fuzzer {
             let input_len = self
                 .state
                 .corpus()
-                .cloned_input_for_id(corpus_id)
-                .map(|i| -> Vec<u8> { i.into() })
-                .map(|v| v.len())
+                .get(corpus_id)
+                .ok()
+                .map(|entry| {
+                    let tc = entry.borrow();
+                    if let Some(input) = tc.input() {
+                        input.as_ref().len()
+                    } else {
+                        0
+                    }
+                })
                 .unwrap_or(0);
             if input_len > 0 && input_len <= colorization::MAX_COLORIZATION_LEN {
                 self.redqueen_ran_for_entry = true;
@@ -1115,13 +1124,15 @@ impl Fuzzer {
         }
 
         // Step 2: Attempt I2S (only if REDQUEEN didn't run).
-        let has_cmp_data = self
-            .state
-            .metadata_map()
-            .get::<CmpValuesMetadata>()
-            .is_some_and(|m| !m.list.is_empty());
-        if has_cmp_data {
-            return self.begin_i2s(corpus_id);
+        if !self.redqueen_ran_for_entry {
+            let has_cmp_data = self
+                .state
+                .metadata_map()
+                .get::<CmpValuesMetadata>()
+                .is_some_and(|m| !m.list.is_empty());
+            if has_cmp_data {
+                return self.begin_i2s(corpus_id);
+            }
         }
 
         // Step 3: Fall through to Grimoire/unicode.

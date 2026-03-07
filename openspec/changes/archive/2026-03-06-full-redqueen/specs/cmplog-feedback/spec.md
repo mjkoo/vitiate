@@ -1,4 +1,4 @@
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: CmpLogOperator enum
 
@@ -62,66 +62,6 @@ The accumulator SHALL be disabled by default (no entries recorded) and enabled o
 - **WHEN** 4096 enriched entries have already been pushed in a single iteration
 - **AND** another value is pushed
 - **THEN** the new entry is silently dropped and the accumulator size remains 4096
-
-### Requirement: JS value serialization to CmpValues
-
-The system SHALL serialize JavaScript comparison operands to LibAFL `CmpValues` variants
-according to the following rules:
-
-- **String operands:** Both operands are converted to UTF-8 bytes and stored as
-  `CmpValues::Bytes(CmplogBytes, CmplogBytes)`. Strings longer than 32 bytes are truncated
-  to 32 bytes.
-- **Integer number operands (both sides are safe integers):** Stored as the smallest fitting
-  `CmpValues` integer variant (`U8`, `U16`, or `U32`) based on the maximum absolute value
-  of either operand. Additionally, a `CmpValues::Bytes` entry is emitted with each operand's
-  decimal string representation as UTF-8 bytes.
-- **Non-integer number operands:** Both operands are converted to their decimal string
-  representation and stored as `CmpValues::Bytes`.
-- **All other types (boolean, null, undefined, object, symbol, BigInt):** The comparison
-  is skipped -- no entry is recorded.
-
-The `v1_is_const` field SHALL be set to `false` for all integer `CmpValues` entries, since
-the system cannot statically determine which operand originates from the input.
-
-#### Scenario: String comparison serialization
-
-- **WHEN** `traceCmp` is called with `left = "hello"` and `right = "world"`
-- **THEN** a `CmpValues::Bytes` entry is recorded with left bytes `[104, 101, 108, 108, 111]`
-  and right bytes `[119, 111, 114, 108, 100]`
-
-#### Scenario: Long string truncation
-
-- **WHEN** `traceCmp` is called with a 50-byte string operand
-- **THEN** the `CmplogBytes` entry contains only the first 32 bytes
-
-#### Scenario: Integer comparison serialization
-
-- **WHEN** `traceCmp` is called with `left = 42` and `right = 100`
-- **THEN** a `CmpValues::U8((42, 100, false))` entry is recorded
-- **AND** a `CmpValues::Bytes` entry is recorded with left bytes `"42"` and right bytes `"100"`
-
-#### Scenario: Integer fitting to U16
-
-- **WHEN** `traceCmp` is called with `left = 1000` and `right = 2000`
-- **THEN** a `CmpValues::U16((1000, 2000, false))` entry is recorded
-- **AND** a `CmpValues::Bytes` entry is recorded with string representations
-
-#### Scenario: Non-integer number serialization
-
-- **WHEN** `traceCmp` is called with `left = 3.14` and `right = 2.71`
-- **THEN** a `CmpValues::Bytes` entry is recorded with the decimal string representations
-- **AND** no integer `CmpValues` variant is recorded
-
-#### Scenario: Non-serializable types are skipped
-
-- **WHEN** `traceCmp` is called with `left = null` and `right = undefined`
-- **THEN** no entry is recorded in the accumulator
-
-#### Scenario: Mixed types with one string
-
-- **WHEN** `traceCmp` is called with `left = "42"` and `right = 42`
-- **THEN** a `CmpValues::Bytes` entry is recorded with both operands converted to their
-  string representation as UTF-8 bytes
 
 ### Requirement: Drain accumulator into AflppCmpValuesMetadata
 

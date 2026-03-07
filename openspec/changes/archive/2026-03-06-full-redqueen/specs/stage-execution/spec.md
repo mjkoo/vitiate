@@ -1,8 +1,4 @@
-## Purpose
-
-Stage execution manages the multi-stage pipeline (Colorization, REDQUEEN, I2S, Generalization, Grimoire, Unicode) that runs after calibration for interesting inputs. This capability defines the protocol for beginning, advancing, and aborting stages, the state machine lifecycle, mutation semantics, and execution counting.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Begin stage after calibration
 
@@ -391,26 +387,6 @@ State transitions:
 - **AND** Grimoire is explicitly enabled (`grimoire: true`)
 - **AND** unicode is enabled
 - **THEN** the full pipeline SHALL run: Colorization → Redqueen → (skip I2S) → Generalization → Grimoire → Unicode → None
-
-#### Scenario: Aborted unicode lifecycle
-
-- **WHEN** the unicode stage is active
-- **AND** the target crashes during a unicode execution
-- **THEN** `StageState` transitions from `Unicode` to `None` (abort)
-
-#### Scenario: Unicode stage skipped when no valid UTF-8 regions
-
-- **WHEN** the unicode stage is about to begin for a corpus entry
-- **AND** `UnicodeIdentificationMetadata` is computed and contains no valid UTF-8 regions (empty list)
-- **THEN** the unicode stage SHALL NOT be entered
-- **AND** `beginStage()` or `advanceStage()` SHALL return `null` (pipeline complete)
-- **AND** `StageState` SHALL transition to `None`
-
-#### Scenario: First unicode mutation returns Skipped
-
-- **WHEN** the unicode stage begins and the first `mutate()` call returns `Skipped` (all stacked mutations skipped)
-- **THEN** the stage SHALL return the unmodified clone of the corpus entry as the candidate input
-- **AND** the stage SHALL proceed normally with remaining iterations
 
 ### Requirement: I2S stage mutations use the original corpus entry
 
