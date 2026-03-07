@@ -430,11 +430,20 @@ impl VisitMut for TransformVisitor {
         }
     }
 
-    // Task 5.7: Arrow function with block body gets counter; expression body is not modified
+    // Task 5.7: Arrow function entry - block body gets prepended counter,
+    // expression body gets wrapped in comma expression: () => (__vitiate_cov[ID]++, expr)
     fn visit_mut_arrow_expr(&mut self, n: &mut ArrowExpr) {
         n.visit_mut_children_with(self);
-        if let BlockStmtOrExpr::BlockStmt(ref mut block) = *n.body {
-            self.prepend_counter_to_block(block, n.span);
+        match &mut *n.body {
+            BlockStmtOrExpr::BlockStmt(block) => {
+                self.prepend_counter_to_block(block, n.span);
+            }
+            BlockStmtOrExpr::Expr(expr) => {
+                let span = expr.span();
+                let orig =
+                    std::mem::replace(expr, Box::new(Expr::Invalid(Invalid { span: DUMMY_SP })));
+                *expr = self.wrap_with_counter(span, orig);
+            }
         }
     }
 }
@@ -711,15 +720,25 @@ var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;"#
         );
     }
 
-    // Task 5.10: arrow function with expression body - NOT modified
+    // Task 5.10: arrow function with expression body - wrapped in comma expression
     #[test]
-    fn arrow_expr_body_not_modified() {
+    fn arrow_expr_body_counter() {
+        // Simple expression body
         let out = transform_no_trace_cmp(r#"const f = () => a;"#);
-        // No counter should be added to expression-body arrows
-        // The only counters should NOT be inside the arrow
         assert!(
-            !out.contains("__vitiate_cov["),
-            "arrow expr body should not get counter: {out}"
+            out.contains("__vitiate_cov["),
+            "missing counter in arrow expr body: {out}"
+        );
+        assert!(
+            out.contains(", a"),
+            "expected comma expression wrapping: {out}"
+        );
+
+        // Object literal (parens disambiguate from block body)
+        let out = transform_no_trace_cmp(r#"const f = () => ({ key: val });"#);
+        assert!(
+            out.contains("__vitiate_cov["),
+            "missing counter in arrow object literal body: {out}"
         );
     }
 
