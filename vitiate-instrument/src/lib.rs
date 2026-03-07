@@ -434,6 +434,9 @@ impl VisitMut for TransformVisitor {
     // expression body gets wrapped in comma expression: () => (__vitiate_cov[ID]++, expr)
     fn visit_mut_arrow_expr(&mut self, n: &mut ArrowExpr) {
         n.visit_mut_children_with(self);
+        // BlockStmtOrExpr is #[non_exhaustive] on the wasm32-wasip1 target,
+        // so the wildcard arm is required for the release build.
+        #[allow(unreachable_patterns)]
         match &mut *n.body {
             BlockStmtOrExpr::BlockStmt(block) => {
                 self.prepend_counter_to_block(block, n.span);
@@ -444,6 +447,7 @@ impl VisitMut for TransformVisitor {
                     std::mem::replace(expr, Box::new(Expr::Invalid(Invalid { span: DUMMY_SP })));
                 *expr = self.wrap_with_counter(span, orig);
             }
+            _ => {}
         }
     }
 }

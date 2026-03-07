@@ -16,7 +16,7 @@ describe("fuzz loop", () => {
   let tmpDir: string;
   const originalFuzz = process.env["VITIATE_FUZZ"];
   const originalCacheDir = process.env["VITIATE_CACHE_DIR"];
-  const originalDictPath = process.env["VITIATE_DICTIONARY_PATH"];
+  const originalCliIpc = process.env["VITIATE_CLI_IPC"];
   const originalCov = globalThis.__vitiate_cov;
   const originalTrace = globalThis.__vitiate_trace_cmp;
 
@@ -31,10 +31,10 @@ describe("fuzz loop", () => {
     } else {
       process.env["VITIATE_CACHE_DIR"] = originalCacheDir;
     }
-    if (originalDictPath === undefined) {
-      delete process.env["VITIATE_DICTIONARY_PATH"];
+    if (originalCliIpc === undefined) {
+      delete process.env["VITIATE_CLI_IPC"];
     } else {
-      process.env["VITIATE_DICTIONARY_PATH"] = originalDictPath;
+      process.env["VITIATE_CLI_IPC"] = originalCliIpc;
     }
     globalThis.__vitiate_cov = originalCov;
     globalThis.__vitiate_trace_cmp = originalTrace;
@@ -864,7 +864,7 @@ describe("fuzz loop", () => {
   describe("convention-based dictionary discovery", () => {
     it("libfuzzerCompat mode does not load convention-based dictionary", async () => {
       await setupFuzzingMode();
-      delete process.env["VITIATE_DICTIONARY_PATH"];
+      delete process.env["VITIATE_CLI_IPC"];
 
       // Place a malformed .dict file at the convention path. If loaded, it
       // would cause a parse error. In libfuzzerCompat mode it must be ignored.
@@ -892,7 +892,7 @@ describe("fuzz loop", () => {
 
     it("vitest mode loads convention-based dictionary", async () => {
       await setupFuzzingMode();
-      delete process.env["VITIATE_DICTIONARY_PATH"];
+      delete process.env["VITIATE_CLI_IPC"];
 
       // Same malformed .dict file. In Vitest mode (no libfuzzerCompat),
       // convention-based discovery should find it and fail to parse.

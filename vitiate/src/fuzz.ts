@@ -18,6 +18,8 @@ import {
   isLibfuzzerCompat,
   getCorpusOutputDir,
   getArtifactPrefix,
+  getCorpusDirs,
+  getMergeControlFile,
   getCliOptions,
   DEFAULT_MAX_INPUT_LEN,
 } from "./config.js";
@@ -37,13 +39,6 @@ import { runSupervisor, type SupervisorResult } from "./supervisor.js";
 let cachedCliOptions: FuzzOptions | undefined;
 function getCachedCliOptions(): FuzzOptions {
   return (cachedCliOptions ??= getCliOptions());
-}
-
-function getCorpusDirs(): string[] | undefined {
-  const raw = process.env["VITIATE_CORPUS_DIRS"];
-  if (!raw) return undefined;
-  const dirs = raw.split(path.delimiter).filter((d) => d.length > 0);
-  return dirs.length > 0 ? dirs : undefined;
 }
 
 type FuzzTarget = (data: Buffer) => void | Promise<void>;
@@ -191,10 +186,10 @@ function registerFuzzTest(
       name,
       async () => {
         const corpusDirs = getCorpusDirs();
-        const controlFilePath = process.env["VITIATE_MERGE_CONTROL_FILE"];
+        const controlFilePath = getMergeControlFile();
         if (!controlFilePath) {
           throw new Error(
-            "vitiate: VITIATE_MERGE_CONTROL_FILE env var is required in merge mode",
+            "vitiate: mergeControlFile is required in merge mode",
           );
         }
         const coverageMap = getCoverageMap();

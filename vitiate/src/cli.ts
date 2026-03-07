@@ -27,6 +27,9 @@ import { runSupervisor } from "./supervisor.js";
 import {
   DEFAULT_MAX_INPUT_LEN,
   isSupervisorChild,
+  getCliIpc,
+  setCliIpc,
+  warnUnknownVitiateEnvVars,
   type FuzzOptions,
 } from "./config.js";
 
@@ -219,8 +222,10 @@ async function runMergeParentMode(
         env: {
           ...process.env,
           VITIATE_SUPERVISOR: "1",
-          VITIATE_MERGE: "1",
-          VITIATE_MERGE_CONTROL_FILE: controlFilePath,
+          VITIATE_CLI_IPC: JSON.stringify({
+            merge: true,
+            mergeControlFile: controlFilePath,
+          }),
         },
         stdio: ["ignore", "inherit", "inherit"],
       }),
@@ -246,9 +251,10 @@ async function runMergeChildMode(
   corpusDirs: readonly string[],
   testName?: string,
 ): Promise<void> {
-  // Corpus directories are passed via env for the merge loop
+  // Merge into existing IPC blob (parent already set merge+mergeControlFile)
   if (corpusDirs.length > 0) {
-    process.env["VITIATE_CORPUS_DIRS"] = corpusDirs.join(path.delimiter);
+    const existing = getCliIpc();
+    setCliIpc({ ...existing, corpusDirs: [...corpusDirs] });
   }
 
   const { startVitest } = await import("vitest/node");
@@ -290,29 +296,17 @@ async function runChildMode(
   // Activate fuzzing mode
   process.env["VITIATE_FUZZ"] = "1";
 
-  // Signal libFuzzer path conventions to the fuzz loop
-  process.env["VITIATE_LIBFUZZER_COMPAT"] = "1";
-
   // Forward CLI options to fuzz targets via env var
   process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify(fuzzOptions);
 
-  // Forward corpus directories to fuzz targets via env var
-  if (corpusDirs.length > 0) {
-    process.env["VITIATE_CORPUS_DIRS"] = corpusDirs.join(path.delimiter);
-    // First corpus dir is the writable output directory
-    process.env["VITIATE_CORPUS_OUTPUT_DIR"] = corpusDirs[0];
-  }
-
-  // Forward artifact prefix when explicitly provided. The fuzz loop applies
-  // the "./" default when libfuzzerCompat is set and no prefix is given.
-  if (artifactPrefix !== undefined) {
-    process.env["VITIATE_ARTIFACT_PREFIX"] = artifactPrefix;
-  }
-
-  // Forward dictionary path to child process for the fuzz loop to pick up.
-  if (dictPath !== undefined) {
-    process.env["VITIATE_DICTIONARY_PATH"] = dictPath;
-  }
+  // Forward CLI IPC state to fuzz targets via single JSON blob
+  setCliIpc({
+    libfuzzerCompat: true,
+    corpusDirs: corpusDirs.length > 0 ? [...corpusDirs] : undefined,
+    corpusOutputDir: corpusDirs.length > 0 ? corpusDirs[0] : undefined,
+    artifactPrefix,
+    dictionaryPath: dictPath,
+  });
 
   const { startVitest } = await import("vitest/node");
 
@@ -354,6 +348,10 @@ async function main(): Promise<void> {
       help: "option",
     }),
   );
+
+  if (!isSupervisorChild()) {
+    warnUnknownVitiateEnvVars();
+  }
 
   if (merge) {
     // Merge mode: corpus minimization via set cover

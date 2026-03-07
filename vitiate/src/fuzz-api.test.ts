@@ -101,19 +101,19 @@ describe("fuzz regression mode - loads extra corpus dirs", () => {
     `vitiate-fuzz-extra-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
   const extraDir = path.join(tmpBase, "extra");
-  const originalCorpusDirs = process.env["VITIATE_CORPUS_DIRS"];
+  const originalCliIpc = process.env["VITIATE_CLI_IPC"];
 
   beforeAll(() => {
     mkdirSync(extraDir, { recursive: true });
     writeFileSync(path.join(extraDir, "seed-extra"), "extra-data");
-    process.env["VITIATE_CORPUS_DIRS"] = extraDir;
+    process.env["VITIATE_CLI_IPC"] = JSON.stringify({ corpusDirs: [extraDir] });
   });
 
   afterAll(() => {
-    if (originalCorpusDirs === undefined) {
-      delete process.env["VITIATE_CORPUS_DIRS"];
+    if (originalCliIpc === undefined) {
+      delete process.env["VITIATE_CLI_IPC"];
     } else {
-      process.env["VITIATE_CORPUS_DIRS"] = originalCorpusDirs;
+      process.env["VITIATE_CLI_IPC"] = originalCliIpc;
     }
     rmSync(tmpBase, { recursive: true, force: true });
   });

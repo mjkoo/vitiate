@@ -8,6 +8,11 @@ import {
   getCorpusOutputDir,
   getArtifactPrefix,
   getDictionaryPathEnv,
+  getCorpusDirs,
+  getMergeControlFile,
+  getCliIpc,
+  setCliIpc,
+  warnUnknownVitiateEnvVars,
   getCliOptions,
   getFuzzTime,
   resolveInstrumentOptions,
@@ -16,12 +21,18 @@ import {
 
 describe("config", () => {
   const originalEnv = process.env["VITIATE_FUZZ"];
+  const originalCliIpc = process.env["VITIATE_CLI_IPC"];
 
   afterEach(() => {
     if (originalEnv === undefined) {
       delete process.env["VITIATE_FUZZ"];
     } else {
       process.env["VITIATE_FUZZ"] = originalEnv;
+    }
+    if (originalCliIpc === undefined) {
+      delete process.env["VITIATE_CLI_IPC"];
+    } else {
+      process.env["VITIATE_CLI_IPC"] = originalCliIpc;
     }
   });
 
@@ -90,29 +101,24 @@ describe("config", () => {
   });
 
   describe("isMergeMode", () => {
-    const originalMerge = process.env["VITIATE_MERGE"];
-
-    afterEach(() => {
-      if (originalMerge === undefined) {
-        delete process.env["VITIATE_MERGE"];
-      } else {
-        process.env["VITIATE_MERGE"] = originalMerge;
-      }
-    });
-
-    it("returns false when VITIATE_MERGE is not set", () => {
-      delete process.env["VITIATE_MERGE"];
+    it("returns false when VITIATE_CLI_IPC is not set", () => {
+      delete process.env["VITIATE_CLI_IPC"];
       expect(isMergeMode()).toBe(false);
     });
 
-    it("returns false when VITIATE_MERGE is 0", () => {
-      process.env["VITIATE_MERGE"] = "0";
+    it("returns false when merge is not in IPC blob", () => {
+      process.env["VITIATE_CLI_IPC"] = JSON.stringify({});
       expect(isMergeMode()).toBe(false);
     });
 
-    it("returns true when VITIATE_MERGE is 1", () => {
-      process.env["VITIATE_MERGE"] = "1";
+    it("returns true when merge is true in IPC blob", () => {
+      process.env["VITIATE_CLI_IPC"] = JSON.stringify({ merge: true });
       expect(isMergeMode()).toBe(true);
+    });
+
+    it("returns false when merge is false in IPC blob", () => {
+      process.env["VITIATE_CLI_IPC"] = JSON.stringify({ merge: false });
+      expect(isMergeMode()).toBe(false);
     });
   });
 
@@ -158,115 +164,292 @@ describe("config", () => {
   });
 
   describe("isLibfuzzerCompat", () => {
-    const original = process.env["VITIATE_LIBFUZZER_COMPAT"];
-
-    afterEach(() => {
-      if (original === undefined) {
-        delete process.env["VITIATE_LIBFUZZER_COMPAT"];
-      } else {
-        process.env["VITIATE_LIBFUZZER_COMPAT"] = original;
-      }
-    });
-
-    it("returns false when not set", () => {
-      delete process.env["VITIATE_LIBFUZZER_COMPAT"];
+    it("returns false when IPC blob is not set", () => {
+      delete process.env["VITIATE_CLI_IPC"];
       expect(isLibfuzzerCompat()).toBe(false);
     });
 
-    it("returns true when set to 1", () => {
-      process.env["VITIATE_LIBFUZZER_COMPAT"] = "1";
+    it("returns true when libfuzzerCompat is true in IPC blob", () => {
+      process.env["VITIATE_CLI_IPC"] = JSON.stringify({
+        libfuzzerCompat: true,
+      });
       expect(isLibfuzzerCompat()).toBe(true);
     });
 
-    it("returns false when set to 0", () => {
-      process.env["VITIATE_LIBFUZZER_COMPAT"] = "0";
+    it("returns false when libfuzzerCompat is false in IPC blob", () => {
+      process.env["VITIATE_CLI_IPC"] = JSON.stringify({
+        libfuzzerCompat: false,
+      });
       expect(isLibfuzzerCompat()).toBe(false);
     });
 
-    it("returns false when empty", () => {
-      process.env["VITIATE_LIBFUZZER_COMPAT"] = "";
+    it("returns false when libfuzzerCompat is absent from IPC blob", () => {
+      process.env["VITIATE_CLI_IPC"] = JSON.stringify({});
       expect(isLibfuzzerCompat()).toBe(false);
     });
   });
 
   describe("getCorpusOutputDir", () => {
-    const original = process.env["VITIATE_CORPUS_OUTPUT_DIR"];
-
-    afterEach(() => {
-      if (original === undefined) {
-        delete process.env["VITIATE_CORPUS_OUTPUT_DIR"];
-      } else {
-        process.env["VITIATE_CORPUS_OUTPUT_DIR"] = original;
-      }
-    });
-
-    it("returns undefined when not set", () => {
-      delete process.env["VITIATE_CORPUS_OUTPUT_DIR"];
+    it("returns undefined when IPC blob is not set", () => {
+      delete process.env["VITIATE_CLI_IPC"];
       expect(getCorpusOutputDir()).toBeUndefined();
     });
 
-    it("returns undefined when empty", () => {
-      process.env["VITIATE_CORPUS_OUTPUT_DIR"] = "";
+    it("returns undefined when corpusOutputDir is absent from IPC blob", () => {
+      process.env["VITIATE_CLI_IPC"] = JSON.stringify({});
       expect(getCorpusOutputDir()).toBeUndefined();
     });
 
-    it("returns the value when set", () => {
-      process.env["VITIATE_CORPUS_OUTPUT_DIR"] = "./corpus/";
+    it("returns the value when set in IPC blob", () => {
+      process.env["VITIATE_CLI_IPC"] = JSON.stringify({
+        corpusOutputDir: "./corpus/",
+      });
       expect(getCorpusOutputDir()).toBe("./corpus/");
     });
   });
 
   describe("getArtifactPrefix", () => {
-    const original = process.env["VITIATE_ARTIFACT_PREFIX"];
-
-    afterEach(() => {
-      if (original === undefined) {
-        delete process.env["VITIATE_ARTIFACT_PREFIX"];
-      } else {
-        process.env["VITIATE_ARTIFACT_PREFIX"] = original;
-      }
-    });
-
-    it("returns undefined when not set", () => {
-      delete process.env["VITIATE_ARTIFACT_PREFIX"];
+    it("returns undefined when IPC blob is not set", () => {
+      delete process.env["VITIATE_CLI_IPC"];
       expect(getArtifactPrefix()).toBeUndefined();
     });
 
-    it("returns undefined when empty", () => {
-      process.env["VITIATE_ARTIFACT_PREFIX"] = "";
+    it("returns undefined when artifactPrefix is absent from IPC blob", () => {
+      process.env["VITIATE_CLI_IPC"] = JSON.stringify({});
       expect(getArtifactPrefix()).toBeUndefined();
     });
 
-    it("returns the value when set", () => {
-      process.env["VITIATE_ARTIFACT_PREFIX"] = "./out/";
+    it("returns the value when set in IPC blob", () => {
+      process.env["VITIATE_CLI_IPC"] = JSON.stringify({
+        artifactPrefix: "./out/",
+      });
       expect(getArtifactPrefix()).toBe("./out/");
     });
   });
 
   describe("getDictionaryPathEnv", () => {
-    const original = process.env["VITIATE_DICTIONARY_PATH"];
+    it("returns undefined when IPC blob is not set", () => {
+      delete process.env["VITIATE_CLI_IPC"];
+      expect(getDictionaryPathEnv()).toBeUndefined();
+    });
 
-    afterEach(() => {
-      if (original === undefined) {
-        delete process.env["VITIATE_DICTIONARY_PATH"];
-      } else {
-        process.env["VITIATE_DICTIONARY_PATH"] = original;
+    it("returns undefined when dictionaryPath is absent from IPC blob", () => {
+      process.env["VITIATE_CLI_IPC"] = JSON.stringify({});
+      expect(getDictionaryPathEnv()).toBeUndefined();
+    });
+
+    it("returns the value when set in IPC blob", () => {
+      process.env["VITIATE_CLI_IPC"] = JSON.stringify({
+        dictionaryPath: "/path/to/dict.dict",
+      });
+      expect(getDictionaryPathEnv()).toBe("/path/to/dict.dict");
+    });
+  });
+
+  describe("getCorpusDirs", () => {
+    it("returns undefined when IPC blob is not set", () => {
+      delete process.env["VITIATE_CLI_IPC"];
+      expect(getCorpusDirs()).toBeUndefined();
+    });
+
+    it("returns undefined when corpusDirs is absent from IPC blob", () => {
+      process.env["VITIATE_CLI_IPC"] = JSON.stringify({});
+      expect(getCorpusDirs()).toBeUndefined();
+    });
+
+    it("returns the array when set in IPC blob", () => {
+      process.env["VITIATE_CLI_IPC"] = JSON.stringify({
+        corpusDirs: ["/a", "/b"],
+      });
+      expect(getCorpusDirs()).toEqual(["/a", "/b"]);
+    });
+  });
+
+  describe("getMergeControlFile", () => {
+    it("returns undefined when IPC blob is not set", () => {
+      delete process.env["VITIATE_CLI_IPC"];
+      expect(getMergeControlFile()).toBeUndefined();
+    });
+
+    it("returns undefined when mergeControlFile is absent from IPC blob", () => {
+      process.env["VITIATE_CLI_IPC"] = JSON.stringify({});
+      expect(getMergeControlFile()).toBeUndefined();
+    });
+
+    it("returns the value when set in IPC blob", () => {
+      process.env["VITIATE_CLI_IPC"] = JSON.stringify({
+        mergeControlFile: "/tmp/merge.jsonl",
+      });
+      expect(getMergeControlFile()).toBe("/tmp/merge.jsonl");
+    });
+  });
+
+  describe("getCliIpc", () => {
+    it("returns empty object when env var is not set", () => {
+      delete process.env["VITIATE_CLI_IPC"];
+      expect(getCliIpc()).toEqual({});
+    });
+
+    it("returns empty object when env var is empty", () => {
+      process.env["VITIATE_CLI_IPC"] = "";
+      expect(getCliIpc()).toEqual({});
+    });
+
+    it("parses valid JSON blob", () => {
+      process.env["VITIATE_CLI_IPC"] = JSON.stringify({
+        libfuzzerCompat: true,
+        merge: false,
+        corpusDirs: ["/a"],
+      });
+      const ipc = getCliIpc();
+      expect(ipc.libfuzzerCompat).toBe(true);
+      expect(ipc.merge).toBe(false);
+      expect(ipc.corpusDirs).toEqual(["/a"]);
+    });
+
+    it("returns empty object for invalid JSON and warns", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_CLI_IPC"] = "not-json";
+        expect(getCliIpc()).toEqual({});
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toContain("VITIATE_CLI_IPC JSON");
+      } finally {
+        process.stderr.write = originalWrite;
       }
     });
 
-    it("returns undefined when not set", () => {
-      delete process.env["VITIATE_DICTIONARY_PATH"];
-      expect(getDictionaryPathEnv()).toBeUndefined();
+    it("returns empty object for non-object JSON and warns", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_CLI_IPC"] = JSON.stringify([1, 2, 3]);
+        expect(getCliIpc()).toEqual({});
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toContain("must be a JSON object");
+      } finally {
+        process.stderr.write = originalWrite;
+      }
     });
 
-    it("returns undefined when empty", () => {
-      process.env["VITIATE_DICTIONARY_PATH"] = "";
-      expect(getDictionaryPathEnv()).toBeUndefined();
+    it("returns empty object for validation errors and warns", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_CLI_IPC"] = JSON.stringify({
+          libfuzzerCompat: "not-a-boolean",
+        });
+        expect(getCliIpc()).toEqual({});
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toContain("VITIATE_CLI_IPC.libfuzzerCompat");
+      } finally {
+        process.stderr.write = originalWrite;
+      }
     });
 
-    it("returns the value when set", () => {
-      process.env["VITIATE_DICTIONARY_PATH"] = "/path/to/dict.dict";
-      expect(getDictionaryPathEnv()).toBe("/path/to/dict.dict");
+    it("strips unknown fields from the output", () => {
+      process.env["VITIATE_CLI_IPC"] = JSON.stringify({
+        merge: true,
+        unknownField: "hello",
+      });
+      const ipc = getCliIpc();
+      expect(ipc).toEqual({ merge: true });
+      expect("unknownField" in ipc).toBe(false);
+    });
+  });
+
+  describe("setCliIpc", () => {
+    it("round-trips through getCliIpc", () => {
+      setCliIpc({
+        libfuzzerCompat: true,
+        corpusDirs: ["/a", "/b"],
+        artifactPrefix: "./out/",
+      });
+      const ipc = getCliIpc();
+      expect(ipc.libfuzzerCompat).toBe(true);
+      expect(ipc.corpusDirs).toEqual(["/a", "/b"]);
+      expect(ipc.artifactPrefix).toBe("./out/");
+    });
+  });
+
+  describe("warnUnknownVitiateEnvVars", () => {
+    it("warns about unknown VITIATE_ env vars", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      process.env["VITIATE_UNKNOWN_VAR"] = "1";
+      try {
+        warnUnknownVitiateEnvVars();
+        expect(chunks.some((c) => c.includes("VITIATE_UNKNOWN_VAR"))).toBe(
+          true,
+        );
+      } finally {
+        process.stderr.write = originalWrite;
+        delete process.env["VITIATE_UNKNOWN_VAR"];
+      }
+    });
+
+    it("does not warn about known VITIATE_ env vars", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      const knownVars = [
+        "VITIATE_FUZZ",
+        "VITIATE_FUZZ_TIME",
+        "VITIATE_OPTIMIZE",
+        "VITIATE_SUPERVISOR",
+        "VITIATE_SHMEM",
+        "VITIATE_PROJECT_ROOT",
+        "VITIATE_CACHE_DIR",
+        "VITIATE_FUZZ_OPTIONS",
+        "VITIATE_CLI_IPC",
+      ];
+      const saved: Record<string, string | undefined> = {};
+      for (const v of knownVars) {
+        saved[v] = process.env[v];
+        process.env[v] = "1";
+      }
+
+      try {
+        warnUnknownVitiateEnvVars();
+        const vitiateWarnings = chunks.filter((c) =>
+          c.includes("unknown environment variable"),
+        );
+        expect(vitiateWarnings.length).toBe(0);
+      } finally {
+        process.stderr.write = originalWrite;
+        for (const v of knownVars) {
+          if (saved[v] === undefined) {
+            delete process.env[v];
+          } else {
+            process.env[v] = saved[v];
+          }
+        }
+      }
     });
   });
 

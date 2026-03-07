@@ -55,6 +55,18 @@ const FuzzOptionsSchema = v.object({
 
 export type FuzzOptions = v.InferOutput<typeof FuzzOptionsSchema>;
 
+const CliIpcSchema = v.object({
+  libfuzzerCompat: v.optional(v.boolean()),
+  merge: v.optional(v.boolean()),
+  mergeControlFile: v.optional(v.string()),
+  corpusDirs: v.optional(v.array(v.string())),
+  corpusOutputDir: v.optional(v.string()),
+  artifactPrefix: v.optional(v.string()),
+  dictionaryPath: v.optional(v.string()),
+});
+
+export type CliIpc = v.InferOutput<typeof CliIpcSchema>;
+
 export interface FuzzDefaults extends FuzzOptions {
   /** Cache directory path, resolved relative to project root. */
   cacheDir?: string;
@@ -98,7 +110,7 @@ export function isOptimizeMode(): boolean {
 }
 
 export function isMergeMode(): boolean {
-  return envTruthy("VITIATE_MERGE");
+  return getCliIpc().merge ?? false;
 }
 
 /**
@@ -119,7 +131,7 @@ export function isSupervisorChild(): boolean {
 }
 
 export function isLibfuzzerCompat(): boolean {
-  return envTruthy("VITIATE_LIBFUZZER_COMPAT");
+  return getCliIpc().libfuzzerCompat ?? false;
 }
 
 /**
@@ -142,15 +154,104 @@ export function getFuzzTime(): number | undefined {
 }
 
 export function getDictionaryPathEnv(): string | undefined {
-  return process.env["VITIATE_DICTIONARY_PATH"] || undefined;
+  return getCliIpc().dictionaryPath;
 }
 
 export function getCorpusOutputDir(): string | undefined {
-  return process.env["VITIATE_CORPUS_OUTPUT_DIR"] || undefined;
+  return getCliIpc().corpusOutputDir;
 }
 
 export function getArtifactPrefix(): string | undefined {
-  return process.env["VITIATE_ARTIFACT_PREFIX"] || undefined;
+  return getCliIpc().artifactPrefix;
+}
+
+export function getCorpusDirs(): string[] | undefined {
+  return getCliIpc().corpusDirs;
+}
+
+export function getMergeControlFile(): string | undefined {
+  return getCliIpc().mergeControlFile;
+}
+
+let cachedCliIpc: CliIpc | undefined;
+let cachedCliIpcRaw: string | undefined;
+
+export function getCliIpc(): CliIpc {
+  const raw = process.env["VITIATE_CLI_IPC"];
+  if (raw === cachedCliIpcRaw && cachedCliIpc !== undefined)
+    return cachedCliIpc;
+  cachedCliIpcRaw = raw;
+
+  if (!raw) return (cachedCliIpc = {});
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    process.stderr.write(
+      `vitiate: warning: invalid VITIATE_CLI_IPC JSON: ${e instanceof Error ? e.message : String(e)}\n`,
+    );
+    return (cachedCliIpc = {});
+  }
+
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    process.stderr.write(
+      `vitiate: warning: VITIATE_CLI_IPC must be a JSON object\n`,
+    );
+    return (cachedCliIpc = {});
+  }
+
+  const result = v.safeParse(
+    CliIpcSchema,
+    stripNulls(parsed as Record<string, unknown>),
+  );
+  if (result.success) {
+    return (cachedCliIpc = result.output);
+  }
+
+  const flat = v.flatten(result.issues);
+  if (flat.nested) {
+    for (const [key, messages] of Object.entries(flat.nested)) {
+      if (!messages?.length) continue;
+      process.stderr.write(
+        `vitiate: warning: invalid VITIATE_CLI_IPC.${key}: ${messages[0]}\n`,
+      );
+    }
+  } else if (flat.root) {
+    process.stderr.write(
+      `vitiate: warning: invalid VITIATE_CLI_IPC: ${flat.root[0]}\n`,
+    );
+  }
+  return (cachedCliIpc = {});
+}
+
+export function setCliIpc(ipc: CliIpc): void {
+  const serialized = JSON.stringify(ipc);
+  process.env["VITIATE_CLI_IPC"] = serialized;
+  cachedCliIpcRaw = serialized;
+  cachedCliIpc = ipc;
+}
+
+const KNOWN_VITIATE_ENV_VARS = new Set([
+  "VITIATE_FUZZ",
+  "VITIATE_FUZZ_TIME",
+  "VITIATE_OPTIMIZE",
+  "VITIATE_SUPERVISOR",
+  "VITIATE_SHMEM",
+  "VITIATE_PROJECT_ROOT",
+  "VITIATE_CACHE_DIR",
+  "VITIATE_FUZZ_OPTIONS",
+  "VITIATE_CLI_IPC",
+]);
+
+export function warnUnknownVitiateEnvVars(): void {
+  for (const key of Object.keys(process.env)) {
+    if (key.startsWith("VITIATE_") && !KNOWN_VITIATE_ENV_VARS.has(key)) {
+      process.stderr.write(
+        `vitiate: warning: unknown environment variable: ${key}\n`,
+      );
+    }
+  }
 }
 
 /**
