@@ -1,6 +1,9 @@
 import { describe, it, expect, afterEach } from "vitest";
 import {
   isFuzzingMode,
+  isLibfuzzerCompat,
+  getCorpusOutputDir,
+  getArtifactPrefix,
   getCliOptions,
   resolveInstrumentOptions,
   COVERAGE_MAP_SIZE,
@@ -46,6 +49,92 @@ describe("config", () => {
     it("returns true when VITIATE_FUZZ is a pattern", () => {
       process.env["VITIATE_FUZZ"] = "parser";
       expect(isFuzzingMode()).toBe(true);
+    });
+  });
+
+  describe("isLibfuzzerCompat", () => {
+    const original = process.env["VITIATE_LIBFUZZER_COMPAT"];
+
+    afterEach(() => {
+      if (original === undefined) {
+        delete process.env["VITIATE_LIBFUZZER_COMPAT"];
+      } else {
+        process.env["VITIATE_LIBFUZZER_COMPAT"] = original;
+      }
+    });
+
+    it("returns false when not set", () => {
+      delete process.env["VITIATE_LIBFUZZER_COMPAT"];
+      expect(isLibfuzzerCompat()).toBe(false);
+    });
+
+    it("returns true when set to 1", () => {
+      process.env["VITIATE_LIBFUZZER_COMPAT"] = "1";
+      expect(isLibfuzzerCompat()).toBe(true);
+    });
+
+    it("returns false when set to 0", () => {
+      process.env["VITIATE_LIBFUZZER_COMPAT"] = "0";
+      expect(isLibfuzzerCompat()).toBe(false);
+    });
+
+    it("returns false when empty", () => {
+      process.env["VITIATE_LIBFUZZER_COMPAT"] = "";
+      expect(isLibfuzzerCompat()).toBe(false);
+    });
+  });
+
+  describe("getCorpusOutputDir", () => {
+    const original = process.env["VITIATE_CORPUS_OUTPUT_DIR"];
+
+    afterEach(() => {
+      if (original === undefined) {
+        delete process.env["VITIATE_CORPUS_OUTPUT_DIR"];
+      } else {
+        process.env["VITIATE_CORPUS_OUTPUT_DIR"] = original;
+      }
+    });
+
+    it("returns undefined when not set", () => {
+      delete process.env["VITIATE_CORPUS_OUTPUT_DIR"];
+      expect(getCorpusOutputDir()).toBeUndefined();
+    });
+
+    it("returns undefined when empty", () => {
+      process.env["VITIATE_CORPUS_OUTPUT_DIR"] = "";
+      expect(getCorpusOutputDir()).toBeUndefined();
+    });
+
+    it("returns the value when set", () => {
+      process.env["VITIATE_CORPUS_OUTPUT_DIR"] = "./corpus/";
+      expect(getCorpusOutputDir()).toBe("./corpus/");
+    });
+  });
+
+  describe("getArtifactPrefix", () => {
+    const original = process.env["VITIATE_ARTIFACT_PREFIX"];
+
+    afterEach(() => {
+      if (original === undefined) {
+        delete process.env["VITIATE_ARTIFACT_PREFIX"];
+      } else {
+        process.env["VITIATE_ARTIFACT_PREFIX"] = original;
+      }
+    });
+
+    it("returns undefined when not set", () => {
+      delete process.env["VITIATE_ARTIFACT_PREFIX"];
+      expect(getArtifactPrefix()).toBeUndefined();
+    });
+
+    it("returns undefined when empty", () => {
+      process.env["VITIATE_ARTIFACT_PREFIX"] = "";
+      expect(getArtifactPrefix()).toBeUndefined();
+    });
+
+    it("returns the value when set", () => {
+      process.env["VITIATE_ARTIFACT_PREFIX"] = "./out/";
+      expect(getArtifactPrefix()).toBe("./out/");
     });
   });
 

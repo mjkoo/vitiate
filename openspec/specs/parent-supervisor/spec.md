@@ -100,7 +100,7 @@ On Windows, the parent SHALL detect crashes by checking the child's exit code ag
 - **THEN** the parent detects the signal death via `WIFSIGNALED(status)`
 - **AND** the parent reads the signal number from `WTERMSIG(status)`
 - **AND** the parent reads the crashing input from the shmem stash
-- **AND** the parent writes a crash artifact to `testdata/fuzz/{sanitizedTestName}/crash-{hash}`
+- **AND** the parent writes a crash artifact using the resolved artifact format
 - **AND** the crash artifact metadata includes the signal number
 
 #### Scenario: Native crash on Windows
@@ -109,7 +109,7 @@ On Windows, the parent SHALL detect crashes by checking the child's exit code ag
 - **THEN** the child's vectored exception handler writes crash metadata to shmem
 - **AND** the parent detects the abnormal exit code
 - **AND** the parent reads the crashing input from the shmem stash
-- **AND** the parent writes a crash artifact to `testdata/fuzz/{sanitizedTestName}/crash-{hash}`
+- **AND** the parent writes a crash artifact using the resolved artifact format
 
 #### Scenario: V8 Wasm trap not misidentified as crash
 
@@ -186,15 +186,27 @@ The parent SHALL interpret the child's exit status according to this protocol:
 
 ### Requirement: Crash artifact format
 
-The parent SHALL write crash artifacts in the same format as the fuzz loop's existing crash artifact writing. The artifact file SHALL be written to `testdata/fuzz/{sanitizedTestName}/crash-{hash}` where `{sanitizedTestName}` uses the hash-prefixed format (`{nameHash}-{slug}`) and `{hash}` is computed from the crashing input bytes. The file contents SHALL be the raw input bytes.
+The parent SHALL write crash artifacts in the same format as the fuzz loop's existing crash artifact writing. The artifact path depends on whether `artifactPrefix` is set in `SupervisorOptions`:
 
-The `testName` SHALL be provided by the caller via `SupervisorOptions.testName`. In the vitest `fuzz()` parent mode, this is the `name` parameter passed to `fuzz()`. In the standalone CLI, this is the `-test` value if provided, or the filename-derived name otherwise. The supervisor passes the `testName` through `sanitizeTestName()` to produce the directory name.
+- **When `artifactPrefix` is set** (CLI mode): The artifact SHALL be written to `{prefix}{kind}-{contentHash}` where `kind` is `"crash"` or `"timeout"` and `contentHash` is the full SHA-256 hex digest of the input data. If the prefix includes a directory component, the parent directory SHALL be created if it does not exist.
+- **When `artifactPrefix` is not set** (Vitest mode): The artifact SHALL be written to `testdata/fuzz/{sanitizedTestName}/{kind}-{contentHash}` where `{sanitizedTestName}` uses the hash-prefixed format (`{nameHash}-{slug}`). This preserves the existing behavior.
 
-The parent SHALL also log the crash to stderr with the signal/exception type and artifact path.
+In both cases, the file contents SHALL be the raw input bytes. The parent SHALL also log the crash to stderr with the signal/exception type and artifact path.
 
-#### Scenario: Crash artifact written by parent
+The `testName` and `testDir` fields on `SupervisorOptions` remain required for Vitest-mode artifact writing and for log messages.
+
+#### Scenario: Crash artifact written by parent with artifact prefix
 
 - **WHEN** the parent writes a crash artifact after a native crash
+- **AND** `artifactPrefix` is set to `./out/`
+- **THEN** the artifact file path is `./out/crash-{contentHash}`
+- **AND** the file contains the raw crashing input bytes
+- **AND** the parent logs the signal type and artifact path to stderr
+
+#### Scenario: Crash artifact written by parent without artifact prefix
+
+- **WHEN** the parent writes a crash artifact after a native crash
+- **AND** `artifactPrefix` is not set
 - **THEN** the artifact file path is `testdata/fuzz/{nameHash}-{slug}/crash-{contentHash}`
 - **AND** the file contains the raw crashing input bytes
 - **AND** the parent logs the signal type and artifact path to stderr
@@ -205,14 +217,22 @@ The parent SHALL also log the crash to stderr with the signal/exception type and
 - **THEN** the parent writes to the same artifact path (same content hash)
 - **AND** the file is overwritten with identical contents (no corruption)
 
-#### Scenario: CLI with test name uses name as testName
+#### Scenario: CLI with default artifact prefix
 
-- **WHEN** the standalone CLI runs with `-test=parse-url`
+- **WHEN** the standalone CLI runs without `-artifact_prefix`
+- **AND** `artifactPrefix` is set to `./` (CLI default)
 - **AND** the child is killed by a signal
-- **THEN** the parent writes crash artifact to `testdata/fuzz/{nameHash}-parse-url/crash-{contentHash}`
+- **THEN** the parent writes crash artifact to `./crash-{contentHash}`
 
-#### Scenario: CLI without test name uses filename-derived testName
+#### Scenario: CLI with explicit artifact prefix
 
-- **WHEN** the standalone CLI runs without `-test` on `url-parser.fuzz.ts`
+- **WHEN** the standalone CLI runs with `-artifact_prefix=./findings/`
 - **AND** the child is killed by a signal
-- **THEN** the parent writes crash artifact to `testdata/fuzz/{nameHash}-url-parser.fuzz/crash-{contentHash}`
+- **THEN** the parent writes crash artifact to `./findings/crash-{contentHash}`
+
+#### Scenario: Vitest supervisor preserves existing behavior
+
+- **WHEN** the Vitest `fuzz()` parent mode detects a native crash
+- **AND** `artifactPrefix` is not set in `SupervisorOptions`
+- **THEN** the parent writes crash artifact to `testdata/fuzz/{nameHash}-{slug}/crash-{contentHash}`
+- **AND** the behavior is identical to the pre-change implementation

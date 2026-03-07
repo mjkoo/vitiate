@@ -97,14 +97,15 @@ export declare class Watchdog {
   /**
    * Create a new Watchdog. Spawns the background thread and caches the V8 isolate.
    *
-   * - `artifact_dir`: Directory to write timeout artifacts.
+   * - `artifact_prefix`: Prefix for timeout artifact paths (e.g., `./`, `./out/`, `bug-`).
+   *   The artifact filename (`timeout-{hash}`) is appended directly to the prefix.
    * - `shmem`: Optional shared memory handle for input capture before `_exit`.
    *   When running under the supervisor, pass the shmem handle so the watchdog
    *   can read the current input from shmem before calling `_exit`. When running
    *   without the supervisor (Vitest integration), pass `null` — the `_exit`
    *   fallback still fires but without writing a timeout artifact.
    */
-  constructor(artifactDir: string, shmem?: ShmemHandle | undefined | null)
+  constructor(artifactPrefix: string, shmem?: ShmemHandle | undefined | null)
   /**
    * Arm the watchdog with a timeout in milliseconds.
    * Wakes the watchdog thread to start timing.
@@ -193,8 +194,11 @@ export interface FuzzerStats {
  *   signal property.
  *
  * Safe to call multiple times — subsequent calls are no-ops.
+ *
+ * - `artifact_prefix`: Prefix for crash artifact paths (e.g., `./`, `./out/`, `bug-`).
+ *   The artifact filename (`crash-{hash}`) is appended directly to the prefix.
  */
-export declare function installExceptionHandler(shmem: ShmemHandle, artifactDir: string): void
+export declare function installExceptionHandler(shmem: ShmemHandle, artifactPrefix: string): void
 
 /**
  * Result of evaluating a single fuzzing iteration.

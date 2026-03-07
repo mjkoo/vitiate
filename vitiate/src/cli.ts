@@ -33,6 +33,7 @@ export interface CliArgs {
   testFile: string;
   corpusDirs: readonly string[];
   testName?: string;
+  artifactPrefix?: string;
   fuzzOptions: FuzzOptions;
 }
 
@@ -54,6 +55,8 @@ export const cliParser = object({
   minimizeTimeLimit: optional(
     option("-minimize_time_limit", integer({ min: 0 })),
   ),
+  // Artifact prefix
+  artifactPrefix: optional(option("-artifact_prefix", string())),
   // libFuzzer-compatible flags: accepted for OSS-Fuzz compatibility
   fork: optional(option("-fork", integer({ min: 0 }))),
   jobs: optional(option("-jobs", integer({ min: 0 }))),
@@ -90,6 +93,7 @@ function toCliArgs(parsed: InferValue<typeof cliParser>): CliArgs {
     testFile,
     corpusDirs,
     testName,
+    artifactPrefix,
     maxLen,
     timeout,
     runs,
@@ -102,6 +106,7 @@ function toCliArgs(parsed: InferValue<typeof cliParser>): CliArgs {
     testFile,
     corpusDirs,
     testName,
+    artifactPrefix,
     fuzzOptions: {
       maxLen,
       timeoutMs: timeout != null ? timeout * 1000 : undefined,
@@ -131,6 +136,7 @@ async function runParentMode(
   testFile: string,
   maxInputLen: number,
   testName?: string,
+  artifactPrefix?: string,
 ): Promise<void> {
   const shmem = ShmemHandle.allocate(maxInputLen);
   const testDir = path.dirname(path.resolve(testFile));
@@ -141,10 +147,14 @@ async function runParentMode(
   const resolvedTestName =
     testName ?? path.basename(testFile, path.extname(testFile));
 
+  // Resolve artifact prefix: flag value or CLI default (./)
+  const resolvedArtifactPrefix = artifactPrefix ?? "./";
+
   const result = await runSupervisor({
     shmem,
     testDir,
     testName: resolvedTestName,
+    artifactPrefix: resolvedArtifactPrefix,
     spawnChild: () =>
       spawn(process.execPath, process.argv.slice(1), {
         env: { ...process.env, VITIATE_SUPERVISOR: "1" },
@@ -167,9 +177,13 @@ async function runChildMode(
   corpusDirs: readonly string[],
   fuzzOptions: FuzzOptions,
   testName?: string,
+  artifactPrefix?: string,
 ): Promise<void> {
   // Activate fuzzing mode
   process.env["VITIATE_FUZZ"] = "1";
+
+  // Signal libFuzzer path conventions to the fuzz loop
+  process.env["VITIATE_LIBFUZZER_COMPAT"] = "1";
 
   // Forward CLI options to fuzz targets via env var
   process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify(fuzzOptions);
@@ -177,6 +191,14 @@ async function runChildMode(
   // Forward corpus directories to fuzz targets via env var
   if (corpusDirs.length > 0) {
     process.env["VITIATE_CORPUS_DIRS"] = corpusDirs.join(path.delimiter);
+    // First corpus dir is the writable output directory
+    process.env["VITIATE_CORPUS_OUTPUT_DIR"] = corpusDirs[0];
+  }
+
+  // Forward artifact prefix when explicitly provided. The fuzz loop applies
+  // the "./" default when libfuzzerCompat is set and no prefix is given.
+  if (artifactPrefix !== undefined) {
+    process.env["VITIATE_ARTIFACT_PREFIX"] = artifactPrefix;
   }
 
   const { startVitest } = await import("vitest/node");
@@ -205,20 +227,27 @@ async function runChildMode(
 }
 
 async function main(): Promise<void> {
-  const { testFile, corpusDirs, testName, fuzzOptions } = toCliArgs(
-    runSync(cliParser, {
-      programName: "vitiate",
-      help: "option",
-    }),
-  );
+  const { testFile, corpusDirs, testName, artifactPrefix, fuzzOptions } =
+    toCliArgs(
+      runSync(cliParser, {
+        programName: "vitiate",
+        help: "option",
+      }),
+    );
 
   if (isSupervisorChild()) {
     // Child mode: shmem is already set up by the parent
-    await runChildMode(testFile, corpusDirs, fuzzOptions, testName);
+    await runChildMode(
+      testFile,
+      corpusDirs,
+      fuzzOptions,
+      testName,
+      artifactPrefix,
+    );
   } else {
     // Parent mode: allocate shmem, spawn child, supervise
     const maxInputLen = fuzzOptions.maxLen ?? DEFAULT_MAX_INPUT_LEN;
-    await runParentMode(testFile, maxInputLen, testName);
+    await runParentMode(testFile, maxInputLen, testName, artifactPrefix);
   }
 }
 

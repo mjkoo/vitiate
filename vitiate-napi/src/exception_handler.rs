@@ -30,16 +30,19 @@ static INSTALL_ONCE: Once = Once::new();
 ///   signal property.
 ///
 /// Safe to call multiple times — subsequent calls are no-ops.
+///
+/// - `artifact_prefix`: Prefix for crash artifact paths (e.g., `./`, `./out/`, `bug-`).
+///   The artifact filename (`crash-{hash}`) is appended directly to the prefix.
 // This function is only called from JavaScript via NAPI. In the Rust test binary,
 // the NAPI entry point is not linked, so the function appears unused.
 #[allow(dead_code)]
 #[cfg_attr(not(windows), allow(unused_variables))]
 #[napi]
-pub fn install_exception_handler(shmem: &ShmemHandle, artifact_dir: String) {
+pub fn install_exception_handler(shmem: &ShmemHandle, artifact_prefix: String) {
     INSTALL_ONCE.call_once(|| {
         #[cfg(windows)]
         {
-            install_seh_handler(shmem, artifact_dir);
+            install_seh_handler(shmem, artifact_prefix);
         }
         // Unix: no-op — parent observes crashes via waitpid/signal
     });
@@ -51,7 +54,6 @@ pub fn install_exception_handler(shmem: &ShmemHandle, artifact_dir: String) {
 mod seh {
     use std::fs;
     use std::io::Write;
-    use std::path::PathBuf;
     use std::sync::OnceLock;
 
     use windows_sys::Win32::Foundation::{
@@ -69,13 +71,14 @@ mod seh {
     /// process-global `OnceLock`.
     struct ExceptionContext {
         view: ShmemView,
-        artifact_dir: PathBuf,
+        /// Prefix for crash artifact paths (e.g., `./`, `./out/`, `bug-`).
+        artifact_prefix: String,
     }
 
     impl std::fmt::Debug for ExceptionContext {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             f.debug_struct("ExceptionContext")
-                .field("artifact_dir", &self.artifact_dir)
+                .field("artifact_prefix", &self.artifact_prefix)
                 .finish_non_exhaustive()
         }
     }
@@ -83,11 +86,11 @@ mod seh {
     static EXCEPTION_CONTEXT: OnceLock<ExceptionContext> = OnceLock::new();
 
     /// Install the Windows vectored exception handler.
-    pub(super) fn install_seh_handler(shmem: &ShmemHandle, artifact_dir: String) {
+    pub(super) fn install_seh_handler(shmem: &ShmemHandle, artifact_prefix: String) {
         EXCEPTION_CONTEXT
             .set(ExceptionContext {
                 view: shmem.view(),
-                artifact_dir: PathBuf::from(artifact_dir),
+                artifact_prefix,
             })
             .expect("exception handler context already initialized");
 
@@ -150,13 +153,17 @@ mod seh {
         }
 
         let hash = crate::artifact_hash(&input);
-        let filename = format!("crash-{hash}");
-        let path = ctx.artifact_dir.join(filename);
+        let artifact_path = format!("{}crash-{hash}", ctx.artifact_prefix);
+        let path = std::path::Path::new(&artifact_path);
 
         // Best-effort I/O: we're in an exception handler that will propagate
         // the exception after returning. Ignoring I/O errors is intentional.
-        let _ = fs::create_dir_all(&ctx.artifact_dir);
-        if let Ok(mut file) = fs::File::create(&path) {
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            let _ = fs::create_dir_all(parent);
+        }
+        if let Ok(mut file) = fs::File::create(path) {
             let _ = file.write_all(&input);
             let _ = file.sync_all();
             eprintln!(
@@ -183,6 +190,6 @@ mod seh {
 }
 
 #[cfg(windows)]
-fn install_seh_handler(shmem: &ShmemHandle, artifact_dir: String) {
-    seh::install_seh_handler(shmem, artifact_dir);
+fn install_seh_handler(shmem: &ShmemHandle, artifact_prefix: String) {
+    seh::install_seh_handler(shmem, artifact_prefix);
 }

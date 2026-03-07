@@ -97,6 +97,18 @@ export function isSupervisorChild(): boolean {
   return envTruthy("VITIATE_SUPERVISOR");
 }
 
+export function isLibfuzzerCompat(): boolean {
+  return envTruthy("VITIATE_LIBFUZZER_COMPAT");
+}
+
+export function getCorpusOutputDir(): string | undefined {
+  return process.env["VITIATE_CORPUS_OUTPUT_DIR"] || undefined;
+}
+
+export function getArtifactPrefix(): string | undefined {
+  return process.env["VITIATE_ARTIFACT_PREFIX"] || undefined;
+}
+
 /**
  * Strip null values from a parsed JSON object. JSON uses null for "absent"
  * but valibot's optional() only accepts undefined, so we normalize before parsing.

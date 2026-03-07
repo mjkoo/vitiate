@@ -165,6 +165,32 @@ describe("parseArgs", () => {
   });
 });
 
+describe("-artifact_prefix flag", () => {
+  it("parses -artifact_prefix flag with directory prefix", () => {
+    const result = parseArgs(argv("./test.ts", "-artifact_prefix=./out/"));
+    expect(result.artifactPrefix).toBe("./out/");
+  });
+
+  it("parses -artifact_prefix flag with non-directory prefix", () => {
+    const result = parseArgs(argv("./test.ts", "-artifact_prefix=bug-"));
+    expect(result.artifactPrefix).toBe("bug-");
+  });
+
+  it("returns undefined artifactPrefix when not provided", () => {
+    const result = parseArgs(argv("./test.ts"));
+    expect(result.artifactPrefix).toBeUndefined();
+  });
+
+  it("combines -artifact_prefix with other flags", () => {
+    const result = parseArgs(
+      argv("./test.ts", "-artifact_prefix=./out/", "-timeout=10", "-runs=1000"),
+    );
+    expect(result.artifactPrefix).toBe("./out/");
+    expect(result.fuzzOptions.timeoutMs).toBe(10000);
+    expect(result.fuzzOptions.runs).toBe(1000);
+  });
+});
+
 describe("-test flag", () => {
   it("parses -test flag", () => {
     const result = parseArgs(argv("./test.ts", "-test=parse-url"));

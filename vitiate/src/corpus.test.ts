@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { createHash } from "node:crypto";
 import {
   mkdirSync,
   writeFileSync,
@@ -12,7 +13,9 @@ import {
   loadSeedCorpus,
   loadCachedCorpus,
   writeCorpusEntry,
+  writeCorpusEntryToDir,
   writeArtifact,
+  writeArtifactWithPrefix,
   sanitizeTestName,
   getCacheDir,
   loadCorpusFromDirs,
@@ -183,6 +186,84 @@ describe("corpus", () => {
       expect(path.basename(filePath)).toMatch(/^timeout-[0-9a-f]{64}$/);
       expect(existsSync(filePath)).toBe(true);
       expect(readFileSync(filePath)).toEqual(data);
+    });
+  });
+
+  describe("writeCorpusEntryToDir", () => {
+    it("writes an entry with content hash as filename", () => {
+      const dir = path.join(tmpDir, "corpus");
+      const data = Buffer.from("interesting input");
+      const filePath = writeCorpusEntryToDir(dir, data);
+
+      expect(path.dirname(filePath)).toBe(dir);
+      expect(path.basename(filePath)).toMatch(/^[0-9a-f]{64}$/);
+      expect(existsSync(filePath)).toBe(true);
+      expect(readFileSync(filePath)).toEqual(data);
+    });
+
+    it("creates directory recursively on demand", () => {
+      const dir = path.join(tmpDir, "deeply", "nested", "corpus");
+      const data = Buffer.from("data");
+      const filePath = writeCorpusEntryToDir(dir, data);
+
+      expect(existsSync(filePath)).toBe(true);
+    });
+
+    it("is idempotent - duplicate writes do not overwrite", () => {
+      const dir = path.join(tmpDir, "corpus");
+      const data = Buffer.from("same input");
+      const path1 = writeCorpusEntryToDir(dir, data);
+      const path2 = writeCorpusEntryToDir(dir, data);
+
+      expect(path1).toBe(path2);
+    });
+  });
+
+  describe("writeArtifactWithPrefix", () => {
+    it("writes crash artifact with directory prefix", () => {
+      const prefix = path.join(tmpDir, "out") + path.sep;
+      const data = Buffer.from("crash input");
+      const filePath = writeArtifactWithPrefix(prefix, data, "crash");
+
+      const expectedHash = createHash("sha256").update(data).digest("hex");
+      expect(filePath).toBe(`${prefix}crash-${expectedHash}`);
+      expect(existsSync(filePath)).toBe(true);
+      expect(readFileSync(filePath)).toEqual(data);
+    });
+
+    it("writes artifact with non-directory prefix", () => {
+      const prefix = path.join(tmpDir, "bug-");
+      const data = Buffer.from("crash input");
+      const filePath = writeArtifactWithPrefix(prefix, data, "crash");
+
+      expect(path.basename(filePath)).toMatch(/^bug-crash-[0-9a-f]{64}$/);
+      expect(existsSync(filePath)).toBe(true);
+    });
+
+    it("writes timeout artifact", () => {
+      const prefix = path.join(tmpDir, "out") + path.sep;
+      const data = Buffer.from("timeout input");
+      const filePath = writeArtifactWithPrefix(prefix, data, "timeout");
+
+      expect(path.basename(filePath)).toMatch(/^timeout-[0-9a-f]{64}$/);
+      expect(existsSync(filePath)).toBe(true);
+    });
+
+    it("creates parent directory on demand", () => {
+      const prefix = path.join(tmpDir, "findings", "sub") + path.sep;
+      const data = Buffer.from("data");
+      const filePath = writeArtifactWithPrefix(prefix, data, "crash");
+
+      expect(existsSync(filePath)).toBe(true);
+    });
+
+    it("is idempotent - duplicate writes do not overwrite", () => {
+      const prefix = path.join(tmpDir, "out") + path.sep;
+      const data = Buffer.from("same crash");
+      const path1 = writeArtifactWithPrefix(prefix, data, "crash");
+      const path2 = writeArtifactWithPrefix(prefix, data, "crash");
+
+      expect(path1).toBe(path2);
     });
   });
 

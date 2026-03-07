@@ -304,7 +304,7 @@ describe("fuzz loop", () => {
       "corpus-dirs-test",
       "test.fuzz.ts",
       { runs: 1_000_000 },
-      [extraDir],
+      { corpusDirs: [extraDir] },
     );
 
     // The seed from the extra corpus dir should trigger the crash

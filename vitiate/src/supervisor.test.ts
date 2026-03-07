@@ -1,6 +1,12 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { spawn } from "node:child_process";
-import { mkdirSync, rmSync, readdirSync } from "node:fs";
+import {
+  mkdirSync,
+  rmSync,
+  readdirSync,
+  existsSync,
+  readFileSync,
+} from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import type { ShmemHandle } from "vitiate-napi";
@@ -215,6 +221,60 @@ describe("runSupervisor", () => {
     expect(result.crashed).toBe(false);
     expect(result.exitCode).toBe(0);
     expect(spawnCount).toBe(3);
+  });
+
+  it("writes crash artifact with artifactPrefix when set", async () => {
+    const dir = makeTmpDir();
+    const shmem = createMockShmem(Buffer.from("crash-input"));
+    const artifactDir = path.join(dir, "out") + path.sep;
+
+    const result = await runSupervisor({
+      shmem,
+      testDir: dir,
+      testName: "test-prefix",
+      artifactPrefix: artifactDir,
+      maxRespawns: 1,
+      spawnChild: () =>
+        spawn(process.execPath, ["-e", `process.exit(${WATCHDOG_EXIT_CODE})`], {
+          stdio: "ignore",
+        }),
+    });
+
+    expect(result.crashed).toBe(true);
+    expect(result.crashArtifactPath).toBeDefined();
+    expect(result.crashArtifactPath!.startsWith(artifactDir)).toBe(true);
+    expect(path.basename(result.crashArtifactPath!)).toMatch(
+      /^timeout-[0-9a-f]{64}$/,
+    );
+    expect(existsSync(result.crashArtifactPath!)).toBe(true);
+    expect(readFileSync(result.crashArtifactPath!).toString()).toBe(
+      "crash-input",
+    );
+  });
+
+  it("writes crash artifact to testdata/fuzz/ when artifactPrefix is not set", async () => {
+    const dir = makeTmpDir();
+    const shmem = createMockShmem(Buffer.from("crash-input"));
+
+    const result = await runSupervisor({
+      shmem,
+      testDir: dir,
+      testName: "test-no-prefix",
+      maxRespawns: 1,
+      spawnChild: () =>
+        spawn(process.execPath, ["-e", `process.exit(${WATCHDOG_EXIT_CODE})`], {
+          stdio: "ignore",
+        }),
+    });
+
+    expect(result.crashed).toBe(true);
+    expect(result.crashArtifactPath).toBeDefined();
+    expect(result.crashArtifactPath!).toContain(
+      path.join("testdata", "fuzz") + path.sep,
+    );
+    expect(path.basename(result.crashArtifactPath!)).toMatch(
+      /^timeout-[0-9a-f]{64}$/,
+    );
   });
 
   it("uses MAX_RESPAWNS default when maxRespawns is not specified", async () => {

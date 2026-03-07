@@ -18,7 +18,8 @@ import {
   loadCorpusFromDirs,
   getCacheDir,
   writeCorpusEntry,
-  writeArtifact,
+  writeCorpusEntryToDir,
+  writeArtifactWithPrefix,
   sanitizeTestName,
   type ArtifactKind,
 } from "./corpus.js";
@@ -152,13 +153,16 @@ function recordCrash(
   input: Buffer,
   exitKind: ExitKind,
   error: Error | undefined,
-  testDir: string,
-  testName: string,
+  artifactPrefix: string,
   totalExecs: number,
 ): FuzzLoopResult {
   const artifactKind: ArtifactKind =
     exitKind === ExitKind.Timeout ? "timeout" : "crash";
-  const artifactPath = writeArtifact(testDir, testName, input, artifactKind);
+  const artifactPath = writeArtifactWithPrefix(
+    artifactPrefix,
+    input,
+    artifactKind,
+  );
   printCrash(error ?? new Error("unknown crash"), artifactPath);
   return {
     crashed: true,
@@ -214,8 +218,7 @@ async function runStage(
   timeoutMs: number | undefined,
   fuzzer: Fuzzer,
   shmemHandle: ShmemHandle | null,
-  testDir: string,
-  testName: string,
+  artifactPrefix: string,
 ): Promise<FuzzLoopResult | null> {
   let stageResult = fuzzer.beginStage();
 
@@ -236,8 +239,7 @@ async function runStage(
         stageInput,
         stageExitKind,
         stageCaughtError,
-        testDir,
-        testName,
+        artifactPrefix,
         fuzzer.stats.totalExecs,
       );
 
@@ -262,14 +264,23 @@ async function runStage(
   return null;
 }
 
+export interface CorpusOptions {
+  corpusDirs?: string[];
+  corpusOutputDir?: string;
+  artifactPrefix?: string;
+  libfuzzerCompat?: boolean;
+}
+
 export async function runFuzzLoop(
   target: (data: Buffer) => void | Promise<void>,
   testDir: string,
   testName: string,
   testFilePath: string,
   options: FuzzOptions,
-  corpusDirs?: string[],
+  corpusOptions?: CorpusOptions,
 ): Promise<FuzzLoopResult> {
+  const { corpusDirs, corpusOutputDir, artifactPrefix, libfuzzerCompat } =
+    corpusOptions ?? {};
   const coverageMap = globalThis.__vitiate_cov;
   if (!coverageMap) {
     throw new Error(
@@ -318,16 +329,19 @@ export async function runFuzzLoop(
     ? ShmemHandle.attach()
     : null;
 
-  const artifactDir = path.join(
-    testDir,
-    "testdata",
-    "fuzz",
-    sanitizeTestName(testName),
-  );
+  // Resolve the artifact prefix for the watchdog and exception handler.
+  // In libFuzzer-compat mode, default to "./" (cwd) matching libFuzzer behavior.
+  // In Vitest mode, use testdata/fuzz/{sanitizedName}/ (trailing slash = directory).
+  const resolvedArtifactPrefix =
+    artifactPrefix ??
+    (libfuzzerCompat
+      ? "./"
+      : path.join(testDir, "testdata", "fuzz", sanitizeTestName(testName)) +
+        path.sep);
 
   // Install platform-specific crash handler (Windows SEH; no-op on Unix).
   if (shmemHandle) {
-    installExceptionHandler(shmemHandle, artifactDir);
+    installExceptionHandler(shmemHandle, resolvedArtifactPrefix);
   }
 
   // Only create the watchdog when a timeout is configured. Creating a Watchdog
@@ -337,7 +351,7 @@ export async function runFuzzLoop(
   const timeoutMs = options.timeoutMs;
   const watchdog: Watchdog | null =
     timeoutMs !== undefined && timeoutMs > 0
-      ? new Watchdog(artifactDir, shmemHandle)
+      ? new Watchdog(resolvedArtifactPrefix, shmemHandle)
       : null;
 
   const reporter = createReporter();
@@ -408,15 +422,19 @@ export async function runFuzzLoop(
           crashData,
           exitKind,
           caughtError,
-          testDir,
-          testName,
+          resolvedArtifactPrefix,
           fuzzer.stats.totalExecs,
         );
         break;
       }
 
       if (iterResult === IterationResult.Interesting) {
-        writeCorpusEntry(cacheDir, testFilePath, testName, input);
+        if (corpusOutputDir !== undefined) {
+          writeCorpusEntryToDir(corpusOutputDir, input);
+        } else if (!libfuzzerCompat) {
+          writeCorpusEntry(cacheDir, testFilePath, testName, input);
+        }
+        // libfuzzerCompat without corpusOutputDir: in-memory only, skip write
 
         // Calibration loop: re-run target to average timing and detect unstable edges.
         // The original fuzz iteration counts as calibration run #1; additional runs start here.
@@ -438,8 +456,7 @@ export async function runFuzzLoop(
             timeoutMs,
             fuzzer,
             shmemHandle,
-            testDir,
-            testName,
+            resolvedArtifactPrefix,
           );
           if (stageResult) {
             result = stageResult;

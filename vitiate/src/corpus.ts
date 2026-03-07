@@ -87,6 +87,14 @@ export function writeCorpusEntry(
   return filePath;
 }
 
+export function writeCorpusEntryToDir(dir: string, data: Buffer): string {
+  mkdirSync(dir, { recursive: true });
+  const hash = contentHash(data);
+  const filePath = path.join(dir, hash);
+  writeExclusive(filePath, data);
+  return filePath;
+}
+
 export type ArtifactKind = "crash" | "timeout";
 
 export function writeArtifact(
@@ -100,6 +108,21 @@ export function writeArtifact(
   const hash = contentHash(data);
   const fileName = `${kind}-${hash}`;
   const filePath = path.join(dir, fileName);
+  writeExclusive(filePath, data);
+  return filePath;
+}
+
+export function writeArtifactWithPrefix(
+  prefix: string,
+  data: Buffer,
+  kind: ArtifactKind = "crash",
+): string {
+  const hash = contentHash(data);
+  const filePath = `${prefix}${kind}-${hash}`;
+  const parentDir = path.dirname(filePath);
+  if (parentDir !== ".") {
+    mkdirSync(parentDir, { recursive: true });
+  }
   writeExclusive(filePath, data);
   return filePath;
 }

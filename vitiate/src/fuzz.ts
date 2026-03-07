@@ -12,6 +12,9 @@ import type { FuzzOptions } from "./config.js";
 import {
   isFuzzingMode,
   isSupervisorChild,
+  isLibfuzzerCompat,
+  getCorpusOutputDir,
+  getArtifactPrefix,
   getCliOptions,
   DEFAULT_MAX_INPUT_LEN,
 } from "./config.js";
@@ -156,13 +159,21 @@ function registerFuzzTest(
         async () => {
           const testDir = getTestDir();
           const relativeTestFilePath = getRelativeTestFilePath();
+          const libfuzzerCompat = isLibfuzzerCompat();
+          const corpusOutputDir = getCorpusOutputDir();
+          const artifactPrefix = getArtifactPrefix();
           const result = await runFuzzLoop(
             target,
             testDir,
             name,
             relativeTestFilePath,
             mergedOptions,
-            getCorpusDirs(),
+            {
+              corpusDirs: getCorpusDirs(),
+              corpusOutputDir: libfuzzerCompat ? corpusOutputDir : undefined,
+              artifactPrefix: libfuzzerCompat ? artifactPrefix : undefined,
+              libfuzzerCompat,
+            },
           );
           if (result.crashed) {
             throw (

@@ -7,7 +7,6 @@
 
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread;
@@ -44,8 +43,9 @@ struct WatchdogShared {
     /// Shmem view for reading the current input before `_exit`.
     /// `None` when running without the supervisor (Vitest integration mode).
     shmem_view: Option<ShmemView>,
-    /// Directory to write timeout artifacts.
-    artifact_dir: PathBuf,
+    /// Prefix for timeout artifact paths (e.g., `./`, `./out/`, `bug-`).
+    /// The artifact filename is appended directly to this prefix.
+    artifact_prefix: String,
     /// Whether V8 TerminateExecution is available.
     v8_available: bool,
     /// The configured timeout multiplier for the `_exit` fallback.
@@ -159,14 +159,18 @@ fn exit_with_input_capture(shared: &WatchdogShared) {
     {
         // Write timeout artifact
         let hash = crate::artifact_hash(&input);
-        let filename = format!("timeout-{hash}");
-        let path = shared.artifact_dir.join(filename);
+        let artifact_path = format!("{}timeout-{hash}", shared.artifact_prefix);
+        let path = std::path::Path::new(&artifact_path);
 
         // Best-effort I/O: we're about to call _exit, so there is no caller to
         // propagate errors to. Ignoring results is intentional.
-        let _ = fs::create_dir_all(&shared.artifact_dir);
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            let _ = fs::create_dir_all(parent);
+        }
 
-        if let Ok(mut file) = fs::File::create(&path) {
+        if let Ok(mut file) = fs::File::create(path) {
             let _ = file.write_all(&input);
             let _ = file.sync_all();
             eprintln!("vitiate: timeout artifact written to {}", path.display());
@@ -203,14 +207,15 @@ pub struct Watchdog {
 impl Watchdog {
     /// Create a new Watchdog. Spawns the background thread and caches the V8 isolate.
     ///
-    /// - `artifact_dir`: Directory to write timeout artifacts.
+    /// - `artifact_prefix`: Prefix for timeout artifact paths (e.g., `./`, `./out/`, `bug-`).
+    ///   The artifact filename (`timeout-{hash}`) is appended directly to the prefix.
     /// - `shmem`: Optional shared memory handle for input capture before `_exit`.
     ///   When running under the supervisor, pass the shmem handle so the watchdog
     ///   can read the current input from shmem before calling `_exit`. When running
     ///   without the supervisor (Vitest integration), pass `null` — the `_exit`
     ///   fallback still fires but without writing a timeout artifact.
     #[napi(constructor)]
-    pub fn new(artifact_dir: String, shmem: Option<&ShmemHandle>) -> Self {
+    pub fn new(artifact_prefix: String, shmem: Option<&ShmemHandle>) -> Self {
         // Cache V8 init result to avoid redundant dlsym resolution on each
         // Watchdog::new(). OnceLock guarantees exactly one initialization.
         static V8_INIT_RESULT: OnceLock<bool> = OnceLock::new();
@@ -235,7 +240,7 @@ impl Watchdog {
             fired: AtomicBool::new(false),
             timeout_ms: AtomicU64::new(0),
             shmem_view,
-            artifact_dir: PathBuf::from(artifact_dir),
+            artifact_prefix,
             v8_available: v8_ok,
             exit_timeout_multiplier: exit_multiplier,
         });
@@ -515,7 +520,7 @@ mod tests {
             fired: AtomicBool::new(false),
             timeout_ms: AtomicU64::new(0),
             shmem_view: Some(view),
-            artifact_dir: PathBuf::from("/tmp/vitiate-test"),
+            artifact_prefix: "/tmp/vitiate-test/".to_owned(),
             v8_available,
             exit_timeout_multiplier: 5,
         });

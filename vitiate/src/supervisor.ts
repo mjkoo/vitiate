@@ -6,7 +6,11 @@
  */
 import type { ChildProcess } from "node:child_process";
 import type { ShmemHandle } from "vitiate-napi";
-import { writeArtifact, type ArtifactKind } from "./corpus.js";
+import {
+  writeArtifact,
+  writeArtifactWithPrefix,
+  type ArtifactKind,
+} from "./corpus.js";
 
 /**
  * Exit code used by the watchdog's `_exit` fallback for timeouts.
@@ -24,6 +28,7 @@ export interface SupervisorOptions {
   shmem: ShmemHandle;
   testDir: string;
   testName: string;
+  artifactPrefix?: string;
   spawnChild: () => ChildProcess;
   maxRespawns?: number;
 }
@@ -72,6 +77,7 @@ export async function runSupervisor(
     shmem,
     testDir,
     testName,
+    artifactPrefix,
     spawnChild,
     maxRespawns = MAX_RESPAWNS,
   } = options;
@@ -110,6 +116,7 @@ export async function runSupervisor(
           "crash",
           respawnCount,
           maxRespawns,
+          artifactPrefix,
         );
         if (result.limitReached) {
           return {
@@ -144,6 +151,7 @@ export async function runSupervisor(
           "timeout",
           respawnCount,
           maxRespawns,
+          artifactPrefix,
         );
         if (result.limitReached) {
           return {
@@ -175,11 +183,15 @@ function recoverAndRespawn(
   kind: ArtifactKind,
   respawnCount: number,
   maxRespawns: number,
+  artifactPrefix?: string,
 ): { crashArtifactPath: string | undefined; limitReached: boolean } {
   let crashArtifactPath: string | undefined;
   const input = shmem.readStashedInput();
   if (input.length > 0) {
-    crashArtifactPath = writeArtifact(testDir, testName, input, kind);
+    crashArtifactPath =
+      artifactPrefix !== undefined
+        ? writeArtifactWithPrefix(artifactPrefix, input, kind)
+        : writeArtifact(testDir, testName, input, kind);
     process.stderr.write(
       `vitiate: ${kind} artifact written to ${crashArtifactPath}\n`,
     );
