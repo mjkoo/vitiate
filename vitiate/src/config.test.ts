@@ -82,7 +82,7 @@ describe("config", () => {
       expect(opts.seed).toBe(42);
     });
 
-    it("drops non-numeric fields and warns on stderr", () => {
+    it("rejects the whole object when any field is invalid and warns per field", () => {
       const chunks: string[] = [];
       const originalWrite = process.stderr.write;
       process.stderr.write = ((chunk: string) => {
@@ -96,16 +96,15 @@ describe("config", () => {
           maxLen: 4096,
         });
         const opts = getCliOptions();
-        expect(opts).toEqual({ maxLen: 4096 });
+        expect(opts).toEqual({});
         expect(chunks.length).toBe(1);
-        expect(chunks[0]).toContain("ignoring non-numeric");
-        expect(chunks[0]).toContain("runs");
+        expect(chunks[0]).toContain("VITIATE_FUZZ_OPTIONS.runs");
       } finally {
         process.stderr.write = originalWrite;
       }
     });
 
-    it("drops negative numbers for non-seed fields and warns on stderr", () => {
+    it("rejects negative numbers for non-seed fields and warns on stderr", () => {
       const chunks: string[] = [];
       const originalWrite = process.stderr.write;
       process.stderr.write = ((chunk: string) => {
@@ -120,8 +119,7 @@ describe("config", () => {
         const opts = getCliOptions();
         expect(opts).toEqual({});
         expect(chunks.length).toBe(1);
-        expect(chunks[0]).toContain("ignoring negative");
-        expect(chunks[0]).toContain("runs");
+        expect(chunks[0]).toContain("VITIATE_FUZZ_OPTIONS.runs");
       } finally {
         process.stderr.write = originalWrite;
       }
@@ -163,7 +161,7 @@ describe("config", () => {
       expect(getCliOptions()).toEqual({ grimoire: false });
     });
 
-    it("ignores non-boolean grimoire values and warns on stderr", () => {
+    it("rejects the whole object for non-boolean grimoire and warns", () => {
       const chunks: string[] = [];
       const originalWrite = process.stderr.write;
       process.stderr.write = ((chunk: string) => {
@@ -177,16 +175,15 @@ describe("config", () => {
           runs: 100,
         });
         const opts = getCliOptions();
-        expect(opts).toEqual({ runs: 100 });
+        expect(opts).toEqual({});
         expect(chunks.length).toBe(1);
-        expect(chunks[0]).toContain("ignoring non-boolean");
-        expect(chunks[0]).toContain("grimoire");
+        expect(chunks[0]).toContain("VITIATE_FUZZ_OPTIONS.grimoire");
       } finally {
         process.stderr.write = originalWrite;
       }
     });
 
-    it("silently omits grimoire: null (consistent with numeric null handling)", () => {
+    it("silently omits grimoire: null (JSON null treated as absent)", () => {
       const chunks: string[] = [];
       const originalWrite = process.stderr.write;
       process.stderr.write = ((chunk: string) => {
@@ -228,7 +225,7 @@ describe("config", () => {
       expect(getCliOptions()).toEqual({ unicode: false });
     });
 
-    it("ignores non-boolean unicode values and warns on stderr", () => {
+    it("rejects the whole object for non-boolean unicode and warns", () => {
       const chunks: string[] = [];
       const originalWrite = process.stderr.write;
       process.stderr.write = ((chunk: string) => {
@@ -242,10 +239,9 @@ describe("config", () => {
           runs: 100,
         });
         const opts = getCliOptions();
-        expect(opts).toEqual({ runs: 100 });
+        expect(opts).toEqual({});
         expect(chunks.length).toBe(1);
-        expect(chunks[0]).toContain("ignoring non-boolean");
-        expect(chunks[0]).toContain("unicode");
+        expect(chunks[0]).toContain("VITIATE_FUZZ_OPTIONS.unicode");
       } finally {
         process.stderr.write = originalWrite;
       }
@@ -292,7 +288,7 @@ describe("config", () => {
       expect(getCliOptions()).toEqual({ redqueen: false });
     });
 
-    it("ignores non-boolean redqueen values and warns on stderr", () => {
+    it("rejects the whole object for non-boolean redqueen and warns", () => {
       const chunks: string[] = [];
       const originalWrite = process.stderr.write;
       process.stderr.write = ((chunk: string) => {
@@ -306,10 +302,9 @@ describe("config", () => {
           runs: 100,
         });
         const opts = getCliOptions();
-        expect(opts).toEqual({ runs: 100 });
+        expect(opts).toEqual({});
         expect(chunks.length).toBe(1);
-        expect(chunks[0]).toContain("ignoring non-boolean");
-        expect(chunks[0]).toContain("redqueen");
+        expect(chunks[0]).toContain("VITIATE_FUZZ_OPTIONS.redqueen");
       } finally {
         process.stderr.write = originalWrite;
       }
@@ -334,7 +329,7 @@ describe("config", () => {
         const opts = getCliOptions();
         expect(opts).toEqual({});
         expect(chunks.length).toBe(1);
-        expect(chunks[0]).toContain("ignoring non-boolean");
+        expect(chunks[0]).toContain("VITIATE_FUZZ_OPTIONS.grimoire");
       } finally {
         process.stderr.write = originalWrite;
       }
@@ -355,6 +350,37 @@ describe("config", () => {
         expect(chunks[0]).toContain(
           "vitiate: warning: invalid VITIATE_FUZZ_OPTIONS JSON:",
         );
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+
+    it("strips unknown fields from the output", () => {
+      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        runs: 100,
+        unknownField: "hello",
+      });
+      const opts = getCliOptions();
+      expect(opts).toEqual({ runs: 100 });
+      expect("unknownField" in opts).toBe(false);
+    });
+
+    it("warns about multiple invalid fields", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+          runs: "bad",
+          grimoire: 42,
+        });
+        const opts = getCliOptions();
+        expect(opts).toEqual({});
+        expect(chunks.length).toBe(2);
       } finally {
         process.stderr.write = originalWrite;
       }
