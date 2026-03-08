@@ -16,28 +16,20 @@ use libafl_bolts::rands::{Rand, StdRand};
 /// The mutate() method makes these RNG calls in order for Bytes entries:
 /// 1. `below(cmps_len)` → entry index
 /// 2. `below(input_len)` → starting offset
-/// 3. `coinflip(0.5)` → splice (true) or overwrite (false)
 ///
 /// For non-Bytes entries, only call 1 is made before delegating to the inner mutator.
-fn find_i2s_seed(
-    cmps_len: usize,
-    input_len: usize,
-    want_idx: usize,
-    want_off: usize,
-    want_splice: bool,
-) -> u64 {
+fn find_i2s_seed(cmps_len: usize, input_len: usize, want_idx: usize, want_off: usize) -> u64 {
     use core::num::NonZero;
     for seed in 0u64..100_000 {
         let mut rng = StdRand::with_seed(seed);
         let idx = rng.below(NonZero::new(cmps_len).unwrap());
         let off = rng.below(NonZero::new(input_len).unwrap());
-        let flip = rng.coinflip(0.5);
-        if idx == want_idx && off == want_off && flip == want_splice {
+        if idx == want_idx && off == want_off {
             return seed;
         }
     }
     panic!(
-        "no seed found for cmps_len={cmps_len}, input_len={input_len}, want_idx={want_idx}, want_off={want_off}, want_splice={want_splice}"
+        "no seed found for cmps_len={cmps_len}, input_len={input_len}, want_idx={want_idx}, want_off={want_off}"
     );
 }
 
@@ -56,7 +48,7 @@ fn make_i2s_state(seed: u64, entries: Vec<CmpValues>, max_size: usize) -> Fuzzer
 
 #[test]
 fn test_i2s_splice_shorter_match_with_longer_operand() {
-    let seed = find_i2s_seed(1, 18, 0, 0, true);
+    let seed = find_i2s_seed(1, 18, 0, 0);
     let entries = vec![CmpValues::Bytes((
         make_cmplog_bytes(b"http"),
         make_cmplog_bytes(b"javascript"),
@@ -73,7 +65,7 @@ fn test_i2s_splice_shorter_match_with_longer_operand() {
 
 #[test]
 fn test_i2s_splice_longer_match_with_shorter_operand() {
-    let seed = find_i2s_seed(1, 14, 0, 0, true);
+    let seed = find_i2s_seed(1, 14, 0, 0);
     let entries = vec![CmpValues::Bytes((
         make_cmplog_bytes(b"javascript"),
         make_cmplog_bytes(b"ftp"),
@@ -89,43 +81,24 @@ fn test_i2s_splice_longer_match_with_shorter_operand() {
 }
 
 #[test]
-fn test_i2s_overwrite_truncates_replacement() {
-    let seed = find_i2s_seed(1, 18, 0, 0, false);
+fn test_i2s_equal_length_always_overwrites() {
+    let seed = find_i2s_seed(1, 4, 0, 0);
     let entries = vec![CmpValues::Bytes((
-        make_cmplog_bytes(b"http"),
-        make_cmplog_bytes(b"javascript"),
+        make_cmplog_bytes(b"test"),
+        make_cmplog_bytes(b"pass"),
     ))];
     let mut state = make_i2s_state(seed, entries, 4096);
-    let mut input = BytesInput::new(b"http://example.com".to_vec());
+    let mut input = BytesInput::new(b"test".to_vec());
     let mut mutator = I2SSpliceReplace::new();
 
     let result = mutator.mutate(&mut state, &mut input).unwrap();
     assert_eq!(result, MutationResult::Mutated);
-    assert_eq!(input.mutator_bytes(), b"java://example.com");
-    assert_eq!(input.mutator_bytes().len(), 18);
-}
-
-#[test]
-fn test_i2s_equal_length_always_overwrites() {
-    for want_splice in [true, false] {
-        let seed = find_i2s_seed(1, 4, 0, 0, want_splice);
-        let entries = vec![CmpValues::Bytes((
-            make_cmplog_bytes(b"test"),
-            make_cmplog_bytes(b"pass"),
-        ))];
-        let mut state = make_i2s_state(seed, entries, 4096);
-        let mut input = BytesInput::new(b"test".to_vec());
-        let mut mutator = I2SSpliceReplace::new();
-
-        let result = mutator.mutate(&mut state, &mut input).unwrap();
-        assert_eq!(result, MutationResult::Mutated);
-        assert_eq!(
-            input.mutator_bytes(),
-            b"pass",
-            "equal-length operands should always overwrite, want_splice={want_splice}"
-        );
-        assert_eq!(input.mutator_bytes().len(), 4, "length should be unchanged");
-    }
+    assert_eq!(
+        input.mutator_bytes(),
+        b"pass",
+        "equal-length operands should always overwrite"
+    );
+    assert_eq!(input.mutator_bytes().len(), 4, "length should be unchanged");
 }
 
 #[test]
@@ -178,7 +151,7 @@ fn test_i2s_splice_exceeding_max_size_falls_back_to_overwrite() {
     let mut input_bytes = vec![0u8; 120];
     input_bytes[0..4].copy_from_slice(b"http");
 
-    let seed = find_i2s_seed(1, 120, 0, 0, true);
+    let seed = find_i2s_seed(1, 120, 0, 0);
     let entries = vec![CmpValues::Bytes((
         make_cmplog_bytes(b"http"),
         make_cmplog_bytes(b"12345678901234567890"),
@@ -207,7 +180,7 @@ fn test_i2s_splice_within_max_size_proceeds() {
     let mut input_bytes = vec![0x41u8; 100];
     input_bytes[0..4].copy_from_slice(b"http");
 
-    let seed = find_i2s_seed(1, 100, 0, 0, true);
+    let seed = find_i2s_seed(1, 100, 0, 0);
     let entries = vec![CmpValues::Bytes((
         make_cmplog_bytes(b"http"),
         make_cmplog_bytes(b"javascript"),
@@ -241,7 +214,7 @@ fn test_i2s_bidirectional_matching() {
         make_cmplog_bytes(b"xyz"),
     ))];
 
-    let seed = find_i2s_seed(1, 3, 0, 0, false);
+    let seed = find_i2s_seed(1, 3, 0, 0);
     let mut state = make_i2s_state(seed, entries_forward, 4096);
     let mut input = BytesInput::new(b"abc".to_vec());
     let mut mutator = I2SSpliceReplace::new();
@@ -261,7 +234,7 @@ fn test_i2s_bidirectional_matching() {
 #[test]
 fn test_i2s_partial_prefix_match_with_splice() {
     let input_bytes = b"htt://x".to_vec();
-    let seed = find_i2s_seed(1, 7, 0, 0, true);
+    let seed = find_i2s_seed(1, 7, 0, 0);
     let entries = vec![CmpValues::Bytes((
         make_cmplog_bytes(b"http"),
         make_cmplog_bytes(b"javascript"),
@@ -277,6 +250,28 @@ fn test_i2s_partial_prefix_match_with_splice() {
         input.mutator_bytes().len(),
         14,
         "length should be 7 - 3 + 10 = 14"
+    );
+}
+
+#[test]
+fn test_i2s_wrap_around_finds_match_behind_starting_offset() {
+    // Match is at position 0, but the random offset lands past it.
+    // The wrap-around scan should still find the match.
+    let seed = find_i2s_seed(1, 18, 0, 10);
+    let entries = vec![CmpValues::Bytes((
+        make_cmplog_bytes(b"http"),
+        make_cmplog_bytes(b"javascript"),
+    ))];
+    let mut state = make_i2s_state(seed, entries, 4096);
+    let mut input = BytesInput::new(b"http://example.com".to_vec());
+    let mut mutator = I2SSpliceReplace::new();
+
+    let result = mutator.mutate(&mut state, &mut input).unwrap();
+    assert_eq!(result, MutationResult::Mutated);
+    assert_eq!(
+        input.mutator_bytes(),
+        b"javascript://example.com",
+        "wrap-around scan should find match at position 0 despite starting at offset 10"
     );
 }
 

@@ -9,9 +9,19 @@ use libafl_bolts::rands::Rand;
 use libafl_bolts::{AsSlice, HasLen, Named};
 
 /// An I2S mutator that extends `I2SRandReplace` with a length-changing splice path
-/// for `CmpValues::Bytes` entries. When a byte operand match is found, it randomly
-/// chooses between overwrite (same-length, matching `I2SRandReplace` behavior) and
-/// splice (delete matched bytes, insert full replacement, changing input length).
+/// for `CmpValues::Bytes` entries. When a byte operand match is found, it splices
+/// (delete matched bytes, insert full replacement) when operand lengths differ, or
+/// overwrites in-place when lengths match.
+///
+/// Key differences from `I2SRandReplace`:
+/// - Uses wrap-around scanning: starts from a random offset but checks ALL input
+///   positions, ensuring matches at any position are found.
+/// - Enforces a minimum match threshold (half the source length, ≥ 2 bytes) to
+///   avoid wasting mutations on useless single-byte partial matches.
+/// - Always uses splice when source and replacement have different lengths, since
+///   overwriting a prefix of the replacement is incorrect for equality comparisons
+///   (produces a truncated constant that won't satisfy the comparison).
+///
 /// Non-`Bytes` variants delegate to the inner `I2SRandReplace`.
 pub(super) struct I2SSpliceReplace {
     inner: I2SRandReplace,
@@ -72,9 +82,8 @@ where
                 let off = state
                     .rand_mut()
                     .below(core::num::NonZero::new(input_len).unwrap());
-                let use_splice = state.rand_mut().coinflip(0.5);
                 let max_size = state.max_size();
-                self.mutate_bytes_splice(input, &v.0, &v.1, off, max_size, use_splice)
+                self.mutate_bytes_splice(input, &v.0, &v.1, off, max_size)
             }
             // Non-Bytes variants: delegate entirely to inner I2SRandReplace.
             CmpValues::U8(_) | CmpValues::U16(_) | CmpValues::U32(_) | CmpValues::U64(_) => {
@@ -96,10 +105,18 @@ where
 impl I2SSpliceReplace {
     /// Handle a `CmpValues::Bytes` match with splice/overwrite logic.
     ///
-    /// Scans for both operands bidirectionally (v0 found → replace with v1,
-    /// v1 found → replace with v0). Uses decreasing prefix lengths at each
-    /// position. On match, randomly chooses between splice and overwrite
-    /// (equal-length operands always use overwrite).
+    /// Uses wrap-around scanning: starts from a random offset `off` but checks
+    /// all `input_len` positions by wrapping to position 0 after reaching the end.
+    /// This ensures matches at any position are found regardless of the starting
+    /// offset, while the random start provides diversity when multiple matches exist.
+    ///
+    /// Enforces a minimum match threshold: at least half the source operand length
+    /// and at least 2 bytes. This prevents wasting mutations on single-byte partial
+    /// matches (which dominated the previous behavior at ~99% of all matches).
+    ///
+    /// When source and replacement have different lengths, always uses splice
+    /// (length-changing mutation) since overwriting a prefix is incorrect for
+    /// equality comparisons.
     fn mutate_bytes_splice<I>(
         &self,
         input: &mut I,
@@ -107,7 +124,6 @@ impl I2SSpliceReplace {
         v1: &libafl::observers::cmp::CmplogBytes,
         off: usize,
         max_size: usize,
-        use_splice: bool,
     ) -> std::result::Result<MutationResult, libafl::Error>
     where
         I: ResizableMutator<u8> + HasMutatorBytes,
@@ -119,26 +135,32 @@ impl I2SSpliceReplace {
 
         let input_len = input.len();
 
-        for i in off..input_len {
+        // Wrap-around scan: check all positions starting from `off`.
+        for k in 0..input_len {
+            let i = (off + k) % input_len;
             for &(source, replacement) in &source_replacement_pairs {
-                if source.is_empty() {
+                if source.is_empty() || replacement.is_empty() {
                     continue;
                 }
-                if replacement.is_empty() {
+                let max_match = core::cmp::min(source.len(), input_len - i);
+                // Minimum match threshold: at least half the source length,
+                // at least 2 bytes. Prevents useless single-byte partial matches.
+                let min_match = core::cmp::max(2, source.len().div_ceil(2));
+                if max_match < min_match {
                     continue;
                 }
-                let mut matched_prefix_len = core::cmp::min(source.len(), input_len - i);
-                while matched_prefix_len > 0 {
+                // Try decreasing prefix lengths from max down to minimum threshold.
+                let mut matched_prefix_len = max_match;
+                while matched_prefix_len >= min_match {
                     if source[..matched_prefix_len]
                         == input.mutator_bytes()[i..i + matched_prefix_len]
                     {
-                        return Ok(self.apply_splice_or_overwrite(
+                        return Ok(self.apply_mutation(
                             input,
                             replacement,
                             i,
                             matched_prefix_len,
                             max_size,
-                            use_splice,
                         ));
                     }
                     matched_prefix_len -= 1;
@@ -149,19 +171,21 @@ impl I2SSpliceReplace {
         Ok(MutationResult::Skipped)
     }
 
-    /// Apply either splice or overwrite at the match position.
+    /// Apply the mutation at the match position.
     ///
-    /// For equal-length operands, always overwrites. Otherwise, uses the
-    /// pre-generated coin flip.
-    /// Splice respects max_size — falls back to overwrite if exceeded.
-    fn apply_splice_or_overwrite<I>(
+    /// When the matched prefix length equals the replacement length, overwrites
+    /// in-place (splice and overwrite are identical for equal-length operands).
+    /// Otherwise, always uses splice: overwriting a prefix of a longer replacement
+    /// produces a truncated constant that cannot satisfy an equality comparison.
+    /// Splice respects max_size — falls back to overwrite if the spliced result
+    /// would exceed the limit.
+    fn apply_mutation<I>(
         &self,
         input: &mut I,
         replacement: &[u8],
         pos: usize,
         matched_prefix_len: usize,
         max_size: usize,
-        use_splice: bool,
     ) -> MutationResult
     where
         I: ResizableMutator<u8> + HasMutatorBytes,
@@ -170,18 +194,18 @@ impl I2SSpliceReplace {
         let current_len = input.len();
 
         if matched_prefix_len == replacement_len {
-            // Equal length: always overwrite (splice and overwrite are identical).
+            // Equal length: overwrite in-place (splice is identical).
             self.apply_overwrite(input, replacement, pos, matched_prefix_len);
-        } else if use_splice {
+        } else {
+            // Different lengths: always splice to produce the full replacement.
             let new_len = current_len - matched_prefix_len + replacement_len;
             if new_len <= max_size {
                 self.apply_splice(input, replacement, pos, matched_prefix_len);
             } else {
-                // Splice would exceed max_size — fall back to overwrite.
+                // Splice would exceed max_size — fall back to overwrite as a
+                // best-effort partial mutation.
                 self.apply_overwrite(input, replacement, pos, matched_prefix_len);
             }
-        } else {
-            self.apply_overwrite(input, replacement, pos, matched_prefix_len);
         }
 
         MutationResult::Mutated

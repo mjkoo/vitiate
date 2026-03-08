@@ -112,8 +112,13 @@ export class PrototypePollutionDetector implements Detector {
       // Check for added or modified properties
       for (const key of currentKeys) {
         const descriptor = Object.getOwnPropertyDescriptor(proto, key);
-        if (descriptor && typeof descriptor.value === "function") {
-          continue; // Ignore function-valued properties (polyfills)
+        // Skip accessor properties (get/set) and function-valued data
+        // properties (polyfills) — matching the captureSnapshot filter.
+        if (
+          descriptor &&
+          (!("value" in descriptor) || typeof descriptor.value === "function")
+        ) {
+          continue;
         }
 
         const prev = properties.get(key);
