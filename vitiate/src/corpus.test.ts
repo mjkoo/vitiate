@@ -5,6 +5,7 @@ import {
   writeFileSync,
   existsSync,
   readFileSync,
+  readdirSync,
   rmSync,
 } from "node:fs";
 import path from "node:path";
@@ -19,6 +20,7 @@ import {
   writeCorpusEntryToDir,
   writeArtifact,
   writeArtifactWithPrefix,
+  replaceArtifact,
   sanitizeTestName,
   getCacheDir,
   loadCorpusFromDirs,
@@ -498,6 +500,85 @@ describe("corpus", () => {
       const dirPath = path.join(tmpDir, "adir");
       mkdirSync(dirPath, { recursive: true });
       expect(() => deleteCorpusEntry(dirPath)).toThrow();
+    });
+  });
+
+  describe("replaceArtifact", () => {
+    it("replaces artifact with correct filename and deletes old file", () => {
+      const oldData = Buffer.from("old crash data");
+      const newData = Buffer.from("new smaller");
+      const oldPath = writeArtifactWithPrefix(
+        path.join(tmpDir, "out") + path.sep,
+        oldData,
+        "crash",
+      );
+
+      expect(existsSync(oldPath)).toBe(true);
+
+      const newPath = replaceArtifact(oldPath, newData, "crash");
+
+      // New file exists with correct content
+      expect(existsSync(newPath)).toBe(true);
+      expect(readFileSync(newPath)).toEqual(newData);
+
+      // New filename follows crash-{hash} pattern
+      const expectedHash = createHash("sha256").update(newData).digest("hex");
+      expect(path.basename(newPath)).toBe(`crash-${expectedHash}`);
+
+      // Old file is deleted
+      expect(existsSync(oldPath)).toBe(false);
+    });
+
+    it("handles same-hash case (overwrite in place)", () => {
+      const data = Buffer.from("same data");
+      const oldPath = writeArtifactWithPrefix(
+        path.join(tmpDir, "out") + path.sep,
+        data,
+        "crash",
+      );
+
+      const newPath = replaceArtifact(oldPath, data, "crash");
+
+      expect(newPath).toBe(oldPath);
+      expect(existsSync(newPath)).toBe(true);
+      expect(readFileSync(newPath)).toEqual(data);
+    });
+
+    it("writes atomically via temp file and rename", () => {
+      const oldData = Buffer.from("original");
+      const newData = Buffer.from("replacement");
+      const oldPath = writeArtifactWithPrefix(
+        path.join(tmpDir, "out") + path.sep,
+        oldData,
+        "crash",
+      );
+
+      const newPath = replaceArtifact(oldPath, newData, "crash");
+
+      // Result is correct - the rename completed successfully
+      expect(existsSync(newPath)).toBe(true);
+      expect(readFileSync(newPath)).toEqual(newData);
+
+      // No temp files left behind
+      const dir = path.join(tmpDir, "out");
+      const files = readdirSync(dir);
+      expect(files.every((f) => !f.startsWith(".tmp-"))).toBe(true);
+    });
+
+    it("works with timeout artifacts", () => {
+      const oldData = Buffer.from("timeout data");
+      const newData = Buffer.from("smaller");
+      const oldPath = writeArtifactWithPrefix(
+        path.join(tmpDir, "out") + path.sep,
+        oldData,
+        "timeout",
+      );
+
+      const newPath = replaceArtifact(oldPath, newData, "timeout");
+
+      expect(path.basename(newPath)).toMatch(/^timeout-[0-9a-f]{64}$/);
+      expect(existsSync(newPath)).toBe(true);
+      expect(existsSync(oldPath)).toBe(false);
     });
   });
 

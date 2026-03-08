@@ -71,10 +71,17 @@ export function printCrash(error: Error, artifactPath: string): void {
   );
 }
 
-export function printSummary(state: ReporterState, stats: FuzzerStats): void {
+export function printSummary(
+  state: ReporterState,
+  stats: FuzzerStats,
+  duplicateCrashesSkipped = 0,
+): void {
   if (state.quiet) return;
   const elapsed = ((Date.now() - state.startTime) / 1000).toFixed(1);
-  process.stderr.write(
-    `\nfuzz: done - execs: ${stats.totalExecs}, corpus: ${stats.corpusSize}, edges: ${stats.coverageEdges}, elapsed: ${elapsed}s\n`,
-  );
+  let line = `\nfuzz: done - execs: ${stats.totalExecs}, corpus: ${stats.corpusSize}, edges: ${stats.coverageEdges}, elapsed: ${elapsed}s`;
+  if (duplicateCrashesSkipped > 0) {
+    line += `, dedup skipped: ${duplicateCrashesSkipped}`;
+  }
+  line += "\n";
+  process.stderr.write(line);
 }

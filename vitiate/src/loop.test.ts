@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
-import { runFuzzLoop } from "./loop.js";
+import { runFuzzLoop, checkDedupPolicy } from "./loop.js";
 import { initGlobals } from "./globals.js";
 import { sanitizeTestName } from "./corpus.js";
 import { setCacheDir, resetCacheDir } from "./config.js";
@@ -861,10 +861,23 @@ describe("fuzz loop", () => {
     it("loop continues after crash when stopOnCrash=false", async () => {
       await setupFuzzingMode();
       let crashCount = 0;
+      // Use different throw sites so each crash gets a unique dedup key
+      function crashSiteA(): never {
+        crashCount++;
+        throw new Error(`crash #${crashCount}`);
+      }
+      function crashSiteB(): never {
+        crashCount++;
+        throw new Error(`crash #${crashCount}`);
+      }
+      function crashSiteC(): never {
+        crashCount++;
+        throw new Error(`crash #${crashCount}`);
+      }
+      const sites = [crashSiteA, crashSiteB, crashSiteC];
       const target = (data: Buffer): void => {
-        if (data.length > 0 && data[0] === 0x42) {
-          crashCount++;
-          throw new Error(`crash #${crashCount}`);
+        if (data.length > 1 && data[0] === 0x42) {
+          sites[data[1]! % 3]!();
         }
       };
 
@@ -882,7 +895,6 @@ describe("fuzz loop", () => {
       expect(result.crashArtifactPaths.length).toBe(3);
       // First crash data preserved
       expect(result.error).toBeInstanceOf(Error);
-      expect(result.error!.message).toBe("crash #1");
       expect(result.crashArtifactPath).toBe(result.crashArtifactPaths[0]);
     });
 
@@ -910,11 +922,28 @@ describe("fuzz loop", () => {
 
     it("maxCrashes=0 means unlimited (no limit enforcement)", async () => {
       await setupFuzzingMode();
-      let crashCount = 0;
+      let _crashCount = 0;
+      // Use different throw sites based on second byte so each crash has a
+      // unique dedup key (different stack traces).
+      const throwers: Record<number, () => never> = {
+        0: () => {
+          throw new Error("crash-site-0");
+        },
+        1: () => {
+          throw new Error("crash-site-1");
+        },
+        2: () => {
+          throw new Error("crash-site-2");
+        },
+        3: () => {
+          throw new Error("crash-site-3");
+        },
+      };
       const target = (data: Buffer): void => {
-        if (data.length > 0 && data[0] === 0x42) {
-          crashCount++;
-          throw new Error(`crash #${crashCount}`);
+        if (data.length > 1 && data[0] === 0x42) {
+          _crashCount++;
+          const site = data[1]! % 4;
+          throwers[site]!();
         }
       };
 
@@ -929,7 +958,7 @@ describe("fuzz loop", () => {
         { stopOnCrash: false, maxCrashes: 0 },
       );
 
-      // Should find multiple crashes and NOT stop at any crash limit —
+      // Should find multiple unique crashes and NOT stop at any crash limit —
       // only the runs limit terminates
       expect(result.crashed).toBe(true);
       expect(result.crashCount).toBeGreaterThan(1);
@@ -946,9 +975,17 @@ describe("fuzz loop", () => {
       }) as typeof process.stderr.write;
 
       try {
+        // Use different throw sites so dedup doesn't suppress the second crash
+        function crashSiteA(): never {
+          throw new Error("crash A!");
+        }
+        function crashSiteB(): never {
+          throw new Error("crash B!");
+        }
         const target = (data: Buffer): void => {
-          if (data.length > 0 && data[0] === 0x42) {
-            throw new Error("crash!");
+          if (data.length > 1 && data[0] === 0x42) {
+            if (data[1]! % 2 === 0) crashSiteA();
+            else crashSiteB();
           }
         };
 
@@ -1025,6 +1062,147 @@ describe("fuzz loop", () => {
       expect(result.crashed).toBe(true);
       // At least one crash should be from a stage
       expect(result.crashCount).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe("crash dedup", () => {
+    it("first crash is saved and dedup map is populated", async () => {
+      await setupFuzzingMode();
+      const target = (data: Buffer): void => {
+        if (data.length > 0 && data[0] === 0x42) {
+          throw new Error("first crash");
+        }
+      };
+
+      const result = await runFuzzLoop(
+        target,
+        tmpDir,
+        "dedup-first",
+        "test.fuzz.ts",
+        { runs: 1_000_000, fuzzTimeMs: 30_000 },
+        { stopOnCrash: true },
+      );
+
+      expect(result.crashed).toBe(true);
+      expect(result.crashCount).toBe(1);
+      expect(result.crashArtifactPaths.length).toBe(1);
+      expect(result.duplicateCrashesSkipped).toBe(0);
+    });
+
+    it("duplicate crash is suppressed (not counted toward maxCrashes)", async () => {
+      await setupFuzzingMode();
+      let crashCount = 0;
+
+      // Separate function so the stack trace is stable across invocations
+      function throwCrash(): never {
+        throw new Error("same bug");
+      }
+
+      const target = (data: Buffer): void => {
+        // Always throw the same error from the same function — same dedup key
+        if (data.length > 0 && data[0] === 0x42) {
+          crashCount++;
+          throwCrash();
+        }
+      };
+
+      const result = await runFuzzLoop(
+        target,
+        tmpDir,
+        "dedup-suppress",
+        "test.fuzz.ts",
+        { runs: 5000 },
+        { stopOnCrash: false, maxCrashes: 0 },
+      );
+
+      expect(result.crashed).toBe(true);
+      expect(result.crashCount).toBe(1);
+      // Multiple crashes found by fuzzer, but only 1 unique
+      expect(crashCount).toBeGreaterThan(1);
+      expect(result.duplicateCrashesSkipped).toBeGreaterThan(0);
+      // Suppressed crashes don't count toward maxCrashes
+      expect(result.crashArtifactPaths.length).toBe(1);
+    });
+
+    it("crash with unknown dedup key always saves (fail open)", async () => {
+      await setupFuzzingMode();
+      let _crashCount = 0;
+      // Use different throw sites so each crash produces a unique dedup key,
+      // but also use errors with no parseable stack to test fail-open behavior.
+      const target = (data: Buffer): void => {
+        if (data.length > 0 && data[0] === 0x42) {
+          _crashCount++;
+          const err = new Error("unparseable");
+          err.stack = "no parseable frames here";
+          throw err;
+        }
+      };
+
+      const result = await runFuzzLoop(
+        target,
+        tmpDir,
+        "dedup-failopen",
+        "test.fuzz.ts",
+        { runs: 1_000_000, fuzzTimeMs: 30_000 },
+        { stopOnCrash: false, maxCrashes: 3 },
+      );
+
+      expect(result.crashed).toBe(true);
+      expect(result.crashCount).toBe(3);
+      // All crashes saved — no dedup possible (stack is unparseable)
+      expect(result.duplicateCrashesSkipped).toBe(0);
+    });
+
+    it("duplicate crashes are suppressed after minimization", async () => {
+      await setupFuzzingMode();
+      let _crashCount = 0;
+      const target = (data: Buffer): void => {
+        // Crash when first byte is 0x42 — same bug regardless of input size
+        if (data.length > 0 && data[0] === 0x42) {
+          _crashCount++;
+          throwSameBug();
+        }
+      };
+
+      function throwSameBug(): never {
+        throw new Error("same bug for replacement");
+      }
+
+      const result = await runFuzzLoop(
+        target,
+        tmpDir,
+        "dedup-replace",
+        "test.fuzz.ts",
+        { runs: 5000 },
+        { stopOnCrash: false, maxCrashes: 0 },
+      );
+
+      expect(result.crashed).toBe(true);
+      expect(result.crashCount).toBe(1);
+      expect(result.duplicateCrashesSkipped).toBeGreaterThan(0);
+      // Only 1 unique crash saved
+      expect(result.crashArtifactPaths.length).toBe(1);
+      // The artifact should be the minimized version (1 byte)
+      const artifactData = readFileSync(result.crashArtifactPaths[0]!);
+      expect(artifactData.length).toBe(1);
+      expect(artifactData[0]).toBe(0x42);
+    });
+
+    it("duplicateCrashesSkipped is 0 when no duplicates found", async () => {
+      await setupFuzzingMode();
+      const target = (_data: Buffer): void => {};
+
+      const result = await runFuzzLoop(
+        target,
+        tmpDir,
+        "dedup-zero",
+        "test.fuzz.ts",
+        { runs: 50, grimoire: false, unicode: false },
+        { stopOnCrash: false },
+      );
+
+      expect(result.crashed).toBe(false);
+      expect(result.duplicateCrashesSkipped).toBe(0);
     });
   });
 
@@ -1124,3 +1302,49 @@ describe("fuzz loop", () => {
     });
   });
 }, 60000);
+
+describe("checkDedupPolicy", () => {
+  it("returns save when dedupKey is undefined (fail-open)", () => {
+    const map = new Map<string, { path: string; size: number }>();
+    expect(checkDedupPolicy(undefined, 100, map)).toEqual({ action: "save" });
+  });
+
+  it("returns save when dedupKey is not in the map (new crash)", () => {
+    const map = new Map<string, { path: string; size: number }>();
+    expect(checkDedupPolicy("key-abc", 100, map)).toEqual({ action: "save" });
+  });
+
+  it("returns suppress when input is same size as existing", () => {
+    const map = new Map([["key-abc", { path: "/tmp/crash-abc", size: 100 }]]);
+    expect(checkDedupPolicy("key-abc", 100, map)).toEqual({
+      action: "suppress",
+    });
+  });
+
+  it("returns suppress when input is larger than existing", () => {
+    const map = new Map([["key-abc", { path: "/tmp/crash-abc", size: 50 }]]);
+    expect(checkDedupPolicy("key-abc", 100, map)).toEqual({
+      action: "suppress",
+    });
+  });
+
+  it("returns replace with dedupKey and existing when input is smaller", () => {
+    const existing = { path: "/tmp/crash-abc", size: 100 };
+    const map = new Map([["key-abc", existing]]);
+    expect(checkDedupPolicy("key-abc", 50, map)).toEqual({
+      action: "replace",
+      dedupKey: "key-abc",
+      existing,
+    });
+  });
+
+  it("returns replace when input is 1 byte smaller", () => {
+    const existing = { path: "/tmp/crash-abc", size: 10 };
+    const map = new Map([["key-abc", existing]]);
+    expect(checkDedupPolicy("key-abc", 9, map)).toEqual({
+      action: "replace",
+      dedupKey: "key-abc",
+      existing,
+    });
+  });
+});

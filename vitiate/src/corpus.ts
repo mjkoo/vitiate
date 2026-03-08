@@ -1,12 +1,13 @@
 /**
  * Corpus management: load seed/cached corpus, write entries and crash artifacts.
  */
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -170,6 +171,42 @@ export function writeArtifactWithPrefix(
   }
   writeExclusive(filePath, data);
   return filePath;
+}
+
+/**
+ * Atomically replace an existing artifact with new data.
+ * Writes to a temp file, renames into place, and deletes the old file
+ * if the path changed. Returns the new artifact path.
+ */
+export function replaceArtifact(
+  oldPath: string,
+  newData: Buffer,
+  kind: ArtifactKind,
+): string {
+  const hash = contentHash(newData);
+  const dir = path.dirname(oldPath);
+  const newFileName = `${kind}-${hash}`;
+  const newPath = path.join(dir, newFileName);
+
+  // Write to temp file in same directory (ensures same-filesystem rename)
+  const tmpPath = path.join(dir, `.tmp-${newFileName}-${randomUUID()}`);
+  writeFileSync(tmpPath, newData);
+
+  // Atomic rename into place
+  renameSync(tmpPath, newPath);
+
+  // Delete old file if path differs
+  if (newPath !== oldPath) {
+    try {
+      unlinkSync(oldPath);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw e;
+      }
+    }
+  }
+
+  return newPath;
 }
 
 function writeExclusive(filePath: string, data: Buffer): void {

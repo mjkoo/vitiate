@@ -73,6 +73,22 @@ describe("reporter", () => {
     expect(output).toContain("edges: 800");
   });
 
+  it("printSummary includes dedup skipped count when > 0", () => {
+    const state = createReporter(false);
+    const stats: FuzzerStats = {
+      totalExecs: 100000,
+      corpusSize: 200,
+      solutionCount: 1,
+      coverageEdges: 800,
+      execsPerSec: 50000,
+    };
+
+    printSummary(state, stats, 5);
+
+    const output = stderrSpy.mock.calls.map((c) => c[0] as string).join("");
+    expect(output).toContain("dedup skipped: 5");
+  });
+
   it("first reportStatus after startReporting shows 0 new when corpus hasn't grown", () => {
     const state = createReporter(false);
     const stats: FuzzerStats = {

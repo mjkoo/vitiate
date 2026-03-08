@@ -28,9 +28,11 @@ import {
   writeCorpusEntry,
   writeCorpusEntryToDir,
   writeArtifactWithPrefix,
+  replaceArtifact,
   sanitizeTestName,
   type ArtifactKind,
 } from "./corpus.js";
+import { computeDedupKey } from "./dedup.js";
 import {
   createReporter,
   startReporting,
@@ -50,6 +52,7 @@ export interface FuzzLoopResult {
   crashArtifactPath?: string;
   crashCount: number;
   crashArtifactPaths: string[];
+  duplicateCrashesSkipped: number;
   totalExecs: number;
 }
 
@@ -265,6 +268,36 @@ async function runStage(
   return null;
 }
 
+export type DedupAction =
+  | { action: "save" }
+  | {
+      action: "replace";
+      dedupKey: string;
+      existing: { path: string; size: number };
+    }
+  | { action: "suppress" };
+
+export function checkDedupPolicy(
+  dedupKey: string | undefined,
+  inputSize: number,
+  crashDedupMap: Map<string, { path: string; size: number }>,
+): DedupAction {
+  if (dedupKey === undefined) {
+    return { action: "save" };
+  }
+
+  const existing = crashDedupMap.get(dedupKey);
+  if (existing === undefined) {
+    return { action: "save" };
+  }
+
+  if (inputSize < existing.size) {
+    return { action: "replace", dedupKey, existing };
+  }
+
+  return { action: "suppress" };
+}
+
 export interface FuzzLoopOptions {
   corpusDirs?: string[];
   corpusOutputDir?: string;
@@ -427,21 +460,61 @@ export async function runFuzzLoop(
   let firstCrashInput: Buffer | undefined;
   let firstCrashArtifactPath: string | undefined;
 
+  // Crash dedup state
+  const crashDedupMap = new Map<string, { path: string; size: number }>();
+  let duplicateCrashesSkipped = 0;
+
   /**
-   * Record a crash or timeout: write artifact, accumulate state, and return
-   * whether the loop should terminate.
+   * Record a crash or timeout: check dedup, write artifact, accumulate state,
+   * and return whether the loop should terminate.
    */
   const handleCrash = (
     input: Buffer,
     exitKind: ExitKind,
     error: Error | undefined,
   ): boolean => {
+    const dedupKey = computeDedupKey(exitKind, error);
+    const dedupAction = checkDedupPolicy(dedupKey, input.length, crashDedupMap);
+
+    if (dedupAction.action === "replace") {
+      const artifactKind: ArtifactKind =
+        exitKind === ExitKind.Timeout ? "timeout" : "crash";
+      const newPath = replaceArtifact(
+        dedupAction.existing.path,
+        input,
+        artifactKind,
+      );
+      crashDedupMap.set(dedupAction.dedupKey, {
+        path: newPath,
+        size: input.length,
+      });
+      const idx = crashArtifactPaths.indexOf(dedupAction.existing.path);
+      if (idx !== -1) {
+        crashArtifactPaths[idx] = newPath;
+      }
+      if (firstCrashArtifactPath === dedupAction.existing.path) {
+        firstCrashArtifactPath = newPath;
+      }
+      return false;
+    }
+
+    if (dedupAction.action === "suppress") {
+      duplicateCrashesSkipped++;
+      return false;
+    }
+
+    // action === "save": new crash or fail-open
     const artifactPath = writeCrashArtifact(
       input,
       exitKind,
       error,
       resolvedArtifactPrefix,
     );
+
+    if (dedupKey !== undefined) {
+      crashDedupMap.set(dedupKey, { path: artifactPath, size: input.length });
+    }
+
     crashCount++;
     crashArtifactPaths.push(artifactPath);
     if (crashCount === 1) {
@@ -452,7 +525,6 @@ export async function runFuzzLoop(
 
     if (stopOnCrash) return true;
 
-    // Check maxCrashes limit (0 = unlimited)
     if (maxCrashes !== 0 && crashCount >= maxCrashes) {
       process.stderr.write(
         `vitiate: warning: maxCrashes limit reached (${maxCrashes}), stopping\n`,
@@ -573,7 +645,7 @@ export async function runFuzzLoop(
     }
   } finally {
     stopReporting(reporter);
-    printSummary(reporter, fuzzer.stats);
+    printSummary(reporter, fuzzer.stats, duplicateCrashesSkipped);
     watchdog?.shutdown();
     process.removeListener("SIGINT", sigintHandler);
   }
@@ -585,6 +657,7 @@ export async function runFuzzLoop(
     crashArtifactPath: firstCrashArtifactPath,
     crashCount,
     crashArtifactPaths,
+    duplicateCrashesSkipped,
     totalExecs: fuzzer.stats.totalExecs,
   };
 }
