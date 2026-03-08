@@ -301,6 +301,33 @@ describe("-dict flag", () => {
   });
 });
 
+describe("forkExplicit in CliArgs", () => {
+  it("sets forkExplicit when -fork flag is present", () => {
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      const result = parseArgs(argv("./test.ts", "-fork=1"));
+      expect(result.forkExplicit).toBe(true);
+    } finally {
+      stderrSpy.mockRestore();
+    }
+  });
+
+  it("sets forkExplicit when -fork=0 is present", () => {
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      const result = parseArgs(argv("./test.ts", "-fork=0"));
+      expect(result.forkExplicit).toBe(true);
+    } finally {
+      stderrSpy.mockRestore();
+    }
+  });
+
+  it("leaves forkExplicit undefined when -fork is absent", () => {
+    const result = parseArgs(argv("./test.ts"));
+    expect(result.forkExplicit).toBeUndefined();
+  });
+});
+
 describe("CLI env var forwarding", () => {
   const originalOpts = process.env["VITIATE_FUZZ_OPTIONS"];
 

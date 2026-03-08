@@ -64,6 +64,17 @@ const FuzzOptionsSchema = v.object({
    * Crash output always prints regardless of this flag.
    */
   quiet: v.optional(v.boolean()),
+  /**
+   * Crash termination control.
+   * `true` = stop on first crash, `false` = continue after crash,
+   * `"auto"` = mode-dependent default (vitest/fork → continue, CLI non-fork → stop).
+   */
+  stopOnCrash: v.optional(v.union([v.boolean(), v.literal("auto")])),
+  /**
+   * Maximum number of crashes to collect before terminating.
+   * 0 = unlimited. Only effective when `stopOnCrash` is `false`.
+   */
+  maxCrashes: v.optional(NonNegativeInteger),
 });
 
 export type FuzzOptions = v.InferOutput<typeof FuzzOptionsSchema>;
@@ -76,6 +87,7 @@ const CliIpcSchema = v.object({
   corpusOutputDir: v.optional(v.string()),
   artifactPrefix: v.optional(v.string()),
   dictionaryPath: v.optional(v.string()),
+  forkExplicit: v.optional(v.boolean()),
 });
 
 export type CliIpc = v.InferOutput<typeof CliIpcSchema>;
@@ -397,6 +409,33 @@ export function getCoverageMapSize(): number {
  */
 export function resetCoverageMapSize(): void {
   resolvedCoverageMapSize = undefined;
+}
+
+/**
+ * Resolve the tri-state `stopOnCrash` option to a concrete boolean.
+ *
+ * Resolution rules for `"auto"` (or `undefined`, which defaults to `"auto"`):
+ * - Vitest mode (`libfuzzerCompat=false`): resolves to `false` (continue after crash).
+ * - CLI mode with explicit `-fork` flag: resolves to `false`.
+ * - CLI mode without `-fork` flag: resolves to `true` (stop on first crash).
+ *
+ * Explicit `true` or `false` passes through unchanged.
+ */
+export function resolveStopOnCrash(
+  stopOnCrash: boolean | "auto" | undefined,
+  libfuzzerCompat: boolean,
+  forkExplicit: boolean | undefined,
+): boolean {
+  if (stopOnCrash === true || stopOnCrash === false) {
+    return stopOnCrash;
+  }
+  // "auto" or undefined: mode-dependent default
+  if (!libfuzzerCompat) {
+    // Vitest mode: continue after crash
+    return false;
+  }
+  // CLI mode: depends on fork flag
+  return !forkExplicit;
 }
 
 /** Default max input length in bytes for shmem allocation. */

@@ -175,6 +175,7 @@ The CLI SHALL pass CLI-specific IPC configuration to the child process via the `
 - `artifactPrefix` — set to the `-artifact_prefix` flag value when provided. Omitted when the flag is omitted (the child defaults to `./` under libFuzzer compat mode).
 - `corpusDirs` — array of corpus directory paths.
 - `dictionaryPath` — resolved absolute path to the dictionary file.
+- `forkExplicit` — set to `true` when the user passes any `-fork=N` flag. Omitted otherwise. Used by the child to resolve `stopOnCrash: "auto"` correctly.
 
 These fields SHALL be read via helper functions in `config.ts` (e.g., `isLibfuzzerCompat()`, `getCorpusOutputDir()`, `getArtifactPrefix()`) which delegate to `getCliIpc()`.
 
@@ -213,4 +214,16 @@ In Vitest mode, `VITIATE_CLI_IPC` SHALL NOT be set. The fuzz loop SHALL use the 
 - **WHEN** a fuzz test runs in Vitest mode
 - **AND** `VITIATE_CLI_IPC` is not set (or `corpusOutputDir` is absent)
 - **THEN** interesting inputs are written to the cache directory layout (existing behavior)
+
+#### Scenario: Fork flag sets forkExplicit in CliIpc
+
+- **WHEN** `npx vitiate ./test.ts -fork=1` is executed
+- **THEN** the `VITIATE_CLI_IPC` JSON blob includes `forkExplicit: true`
+- **AND** the child can use this to resolve `stopOnCrash: "auto"` (see crash-continuation capability)
+
+#### Scenario: No fork flag omits forkExplicit from CliIpc
+
+- **WHEN** `npx vitiate ./test.ts` is executed without `-fork`
+- **THEN** the `VITIATE_CLI_IPC` JSON blob does not include `forkExplicit`
+- **AND** the child resolves `stopOnCrash: "auto"` to `true` (see crash-continuation capability)
 

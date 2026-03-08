@@ -17,6 +17,7 @@ import {
   getCliOptions,
   getFuzzTime,
   resolveInstrumentOptions,
+  resolveStopOnCrash,
   COVERAGE_MAP_SIZE,
   getCoverageMapSize,
   setCoverageMapSize,
@@ -1155,6 +1156,254 @@ describe("config", () => {
       expect(getCoverageMapSize()).toBe(512);
       resetCoverageMapSize();
       expect(getCoverageMapSize()).toBe(65536);
+    });
+  });
+
+  describe("stopOnCrash config field", () => {
+    const originalOpts = process.env["VITIATE_FUZZ_OPTIONS"];
+
+    afterEach(() => {
+      if (originalOpts === undefined) {
+        delete process.env["VITIATE_FUZZ_OPTIONS"];
+      } else {
+        process.env["VITIATE_FUZZ_OPTIONS"] = originalOpts;
+      }
+    });
+
+    it("parses stopOnCrash: true", () => {
+      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        stopOnCrash: true,
+      });
+      expect(getCliOptions().stopOnCrash).toBe(true);
+    });
+
+    it("parses stopOnCrash: false", () => {
+      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        stopOnCrash: false,
+      });
+      expect(getCliOptions().stopOnCrash).toBe(false);
+    });
+
+    it('parses stopOnCrash: "auto"', () => {
+      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        stopOnCrash: "auto",
+      });
+      expect(getCliOptions().stopOnCrash).toBe("auto");
+    });
+
+    it("omits stopOnCrash when absent", () => {
+      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({ runs: 100 });
+      const opts = getCliOptions();
+      expect("stopOnCrash" in opts).toBe(false);
+    });
+
+    it("rejects invalid stopOnCrash string and warns", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+          stopOnCrash: "invalid",
+        });
+        const opts = getCliOptions();
+        expect(opts).toEqual({});
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toContain("VITIATE_FUZZ_OPTIONS.stopOnCrash");
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+
+    it("silently omits stopOnCrash: null", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+          stopOnCrash: null,
+          runs: 100,
+        });
+        const opts = getCliOptions();
+        expect(opts).toEqual({ runs: 100 });
+        expect(chunks.length).toBe(0);
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+
+    it("round-trips through JSON serialization", () => {
+      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        stopOnCrash: "auto",
+        maxCrashes: 50,
+        runs: 100,
+      });
+      const opts = getCliOptions();
+      expect(opts.stopOnCrash).toBe("auto");
+      expect(opts.maxCrashes).toBe(50);
+      expect(opts.runs).toBe(100);
+    });
+  });
+
+  describe("maxCrashes config field", () => {
+    const originalOpts = process.env["VITIATE_FUZZ_OPTIONS"];
+
+    afterEach(() => {
+      if (originalOpts === undefined) {
+        delete process.env["VITIATE_FUZZ_OPTIONS"];
+      } else {
+        process.env["VITIATE_FUZZ_OPTIONS"] = originalOpts;
+      }
+    });
+
+    it("parses maxCrashes: 0 (unlimited)", () => {
+      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        maxCrashes: 0,
+      });
+      expect(getCliOptions().maxCrashes).toBe(0);
+    });
+
+    it("parses maxCrashes: 1000", () => {
+      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        maxCrashes: 1000,
+      });
+      expect(getCliOptions().maxCrashes).toBe(1000);
+    });
+
+    it("omits maxCrashes when absent", () => {
+      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({ runs: 100 });
+      const opts = getCliOptions();
+      expect("maxCrashes" in opts).toBe(false);
+    });
+
+    it("rejects negative maxCrashes and warns", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+          maxCrashes: -1,
+        });
+        const opts = getCliOptions();
+        expect(opts).toEqual({});
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toContain("VITIATE_FUZZ_OPTIONS.maxCrashes");
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+
+    it("rejects non-integer maxCrashes and warns", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+          maxCrashes: 1.5,
+        });
+        const opts = getCliOptions();
+        expect(opts).toEqual({});
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toContain("VITIATE_FUZZ_OPTIONS.maxCrashes");
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+  });
+
+  describe("forkExplicit in CliIpc", () => {
+    it("returns undefined when forkExplicit is absent from IPC blob", () => {
+      process.env["VITIATE_CLI_IPC"] = JSON.stringify({});
+      expect(getCliIpc().forkExplicit).toBeUndefined();
+    });
+
+    it("returns true when forkExplicit is true in IPC blob", () => {
+      process.env["VITIATE_CLI_IPC"] = JSON.stringify({
+        forkExplicit: true,
+      });
+      expect(getCliIpc().forkExplicit).toBe(true);
+    });
+
+    it("round-trips forkExplicit through setCliIpc/getCliIpc", () => {
+      setCliIpc({ forkExplicit: true });
+      expect(getCliIpc().forkExplicit).toBe(true);
+    });
+
+    it("rejects non-boolean forkExplicit and warns", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_CLI_IPC"] = JSON.stringify({
+          forkExplicit: "yes",
+        });
+        expect(getCliIpc()).toEqual({});
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toContain("VITIATE_CLI_IPC.forkExplicit");
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+  });
+
+  describe("resolveStopOnCrash", () => {
+    it("auto in vitest mode resolves to false", () => {
+      expect(resolveStopOnCrash("auto", false, undefined)).toBe(false);
+    });
+
+    it("undefined in vitest mode resolves to false", () => {
+      expect(resolveStopOnCrash(undefined, false, undefined)).toBe(false);
+    });
+
+    it("auto in CLI with fork resolves to false", () => {
+      expect(resolveStopOnCrash("auto", true, true)).toBe(false);
+    });
+
+    it("auto in CLI without fork resolves to true", () => {
+      expect(resolveStopOnCrash("auto", true, undefined)).toBe(true);
+    });
+
+    it("auto in CLI with forkExplicit=false resolves to true", () => {
+      expect(resolveStopOnCrash("auto", true, false)).toBe(true);
+    });
+
+    it("explicit true passes through regardless of mode", () => {
+      expect(resolveStopOnCrash(true, false, undefined)).toBe(true);
+      expect(resolveStopOnCrash(true, true, true)).toBe(true);
+      expect(resolveStopOnCrash(true, true, undefined)).toBe(true);
+    });
+
+    it("explicit false passes through regardless of mode", () => {
+      expect(resolveStopOnCrash(false, false, undefined)).toBe(false);
+      expect(resolveStopOnCrash(false, true, true)).toBe(false);
+      expect(resolveStopOnCrash(false, true, undefined)).toBe(false);
+    });
+
+    it("undefined in CLI without fork resolves to true", () => {
+      expect(resolveStopOnCrash(undefined, true, undefined)).toBe(true);
+    });
+
+    it("undefined in CLI with fork resolves to false", () => {
+      expect(resolveStopOnCrash(undefined, true, true)).toBe(false);
     });
   });
 });

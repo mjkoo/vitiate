@@ -25,7 +25,9 @@ import {
   getCorpusDirs,
   getMergeControlFile,
   getCliOptions,
+  getCliIpc,
   getProjectRoot,
+  resolveStopOnCrash,
   DEFAULT_MAX_INPUT_LEN,
 } from "./config.js";
 import {
@@ -221,6 +223,12 @@ function registerFuzzTest(
           const libfuzzerCompat = isLibfuzzerCompat();
           const corpusOutputDir = getCorpusOutputDir();
           const artifactPrefix = getArtifactPrefix();
+          const cliIpc = getCliIpc();
+          const resolvedStopOnCrash = resolveStopOnCrash(
+            mergedOptions.stopOnCrash,
+            libfuzzerCompat,
+            cliIpc.forkExplicit,
+          );
           const result = await runFuzzLoop(
             target,
             testDir,
@@ -232,15 +240,23 @@ function registerFuzzTest(
               corpusOutputDir: libfuzzerCompat ? corpusOutputDir : undefined,
               artifactPrefix: libfuzzerCompat ? artifactPrefix : undefined,
               libfuzzerCompat,
+              stopOnCrash: resolvedStopOnCrash,
+              maxCrashes: mergedOptions.maxCrashes,
             },
           );
           if (result.crashed) {
-            throw (
+            const crashError =
               result.error ??
               new Error(
                 `Crash found${result.crashArtifactPath ? `, artifact: ${result.crashArtifactPath}` : ""}`,
-              )
-            );
+              );
+            if (result.crashCount > 1) {
+              throw new Error(
+                `${crashError.message}\n\n--- ${result.crashCount} crashes found in total ---`,
+                { cause: crashError },
+              );
+            }
+            throw crashError;
           }
         },
         VITEST_NO_TIMEOUT,

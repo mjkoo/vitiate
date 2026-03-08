@@ -857,6 +857,218 @@ describe("fuzz loop", () => {
     });
   });
 
+  describe("multi-crash support (stopOnCrash=false)", () => {
+    it("loop continues after crash when stopOnCrash=false", async () => {
+      await setupFuzzingMode();
+      let crashCount = 0;
+      const target = (data: Buffer): void => {
+        if (data.length > 0 && data[0] === 0x42) {
+          crashCount++;
+          throw new Error(`crash #${crashCount}`);
+        }
+      };
+
+      const result = await runFuzzLoop(
+        target,
+        tmpDir,
+        "multi-crash",
+        "test.fuzz.ts",
+        { runs: 1_000_000, fuzzTimeMs: 30_000 },
+        { stopOnCrash: false, maxCrashes: 3 },
+      );
+
+      expect(result.crashed).toBe(true);
+      expect(result.crashCount).toBe(3);
+      expect(result.crashArtifactPaths.length).toBe(3);
+      // First crash data preserved
+      expect(result.error).toBeInstanceOf(Error);
+      expect(result.error!.message).toBe("crash #1");
+      expect(result.crashArtifactPath).toBe(result.crashArtifactPaths[0]);
+    });
+
+    it("loop stops on crash when stopOnCrash=true (default)", async () => {
+      await setupFuzzingMode();
+      const target = (data: Buffer): void => {
+        if (data.length > 0 && data[0] === 0x42) {
+          throw new Error("crash!");
+        }
+      };
+
+      const result = await runFuzzLoop(
+        target,
+        tmpDir,
+        "stop-first",
+        "test.fuzz.ts",
+        { runs: 1_000_000, fuzzTimeMs: 30_000 },
+        { stopOnCrash: true },
+      );
+
+      expect(result.crashed).toBe(true);
+      expect(result.crashCount).toBe(1);
+      expect(result.crashArtifactPaths.length).toBe(1);
+    });
+
+    it("maxCrashes=0 means unlimited (no limit enforcement)", async () => {
+      await setupFuzzingMode();
+      let crashCount = 0;
+      const target = (data: Buffer): void => {
+        if (data.length > 0 && data[0] === 0x42) {
+          crashCount++;
+          throw new Error(`crash #${crashCount}`);
+        }
+      };
+
+      // Use runs limit (not time) to keep test fast.
+      // If maxCrashes=0 triggered a limit, the loop would stop early.
+      const result = await runFuzzLoop(
+        target,
+        tmpDir,
+        "unlimited-crash",
+        "test.fuzz.ts",
+        { runs: 5000 },
+        { stopOnCrash: false, maxCrashes: 0 },
+      );
+
+      // Should find multiple crashes and NOT stop at any crash limit —
+      // only the runs limit terminates
+      expect(result.crashed).toBe(true);
+      expect(result.crashCount).toBeGreaterThan(1);
+    });
+
+    it("maxCrashes limit triggers warning on stderr", async () => {
+      await setupFuzzingMode();
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      // Capture stderr but still call original for non-warning output
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return originalWrite.call(process.stderr, chunk);
+      }) as typeof process.stderr.write;
+
+      try {
+        const target = (data: Buffer): void => {
+          if (data.length > 0 && data[0] === 0x42) {
+            throw new Error("crash!");
+          }
+        };
+
+        const result = await runFuzzLoop(
+          target,
+          tmpDir,
+          "limit-warn",
+          "test.fuzz.ts",
+          { runs: 1_000_000, fuzzTimeMs: 30_000 },
+          { stopOnCrash: false, maxCrashes: 2 },
+        );
+
+        expect(result.crashCount).toBe(2);
+        expect(chunks.some((c) => c.includes("maxCrashes limit reached"))).toBe(
+          true,
+        );
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+
+    it("no crashes found returns crashCount 0 and empty crashArtifactPaths", async () => {
+      await setupFuzzingMode();
+      const target = (_data: Buffer): void => {};
+
+      const result = await runFuzzLoop(
+        target,
+        tmpDir,
+        "no-crash",
+        "test.fuzz.ts",
+        { runs: 50, grimoire: false, unicode: false },
+        { stopOnCrash: false },
+      );
+
+      expect(result.crashed).toBe(false);
+      expect(result.crashCount).toBe(0);
+      expect(result.crashArtifactPaths).toEqual([]);
+      expect(result.error).toBeUndefined();
+      expect(result.crashInput).toBeUndefined();
+      expect(result.crashArtifactPath).toBeUndefined();
+    });
+
+    it("stage crash continues when stopOnCrash=false", async () => {
+      await setupFuzzingMode();
+      const covMap = globalThis.__vitiate_cov as Buffer;
+      let crashCount = 0;
+      const target = (data: Buffer): void => {
+        if (data.length > 0) {
+          covMap[data[0]!] = 1;
+        }
+        if (data.length >= 4) {
+          globalThis.__vitiate_trace_cmp(
+            data.subarray(0, 4).toString(),
+            "DEAD",
+            0,
+            "===",
+          );
+        }
+        if (data.length >= 4 && data.subarray(0, 4).toString() === "DEAD") {
+          crashCount++;
+          throw new Error(`stage crash #${crashCount}`);
+        }
+      };
+
+      const result = await runFuzzLoop(
+        target,
+        tmpDir,
+        "stage-continue",
+        "test.fuzz.ts",
+        { runs: 1_000_000, fuzzTimeMs: 30_000, grimoire: false },
+        { stopOnCrash: false, maxCrashes: 5 },
+      );
+
+      expect(result.crashed).toBe(true);
+      // At least one crash should be from a stage
+      expect(result.crashCount).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe("FuzzLoopResult fields", () => {
+    it("includes crashCount and crashArtifactPaths on crash", async () => {
+      await setupFuzzingMode();
+      const target = (data: Buffer): void => {
+        if (data.length > 0 && data[0] === 0x42) {
+          throw new Error("found the bug!");
+        }
+      };
+
+      const result = await runFuzzLoop(
+        target,
+        tmpDir,
+        "result-fields",
+        "test.fuzz.ts",
+        { runs: 1_000_000 },
+      );
+
+      expect(result.crashed).toBe(true);
+      expect(result.crashCount).toBe(1);
+      expect(result.crashArtifactPaths.length).toBe(1);
+      expect(result.crashArtifactPath).toBe(result.crashArtifactPaths[0]);
+    });
+
+    it("includes crashCount=0 and empty crashArtifactPaths on no crash", async () => {
+      await setupFuzzingMode();
+      const target = (_data: Buffer): void => {};
+
+      const result = await runFuzzLoop(
+        target,
+        tmpDir,
+        "no-crash-fields",
+        "test.fuzz.ts",
+        { runs: 10, grimoire: false, unicode: false },
+      );
+
+      expect(result.crashed).toBe(false);
+      expect(result.crashCount).toBe(0);
+      expect(result.crashArtifactPaths).toEqual([]);
+    });
+  });
+
   describe("convention-based dictionary discovery", () => {
     it("libfuzzerCompat mode does not load convention-based dictionary", async () => {
       await setupFuzzingMode();

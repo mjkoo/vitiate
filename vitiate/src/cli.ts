@@ -41,6 +41,7 @@ export interface CliArgs {
   dictPath?: string;
   merge: boolean;
   fuzzOptions: FuzzOptions;
+  forkExplicit?: boolean;
 }
 
 export const cliParser = object({
@@ -127,6 +128,7 @@ function toCliArgs(parsed: InferValue<typeof cliParser>): CliArgs {
     artifactPrefix,
     dictPath,
     merge: parsed.merge !== undefined && parsed.merge !== 0,
+    forkExplicit: parsed.fork !== undefined ? true : undefined,
     fuzzOptions: {
       maxLen,
       timeoutMs: timeout != null ? timeout * 1000 : undefined,
@@ -292,6 +294,7 @@ async function runChildMode(
   testName?: string,
   artifactPrefix?: string,
   dictPath?: string,
+  forkExplicit?: boolean,
 ): Promise<void> {
   // Activate fuzzing mode
   process.env["VITIATE_FUZZ"] = "1";
@@ -306,6 +309,7 @@ async function runChildMode(
     corpusOutputDir: corpusDirs.length > 0 ? corpusDirs[0] : undefined,
     artifactPrefix,
     dictionaryPath: dictPath,
+    forkExplicit,
   });
 
   const { startVitest } = await import("vitest/node");
@@ -342,6 +346,7 @@ async function main(): Promise<void> {
     dictPath,
     merge,
     fuzzOptions,
+    forkExplicit,
   } = toCliArgs(
     runSync(cliParser, {
       programName: "vitiate",
@@ -381,6 +386,7 @@ async function main(): Promise<void> {
       testName,
       artifactPrefix,
       dictPath,
+      forkExplicit,
     );
   } else {
     // Parent mode: allocate shmem, spawn child, supervise

@@ -48,6 +48,8 @@ export interface FuzzLoopResult {
   error?: Error;
   crashInput?: Buffer;
   crashArtifactPath?: string;
+  crashCount: number;
+  crashArtifactPaths: string[];
   totalExecs: number;
 }
 
@@ -156,15 +158,14 @@ function yieldToEventLoop(): Promise<void> {
 
 /**
  * Write a crash/timeout artifact and print the crash message.
- * Returns the constructed FuzzLoopResult.
+ * Returns the artifact path and relevant crash data.
  */
-function recordCrash(
+function writeCrashArtifact(
   input: Buffer,
   exitKind: ExitKind,
   error: Error | undefined,
   artifactPrefix: string,
-  totalExecs: number,
-): FuzzLoopResult {
+): string {
   const artifactKind: ArtifactKind =
     exitKind === ExitKind.Timeout ? "timeout" : "crash";
   const artifactPath = writeArtifactWithPrefix(
@@ -173,13 +174,7 @@ function recordCrash(
     artifactKind,
   );
   printCrash(error ?? new Error("unknown crash"), artifactPath);
-  return {
-    crashed: true,
-    error,
-    crashInput: input,
-    crashArtifactPath: artifactPath,
-    totalExecs,
-  };
+  return artifactPath;
 }
 
 /**
@@ -216,9 +211,15 @@ async function runCalibration(
   return true;
 }
 
+interface StageCrash {
+  input: Buffer;
+  exitKind: ExitKind;
+  error: Error | undefined;
+}
+
 /**
  * Run the post-calibration mutational stage (I2S / Generalization / Grimoire).
- * Returns a FuzzLoopResult if a crash was found, or null if the stage
+ * Returns a StageCrash if a crash was found, or null if the stage
  * completed without crashes.
  */
 async function runStage(
@@ -227,8 +228,7 @@ async function runStage(
   timeoutMs: number | undefined,
   fuzzer: Fuzzer,
   shmemHandle: ShmemHandle | null,
-  artifactPrefix: string,
-): Promise<FuzzLoopResult | null> {
+): Promise<StageCrash | null> {
   let stageResult = fuzzer.beginStage();
 
   while (stageResult !== null) {
@@ -240,29 +240,21 @@ async function runStage(
       await executeTarget(target, stageInput, watchdog, timeoutMs);
 
     if (stageExitKind !== ExitKind.Ok) {
-      // Write artifact BEFORE abortStage — abortStage can throw if the
-      // solutions corpus add() fails, and artifact preservation is more
-      // important than internal stats bookkeeping.
-      // Stage crashes are NOT minimized.
-      const result = recordCrash(
-        stageInput,
-        stageExitKind,
-        stageCaughtError,
-        artifactPrefix,
-        fuzzer.stats.totalExecs,
-      );
-
       try {
         fuzzer.abortStage(stageExitKind);
       } catch (abortError) {
-        // abortStage failure is non-fatal: the crash artifact is already
-        // written to disk. Internal stats bookkeeping is best-effort.
+        // abortStage failure is non-fatal: artifact will be written by the
+        // caller. Internal stats bookkeeping is best-effort.
         process.stderr.write(
-          `vitiate: warning: abortStage failed after artifact was written: ${abortError instanceof Error ? abortError.message : String(abortError)}\n`,
+          `vitiate: warning: abortStage failed: ${abortError instanceof Error ? abortError.message : String(abortError)}\n`,
         );
       }
 
-      return result;
+      return {
+        input: stageInput,
+        exitKind: stageExitKind,
+        error: stageCaughtError,
+      };
     }
 
     const stageExecTimeNs = Number(process.hrtime.bigint() - stageStartNs);
@@ -273,11 +265,13 @@ async function runStage(
   return null;
 }
 
-export interface CorpusOptions {
+export interface FuzzLoopOptions {
   corpusDirs?: string[];
   corpusOutputDir?: string;
   artifactPrefix?: string;
   libfuzzerCompat?: boolean;
+  stopOnCrash?: boolean;
+  maxCrashes?: number;
 }
 
 export async function runFuzzLoop(
@@ -286,10 +280,16 @@ export async function runFuzzLoop(
   testName: string,
   testFilePath: string,
   options: FuzzOptions,
-  corpusOptions?: CorpusOptions,
+  corpusOptions?: FuzzLoopOptions,
 ): Promise<FuzzLoopResult> {
-  const { corpusDirs, corpusOutputDir, artifactPrefix, libfuzzerCompat } =
-    corpusOptions ?? {};
+  const {
+    corpusDirs,
+    corpusOutputDir,
+    artifactPrefix,
+    libfuzzerCompat,
+    stopOnCrash = true,
+    maxCrashes = 1000,
+  } = corpusOptions ?? {};
   const coverageMap = globalThis.__vitiate_cov;
   if (!coverageMap) {
     throw new Error(
@@ -419,7 +419,48 @@ export async function runFuzzLoop(
   const maxTime = options.fuzzTimeMs || Infinity;
   const maxRuns = options.runs || Infinity;
   let iteration = 0;
-  let result: FuzzLoopResult = { crashed: false, totalExecs: 0 };
+
+  // Multi-crash accumulation state
+  let crashCount = 0;
+  const crashArtifactPaths: string[] = [];
+  let firstCrashError: Error | undefined;
+  let firstCrashInput: Buffer | undefined;
+  let firstCrashArtifactPath: string | undefined;
+
+  /**
+   * Record a crash or timeout: write artifact, accumulate state, and return
+   * whether the loop should terminate.
+   */
+  const handleCrash = (
+    input: Buffer,
+    exitKind: ExitKind,
+    error: Error | undefined,
+  ): boolean => {
+    const artifactPath = writeCrashArtifact(
+      input,
+      exitKind,
+      error,
+      resolvedArtifactPrefix,
+    );
+    crashCount++;
+    crashArtifactPaths.push(artifactPath);
+    if (crashCount === 1) {
+      firstCrashError = error;
+      firstCrashInput = input;
+      firstCrashArtifactPath = artifactPath;
+    }
+
+    if (stopOnCrash) return true;
+
+    // Check maxCrashes limit (0 = unlimited)
+    if (maxCrashes !== 0 && crashCount >= maxCrashes) {
+      process.stderr.write(
+        `vitiate: warning: maxCrashes limit reached (${maxCrashes}), stopping\n`,
+      );
+      return true;
+    }
+    return false;
+  };
 
   // SIGINT handler: first Ctrl+C triggers graceful shutdown, second force-kills.
   let interrupted = false;
@@ -475,14 +516,10 @@ export async function runFuzzLoop(
           );
         }
 
-        result = recordCrash(
-          crashData,
-          exitKind,
-          caughtError,
-          resolvedArtifactPrefix,
-          fuzzer.stats.totalExecs,
-        );
-        break;
+        if (handleCrash(crashData, exitKind, caughtError)) {
+          break;
+        }
+        continue;
       }
 
       if (iterResult === IterationResult.Interesting) {
@@ -507,17 +544,24 @@ export async function runFuzzLoop(
         // Stage execution loop: run concentrated I2S mutations on the freshly
         // calibrated corpus entry. Only enter if calibration completed normally.
         if (calibrationCompleted) {
-          const stageResult = await runStage(
+          const stageCrash = await runStage(
             target,
             watchdog,
             timeoutMs,
             fuzzer,
             shmemHandle,
-            resolvedArtifactPrefix,
           );
-          if (stageResult) {
-            result = stageResult;
-            break;
+          if (stageCrash) {
+            // Stage crashes are NOT minimized — write raw input.
+            if (
+              handleCrash(
+                stageCrash.input,
+                stageCrash.exitKind,
+                stageCrash.error,
+              )
+            ) {
+              break;
+            }
           }
         }
       }
@@ -527,10 +571,6 @@ export async function runFuzzLoop(
         await yieldToEventLoop();
       }
     }
-
-    if (!result.crashed) {
-      result = { crashed: false, totalExecs: fuzzer.stats.totalExecs };
-    }
   } finally {
     stopReporting(reporter);
     printSummary(reporter, fuzzer.stats);
@@ -538,7 +578,15 @@ export async function runFuzzLoop(
     process.removeListener("SIGINT", sigintHandler);
   }
 
-  return result;
+  return {
+    crashed: crashCount > 0,
+    error: firstCrashError,
+    crashInput: firstCrashInput,
+    crashArtifactPath: firstCrashArtifactPath,
+    crashCount,
+    crashArtifactPaths,
+    totalExecs: fuzzer.stats.totalExecs,
+  };
 }
 
 /**
