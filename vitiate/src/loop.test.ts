@@ -12,6 +12,7 @@ import { runFuzzLoop, checkDedupPolicy } from "./loop.js";
 import { initGlobals } from "./globals.js";
 import { sanitizeTestName } from "./corpus.js";
 import { setCacheDir, resetCacheDir } from "./config.js";
+import { resetDetectorHooks } from "./detectors/index.js";
 
 describe("fuzz loop", () => {
   let tmpDir: string;
@@ -37,6 +38,7 @@ describe("fuzz loop", () => {
     if (tmpDir) {
       rmSync(tmpDir, { recursive: true, force: true });
     }
+    resetDetectorHooks();
   });
 
   async function setupFuzzingMode(): Promise<void> {
@@ -818,7 +820,9 @@ describe("fuzz loop", () => {
       await setupFuzzingMode();
       let callCount = 0;
       const covMap = globalThis.__vitiate_cov as Buffer;
-      let lastExecutedInput: string | null = null;
+      const seenFirstBytes = new Set<number>();
+      let crashOnNextNonNovel = false;
+
       const target = (data: Buffer): void => {
         callCount++;
         if (data.length > 0) {
@@ -830,15 +834,21 @@ describe("fuzz loop", () => {
           0,
           "===",
         );
-        // Crash when the same input runs back-to-back (calibration re-run).
-        // This relies on calibration re-executing the same input consecutively;
-        // unlike a Set, it avoids false positives from historical collisions
-        // when havoc mutations happen to produce identical short byte sequences.
-        const key = data.toString("hex");
-        if (key === lastExecutedInput) {
+
+        const byte = data.length > 0 ? data[0]! : -1;
+        const isNovel = byte >= 0 && !seenFirstBytes.has(byte);
+        if (isNovel) seenFirstBytes.add(byte);
+
+        // Crash on the call immediately after a novel input. Calibration
+        // re-runs the exact same input, which is non-novel (byte already in
+        // seenFirstBytes). All state is updated before the throw so no
+        // leakage occurs into subsequent main-loop iterations.
+        const shouldCrash = crashOnNextNonNovel && !isNovel;
+        crashOnNextNonNovel = isNovel;
+
+        if (shouldCrash) {
           throw new Error("calibration crash!");
         }
-        lastExecutedInput = key;
       };
 
       const result = await runFuzzLoop(
@@ -922,33 +932,38 @@ describe("fuzz loop", () => {
 
     it("maxCrashes=0 means unlimited (no limit enforcement)", async () => {
       await setupFuzzingMode();
-      let _crashCount = 0;
-      // Use different throw sites based on second byte so each crash has a
-      // unique dedup key (different stack traces).
-      const throwers: Record<number, () => never> = {
-        0: () => {
-          throw new Error("crash-site-0");
-        },
-        1: () => {
-          throw new Error("crash-site-1");
-        },
-        2: () => {
-          throw new Error("crash-site-2");
-        },
-        3: () => {
-          throw new Error("crash-site-3");
-        },
-      };
+
+      // Named throw functions so each crash site produces a distinct
+      // normalized stack trace (different function name → different dedup key).
+      function crashSiteA(): never {
+        throw new Error("crash-site-A");
+      }
+      function crashSiteB(): never {
+        throw new Error("crash-site-B");
+      }
+
       const target = (data: Buffer): void => {
-        if (data.length > 1 && data[0] === 0x42) {
-          _crashCount++;
-          const site = data[1]! % 4;
-          throwers[site]!();
+        if (data.length > 0 && data[0] === 0x42) {
+          crashSiteA();
+        }
+        if (data.length > 0 && data[0] === 0x43) {
+          crashSiteB();
         }
       };
 
-      // Use runs limit (not time) to keep test fast.
-      // If maxCrashes=0 triggered a limit, the loop would stop early.
+      // Pre-seed the corpus with inputs that trigger both crash sites.
+      // This makes crash discovery deterministic — no reliance on the
+      // mutator generating specific byte patterns.
+      const seedDir = path.join(
+        tmpDir,
+        "testdata",
+        "fuzz",
+        sanitizeTestName("unlimited-crash"),
+      );
+      mkdirSync(seedDir, { recursive: true });
+      writeFileSync(path.join(seedDir, "seed-A"), Buffer.from([0x42]));
+      writeFileSync(path.join(seedDir, "seed-B"), Buffer.from([0x43]));
+
       const result = await runFuzzLoop(
         target,
         tmpDir,
@@ -958,10 +973,11 @@ describe("fuzz loop", () => {
         { stopOnCrash: false, maxCrashes: 0 },
       );
 
-      // Should find multiple unique crashes and NOT stop at any crash limit —
-      // only the runs limit terminates
+      // Both seeded inputs trigger crashes with unique dedup keys.
+      // maxCrashes=0 means unlimited — the loop should NOT stop at any
+      // crash limit, only the runs limit terminates.
       expect(result.crashed).toBe(true);
-      expect(result.crashCount).toBeGreaterThan(1);
+      expect(result.crashCount).toBeGreaterThanOrEqual(2);
     });
 
     it("maxCrashes limit triggers warning on stderr", async () => {

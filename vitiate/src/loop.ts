@@ -19,7 +19,13 @@ import {
   DEFAULT_MAX_INPUT_LEN,
   type FuzzOptions,
 } from "./config.js";
-import { DetectorManager, VulnerabilityError } from "./detectors/index.js";
+import {
+  DetectorManager,
+  VulnerabilityError,
+  installDetectorModuleHooks,
+  getDetectorManager,
+  resetDetectorHooks,
+} from "./detectors/index.js";
 import { setDetectorActive } from "./detectors/module-hook.js";
 import {
   loadSeedCorpus,
@@ -403,8 +409,15 @@ export async function runFuzzLoop(
     getDictionaryPathEnv() ??
     (libfuzzerCompat ? undefined : getDictionaryPath(testDir, testName));
 
-  // Construct detector manager from config
-  const detectorManager = new DetectorManager(options.detectors);
+  // Install detector hooks (idempotent — no-op if setup.ts already did it).
+  // setup.ts calls this early so ESM imports capture patched wrappers.
+  installDetectorModuleHooks(options.detectors);
+  const detectorManager = getDetectorManager();
+  if (!detectorManager) {
+    throw new Error(
+      "unreachable: installDetectorModuleHooks did not create a manager",
+    );
+  }
 
   const fuzzerConfig: FuzzerConfig = {};
   if (options.maxLen !== undefined) {
@@ -517,9 +530,6 @@ export async function runFuzzLoop(
 
   const reporter = createReporter(quiet);
   startReporting(reporter, () => fuzzer.stats);
-
-  // Initialize detectors before first iteration
-  detectorManager.setup();
 
   const startTime = Date.now();
   // `|| Infinity`: 0 means "unlimited" for both fields, matching libFuzzer convention.
@@ -754,7 +764,7 @@ export async function runFuzzLoop(
       }
     }
   } finally {
-    detectorManager.teardown();
+    resetDetectorHooks();
     stopReporting(reporter);
     printSummary(reporter, fuzzer.stats, duplicateCrashesSkipped);
     watchdog?.shutdown();

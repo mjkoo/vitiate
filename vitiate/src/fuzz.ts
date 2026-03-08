@@ -38,6 +38,11 @@ import {
   getCacheDir,
   getFuzzTestDataDir,
 } from "./corpus.js";
+import {
+  installDetectorModuleHooks,
+  getDetectorManager,
+  resetDetectorHooks,
+} from "./detectors/early-hooks.js";
 import { getCoverageMap } from "./globals.js";
 import { runFuzzLoop } from "./loop.js";
 import { runMergeMode, runOptimizeMode } from "./merge.js";
@@ -305,7 +310,10 @@ function registerFuzzTest(
       );
     }
   } else {
-    // Regression mode: replay corpus entries
+    // Regression mode: replay corpus entries with detector lifecycle.
+    // Detectors are installed so that snapshot-based detectors (prototype
+    // pollution) and module-hook detectors (command injection, path
+    // traversal) catch the same vulnerabilities they would in fuzz mode.
     register(name, async () => {
       const testDir = getTestDir();
       const cacheDir = getCacheDir();
@@ -316,20 +324,49 @@ function registerFuzzTest(
       const extra = extraDirs ? loadCorpusFromDirs(extraDirs) : [];
       const corpus = [...seeds, ...cached, ...extra];
 
-      if (corpus.length === 0) {
-        // Smoke test with empty buffer
-        await target(Buffer.alloc(0));
-      } else {
-        for (const [i, entry] of corpus.entries()) {
-          try {
-            await target(entry);
-          } catch (e) {
-            const err = e instanceof Error ? e : new Error(String(e));
-            throw new Error(`Corpus entry ${i} failed: ${err.message}`, {
-              cause: e,
-            });
+      // Install detector hooks, reconfiguring if the user specified
+      // per-test detector options that differ from setup.ts defaults.
+      const detectorConfig = options?.detectors;
+      installDetectorModuleHooks(detectorConfig);
+      const detectorManager = getDetectorManager();
+
+      async function replayEntry(entry: Buffer, index: number): Promise<void> {
+        detectorManager?.beforeIteration();
+        let targetError: unknown;
+        try {
+          await target(entry);
+        } catch (e) {
+          targetError = e;
+        }
+        // afterIteration() closes the detector window and may throw a
+        // VulnerabilityError (e.g., prototype pollution detected via
+        // snapshot diff). Target exceptions take precedence.
+        let detectorError: unknown;
+        try {
+          detectorManager?.afterIteration();
+        } catch (e) {
+          detectorError = e;
+        }
+        const failure = targetError ?? detectorError;
+        if (failure !== undefined) {
+          const err =
+            failure instanceof Error ? failure : new Error(String(failure));
+          throw new Error(`Corpus entry ${index} failed: ${err.message}`, {
+            cause: failure,
+          });
+        }
+      }
+
+      try {
+        if (corpus.length === 0) {
+          await replayEntry(Buffer.alloc(0), 0);
+        } else {
+          for (const [i, entry] of corpus.entries()) {
+            await replayEntry(entry, i);
           }
         }
+      } finally {
+        resetDetectorHooks();
       }
     });
   }

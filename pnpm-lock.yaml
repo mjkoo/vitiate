@@ -42,6 +42,19 @@ importers:
         specifier: ^8.56.1
         version: 8.56.1(eslint@10.0.2(jiti@2.6.1))(typescript@5.9.3)
 
+  examples/detectors:
+    dependencies:
+      vitiate:
+        specifier: workspace:*
+        version: link:../../vitiate
+    devDependencies:
+      vite:
+        specifier: ^6.0.0
+        version: 6.4.1(@types/node@25.3.0)(jiti@2.6.1)
+      vitest:
+        specifier: ^3.1.0
+        version: 3.2.4(@types/node@25.3.0)(jiti@2.6.1)
+
   examples/url-parser:
     dependencies:
       vitiate:
@@ -66,9 +79,15 @@ importers:
       '@swc/core':
         specifier: ^1.15.17
         version: 1.15.17
+      es-module-lexer:
+        specifier: ^1.7.0
+        version: 1.7.0
       escape-string-regexp:
         specifier: ^5.0.0
         version: 5.0.0
+      magic-string:
+        specifier: ^0.30.21
+        version: 0.30.21
       valibot:
         specifier: ^1.2.0
         version: 1.2.0(typescript@5.9.3)

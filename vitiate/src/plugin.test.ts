@@ -1,5 +1,7 @@
 import path from "node:path";
-import { describe, it, expect, afterEach } from "vitest";
+import { init } from "es-module-lexer";
+import type { Plugin } from "vite";
+import { describe, it, expect, afterEach, beforeAll } from "vitest";
 import {
   getCoverageMapSize,
   resetCoverageMapSize,
@@ -10,8 +12,17 @@ import {
 } from "./config.js";
 import { vitiatePlugin } from "./plugin.js";
 
+/**
+ * Extract the named plugin from the plugin array.
+ */
+function findPlugin(plugins: Plugin[], name: string): Plugin {
+  const plugin = plugins.find((p) => p.name === name);
+  if (!plugin) throw new Error(`Plugin "${name}" not found`);
+  return plugin;
+}
+
 function callConfig(
-  plugin: ReturnType<typeof vitiatePlugin>,
+  plugin: Plugin,
   config: Record<string, unknown>,
 ): Record<string, unknown> {
   return (
@@ -22,35 +33,40 @@ function callConfig(
 }
 
 describe("plugin", () => {
-  it("returns a plugin with correct name and enforce", () => {
-    const plugin = vitiatePlugin();
-    expect(plugin.name).toBe("vitiate");
-    expect(plugin.enforce).toBe("post");
+  it("returns an array of two plugins", () => {
+    const plugins = vitiatePlugin();
+    expect(plugins).toHaveLength(2);
+    expect(plugins[0]!.name).toBe("vitiate:hooks");
+    expect(plugins[0]!.enforce).toBe("pre");
+    expect(plugins[1]!.name).toBe("vitiate:instrument");
+    expect(plugins[1]!.enforce).toBe("post");
   });
 
-  it("has a transform function", () => {
-    const plugin = vitiatePlugin();
-    expect(typeof plugin.transform).toBe("function");
+  it("instrument plugin has a transform function", () => {
+    const plugins = vitiatePlugin();
+    const instrument = findPlugin(plugins, "vitiate:instrument");
+    expect(typeof instrument.transform).toBe("function");
   });
 
   it("accepts the full options shape (fuzz + instrument + coverageMapSize)", () => {
-    const plugin = vitiatePlugin({
+    const plugins = vitiatePlugin({
       instrument: { include: ["src/**/*.ts"], exclude: [] },
       fuzz: { maxLen: 4096, timeoutMs: 5000 },
       cacheDir: ".fuzz-cache",
       coverageMapSize: 131072,
     });
-    expect(plugin.name).toBe("vitiate");
-    expect(plugin.enforce).toBe("post");
+    expect(plugins).toHaveLength(2);
+    expect(findPlugin(plugins, "vitiate:hooks").enforce).toBe("pre");
+    expect(findPlugin(plugins, "vitiate:instrument").enforce).toBe("post");
   });
 
   it("has a config function that adds setupFiles", () => {
     resetProjectRoot();
     try {
-      const plugin = vitiatePlugin();
-      expect(typeof plugin.config).toBe("function");
-      // Call config to verify it returns test.setupFiles
-      const config = callConfig(plugin, {});
+      const plugins = vitiatePlugin();
+      const instrument = findPlugin(plugins, "vitiate:instrument");
+      expect(typeof instrument.config).toBe("function");
+      const config = callConfig(instrument, {});
       expect(config).toHaveProperty("test");
       const testConfig = config["test"] as Record<string, unknown>;
       expect(testConfig).toHaveProperty("setupFiles");
@@ -77,52 +93,59 @@ describe("plugin", () => {
     });
 
     it("sets project root from Vite config root", () => {
-      const plugin = vitiatePlugin();
-      callConfig(plugin, { root: "/my/project" });
+      const instrument = findPlugin(vitiatePlugin(), "vitiate:instrument");
+      callConfig(instrument, { root: "/my/project" });
       expect(getProjectRoot()).toBe(path.resolve("/my/project"));
     });
 
     it("defaults project root to cwd when config.root is not set", () => {
-      const plugin = vitiatePlugin();
-      callConfig(plugin, {});
+      const instrument = findPlugin(vitiatePlugin(), "vitiate:instrument");
+      callConfig(instrument, {});
       expect(getProjectRoot()).toBe(process.cwd());
     });
 
     it("overwrites project root on each config() call", () => {
-      const plugin = vitiatePlugin();
-      callConfig(plugin, { root: "/first/root" });
+      const instrument = findPlugin(vitiatePlugin(), "vitiate:instrument");
+      callConfig(instrument, { root: "/first/root" });
       expect(getProjectRoot()).toBe(path.resolve("/first/root"));
-      callConfig(plugin, { root: "/second/root" });
+      callConfig(instrument, { root: "/second/root" });
       expect(getProjectRoot()).toBe(path.resolve("/second/root"));
     });
 
     it("sets cache dir resolved relative to project root", () => {
-      const plugin = vitiatePlugin({ cacheDir: ".fuzz-cache" });
-      callConfig(plugin, { root: "/my/project" });
+      const instrument = findPlugin(
+        vitiatePlugin({ cacheDir: ".fuzz-cache" }),
+        "vitiate:instrument",
+      );
+      callConfig(instrument, { root: "/my/project" });
       expect(getResolvedCacheDir()).toBe(
         path.resolve("/my/project", ".fuzz-cache"),
       );
     });
 
     it("resolves cacheDir against Vite root", () => {
-      const plugin = vitiatePlugin({ cacheDir: ".cache" });
-      callConfig(plugin, { root: "/vite/root" });
+      const instrument = findPlugin(
+        vitiatePlugin({ cacheDir: ".cache" }),
+        "vitiate:instrument",
+      );
+      callConfig(instrument, { root: "/vite/root" });
       expect(getProjectRoot()).toBe(path.resolve("/vite/root"));
       expect(getResolvedCacheDir()).toBe(path.resolve("/vite/root", ".cache"));
     });
 
     it("does not set cache dir when cacheDir option is not provided", () => {
-      const plugin = vitiatePlugin();
-      callConfig(plugin, {});
+      const instrument = findPlugin(vitiatePlugin(), "vitiate:instrument");
+      callConfig(instrument, {});
       expect(getResolvedCacheDir()).toBeUndefined();
     });
 
     it("sets VITIATE_FUZZ_OPTIONS when fuzz options are provided", () => {
       delete process.env["VITIATE_FUZZ_OPTIONS"];
-      const plugin = vitiatePlugin({
-        fuzz: { maxLen: 4096, timeoutMs: 5000 },
-      });
-      callConfig(plugin, {});
+      const instrument = findPlugin(
+        vitiatePlugin({ fuzz: { maxLen: 4096, timeoutMs: 5000 } }),
+        "vitiate:instrument",
+      );
+      callConfig(instrument, {});
       expect(process.env["VITIATE_FUZZ_OPTIONS"]).toBe(
         '{"maxLen":4096,"timeoutMs":5000}',
       );
@@ -130,19 +153,23 @@ describe("plugin", () => {
 
     it("does not overwrite VITIATE_FUZZ_OPTIONS when already set", () => {
       process.env["VITIATE_FUZZ_OPTIONS"] = '{"maxLen":1024}';
-      const plugin = vitiatePlugin({
-        fuzz: { maxLen: 4096 },
-      });
-      callConfig(plugin, {});
+      const instrument = findPlugin(
+        vitiatePlugin({ fuzz: { maxLen: 4096 } }),
+        "vitiate:instrument",
+      );
+      callConfig(instrument, {});
       expect(process.env["VITIATE_FUZZ_OPTIONS"]).toBe('{"maxLen":1024}');
     });
 
     it("serializes boolean fuzz options to VITIATE_FUZZ_OPTIONS", () => {
       delete process.env["VITIATE_FUZZ_OPTIONS"];
-      const plugin = vitiatePlugin({
-        fuzz: { grimoire: true, unicode: false, redqueen: true },
-      });
-      callConfig(plugin, {});
+      const instrument = findPlugin(
+        vitiatePlugin({
+          fuzz: { grimoire: true, unicode: false, redqueen: true },
+        }),
+        "vitiate:instrument",
+      );
+      callConfig(instrument, {});
       expect(process.env["VITIATE_FUZZ_OPTIONS"]).toBe(
         '{"grimoire":true,"unicode":false,"redqueen":true}',
       );
@@ -150,42 +177,309 @@ describe("plugin", () => {
 
     it("does not set VITIATE_FUZZ_OPTIONS when no fuzz options are provided but cacheDir is", () => {
       delete process.env["VITIATE_FUZZ_OPTIONS"];
-      const plugin = vitiatePlugin({ cacheDir: ".cache" });
-      callConfig(plugin, {});
+      const instrument = findPlugin(
+        vitiatePlugin({ cacheDir: ".cache" }),
+        "vitiate:instrument",
+      );
+      callConfig(instrument, {});
       expect(process.env["VITIATE_FUZZ_OPTIONS"]).toBeUndefined();
     });
 
     it("does not set VITIATE_FUZZ_OPTIONS when no fuzz options are provided", () => {
       delete process.env["VITIATE_FUZZ_OPTIONS"];
-      const plugin = vitiatePlugin();
-      callConfig(plugin, {});
+      const instrument = findPlugin(vitiatePlugin(), "vitiate:instrument");
+      callConfig(instrument, {});
       expect(process.env["VITIATE_FUZZ_OPTIONS"]).toBeUndefined();
     });
 
     it("sets coverage map size via setCoverageMapSize when coverageMapSize is provided", () => {
-      const plugin = vitiatePlugin({ coverageMapSize: 131072 });
-      callConfig(plugin, {});
+      const instrument = findPlugin(
+        vitiatePlugin({ coverageMapSize: 131072 }),
+        "vitiate:instrument",
+      );
+      callConfig(instrument, {});
       expect(getCoverageMapSize()).toBe(131072);
     });
 
     it("does not change coverage map size when coverageMapSize is not provided", () => {
-      const plugin = vitiatePlugin();
-      callConfig(plugin, {});
+      const instrument = findPlugin(vitiatePlugin(), "vitiate:instrument");
+      callConfig(instrument, {});
       expect(getCoverageMapSize()).toBe(65536);
     });
 
     it("throws when coverageMapSize is invalid", () => {
-      const plugin = vitiatePlugin({ coverageMapSize: 100 });
-      expect(() => callConfig(plugin, {})).toThrow(
+      const instrument = findPlugin(
+        vitiatePlugin({ coverageMapSize: 100 }),
+        "vitiate:instrument",
+      );
+      expect(() => callConfig(instrument, {})).toThrow(
         "coverageMapSize must be an integer in [256, 4194304]",
       );
     });
   });
 
+  describe("hooks plugin transform", () => {
+    beforeAll(async () => {
+      // es-module-lexer requires WASM init before first parse
+      await init;
+    });
+
+    function callHooksTransform(
+      plugin: Plugin,
+      code: string,
+      id = "/project/src/app.ts",
+    ): { code: string; map: unknown } | null {
+      const transform = plugin.transform as (
+        code: string,
+        id: string,
+      ) => { code: string; map: unknown } | null;
+      return transform.call({ getCombinedSourcemap: () => null }, code, id);
+    }
+
+    it("rewrites single-line named imports", () => {
+      const hooks = findPlugin(vitiatePlugin(), "vitiate:hooks");
+      const result = callHooksTransform(
+        hooks,
+        'import { execSync } from "child_process";',
+      );
+      expect(result).not.toBeNull();
+      expect(result!.code).toContain(
+        'import __vitiate_child_process from "child_process";',
+      );
+      expect(result!.code).toContain(
+        "const { execSync } = __vitiate_child_process;",
+      );
+    });
+
+    it("rewrites multi-line named imports", () => {
+      const hooks = findPlugin(vitiatePlugin(), "vitiate:hooks");
+      const code = [
+        "import {",
+        "  execSync,",
+        "  spawnSync",
+        '} from "child_process";',
+      ].join("\n");
+      const result = callHooksTransform(hooks, code);
+      expect(result).not.toBeNull();
+      expect(result!.code).toContain(
+        'import __vitiate_child_process from "child_process";',
+      );
+      expect(result!.code).toContain(
+        "const { execSync, spawnSync } = __vitiate_child_process;",
+      );
+    });
+
+    it("rewrites default + named imports preserving the default name", () => {
+      const hooks = findPlugin(vitiatePlugin(), "vitiate:hooks");
+      const result = callHooksTransform(
+        hooks,
+        'import cp, { execSync } from "child_process";',
+      );
+      expect(result).not.toBeNull();
+      expect(result!.code).toContain('import cp from "child_process";');
+      expect(result!.code).toContain("const { execSync } = cp;");
+    });
+
+    it("rewrites namespace imports", () => {
+      const hooks = findPlugin(vitiatePlugin(), "vitiate:hooks");
+      const result = callHooksTransform(
+        hooks,
+        'import * as cp from "child_process";',
+      );
+      expect(result).not.toBeNull();
+      expect(result!.code).toContain(
+        'import __vitiate_child_process from "child_process";',
+      );
+      expect(result!.code).toContain("const cp = __vitiate_child_process;");
+    });
+
+    it("rewrites aliased named imports", () => {
+      const hooks = findPlugin(vitiatePlugin(), "vitiate:hooks");
+      const result = callHooksTransform(
+        hooks,
+        'import { execSync as exec } from "child_process";',
+      );
+      expect(result).not.toBeNull();
+      expect(result!.code).toContain(
+        'import __vitiate_child_process from "child_process";',
+      );
+      expect(result!.code).toContain(
+        "const { execSync: exec } = __vitiate_child_process;",
+      );
+    });
+
+    it("rewrites multiple aliased named imports", () => {
+      const hooks = findPlugin(vitiatePlugin(), "vitiate:hooks");
+      const result = callHooksTransform(
+        hooks,
+        'import { execSync as exec, spawnSync as spawn } from "child_process";',
+      );
+      expect(result).not.toBeNull();
+      expect(result!.code).toContain(
+        'import __vitiate_child_process from "child_process";',
+      );
+      expect(result!.code).toContain(
+        "const { execSync: exec, spawnSync: spawn } = __vitiate_child_process;",
+      );
+    });
+
+    it("strips inline type specifiers from named imports", () => {
+      const hooks = findPlugin(vitiatePlugin(), "vitiate:hooks");
+      const result = callHooksTransform(
+        hooks,
+        'import { type ChildProcess, execSync } from "child_process";',
+      );
+      expect(result).not.toBeNull();
+      expect(result!.code).toContain(
+        'import __vitiate_child_process from "child_process";',
+      );
+      expect(result!.code).toContain(
+        "const { execSync } = __vitiate_child_process;",
+      );
+      expect(result!.code).not.toContain("ChildProcess");
+    });
+
+    it("skips type-only named imports (no value specifiers)", () => {
+      const hooks = findPlugin(vitiatePlugin(), "vitiate:hooks");
+      const result = callHooksTransform(
+        hooks,
+        'import { type ChildProcess, type ExecException } from "child_process";',
+      );
+      expect(result).toBeNull();
+    });
+
+    it("does not rewrite default-only imports", () => {
+      const hooks = findPlugin(vitiatePlugin(), "vitiate:hooks");
+      const result = callHooksTransform(
+        hooks,
+        'import cp from "child_process";',
+      );
+      expect(result).toBeNull();
+    });
+
+    it("recognizes node: prefixed specifiers", () => {
+      const hooks = findPlugin(vitiatePlugin(), "vitiate:hooks");
+      const result = callHooksTransform(
+        hooks,
+        'import { readFileSync } from "node:fs";',
+      );
+      expect(result).not.toBeNull();
+      expect(result!.code).toContain('import __vitiate_fs from "node:fs";');
+      expect(result!.code).toContain("const { readFileSync } = __vitiate_fs;");
+    });
+
+    it("skips type-only imports", () => {
+      const hooks = findPlugin(vitiatePlugin(), "vitiate:hooks");
+      const result = callHooksTransform(
+        hooks,
+        'import type { ChildProcess } from "child_process";',
+      );
+      expect(result).toBeNull();
+    });
+
+    it("skips non-hooked modules", () => {
+      const hooks = findPlugin(vitiatePlugin(), "vitiate:hooks");
+      const result = callHooksTransform(hooks, 'import { join } from "path";');
+      expect(result).toBeNull();
+    });
+
+    it("returns a source map with valid mappings", () => {
+      const hooks = findPlugin(vitiatePlugin(), "vitiate:hooks");
+      const result = callHooksTransform(
+        hooks,
+        'import { execSync } from "child_process";',
+      );
+      expect(result).not.toBeNull();
+      expect(result!.map).toBeDefined();
+      const map = result!.map as { mappings: string };
+      expect(typeof map.mappings).toBe("string");
+      expect(map.mappings.length).toBeGreaterThan(0);
+    });
+
+    it("rewrites multiple hooked imports in the same file", () => {
+      const hooks = findPlugin(vitiatePlugin(), "vitiate:hooks");
+      const code = [
+        'import { execSync } from "child_process";',
+        'import { readFileSync } from "node:fs";',
+        "const x = 1;",
+      ].join("\n");
+      const result = callHooksTransform(hooks, code);
+      expect(result).not.toBeNull();
+      expect(result!.code).toContain(
+        'import __vitiate_child_process from "child_process";',
+      );
+      expect(result!.code).toContain(
+        "const { execSync } = __vitiate_child_process;",
+      );
+      expect(result!.code).toContain('import __vitiate_fs from "node:fs";');
+      expect(result!.code).toContain("const { readFileSync } = __vitiate_fs;");
+    });
+
+    it("does not touch dynamic imports", () => {
+      const hooks = findPlugin(vitiatePlugin(), "vitiate:hooks");
+      const code = 'const cp = await import("child_process");';
+      const result = callHooksTransform(hooks, code);
+      expect(result).toBeNull();
+    });
+
+    it("skips node_modules files", () => {
+      const hooks = findPlugin(vitiatePlugin(), "vitiate:hooks");
+      const result = callHooksTransform(
+        hooks,
+        'import { execSync } from "child_process";',
+        "/project/node_modules/some-lib/index.js",
+      );
+      expect(result).toBeNull();
+    });
+
+    it("skips non-JS/TS files (CSS, JSON, SVG)", () => {
+      const hooks = findPlugin(vitiatePlugin(), "vitiate:hooks");
+      for (const ext of [".css", ".json", ".svg", ".html", ".wasm"]) {
+        const result = callHooksTransform(
+          hooks,
+          'import { execSync } from "child_process";',
+          `/project/src/file${ext}`,
+        );
+        expect(result).toBeNull();
+      }
+    });
+
+    it("processes all JS/TS file extensions", () => {
+      const hooks = findPlugin(vitiatePlugin(), "vitiate:hooks");
+      for (const ext of [
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        ".mjs",
+        ".mts",
+        ".cjs",
+        ".cts",
+      ]) {
+        const result = callHooksTransform(
+          hooks,
+          'import { execSync } from "child_process";',
+          `/project/src/file${ext}`,
+        );
+        expect(result).not.toBeNull();
+      }
+    });
+
+    it("handles Vite query strings in file IDs", () => {
+      const hooks = findPlugin(vitiatePlugin(), "vitiate:hooks");
+      const result = callHooksTransform(
+        hooks,
+        'import { execSync } from "child_process";',
+        "/project/src/app.ts?v=abc123",
+      );
+      expect(result).not.toBeNull();
+    });
+  });
+
   describe("transform", () => {
     it("instruments a simple JS file", async () => {
-      const plugin = vitiatePlugin();
-      const transform = plugin.transform as (
+      const instrument = findPlugin(vitiatePlugin(), "vitiate:instrument");
+      const transform = instrument.transform as (
         code: string,
         id: string,
       ) => Promise<{ code: string; map?: string } | null>;
@@ -206,7 +500,6 @@ function add(a, b) {
       expect(result!.code).toContain("__vitiate_cov[");
       expect(result!.code).toContain("__vitiate_trace_cmp(");
 
-      // Fix 4: source maps should be present
       expect(result!.map).toBeDefined();
       const map = JSON.parse(result!.map as string) as Record<string, unknown>;
       expect(map).toHaveProperty("mappings");
@@ -215,8 +508,8 @@ function add(a, b) {
     });
 
     it("skips node_modules files by default", async () => {
-      const plugin = vitiatePlugin();
-      const transform = plugin.transform as (
+      const instrument = findPlugin(vitiatePlugin(), "vitiate:instrument");
+      const transform = instrument.transform as (
         code: string,
         id: string,
       ) => Promise<{ code: string; map?: string } | null>;
@@ -231,8 +524,11 @@ function add(a, b) {
     });
 
     it("instruments node_modules files when exclude is empty", async () => {
-      const plugin = vitiatePlugin({ instrument: { exclude: [] } });
-      const transform = plugin.transform as (
+      const instrument = findPlugin(
+        vitiatePlugin({ instrument: { exclude: [] } }),
+        "vitiate:instrument",
+      );
+      const transform = instrument.transform as (
         code: string,
         id: string,
       ) => Promise<{ code: string; map?: string } | null>;

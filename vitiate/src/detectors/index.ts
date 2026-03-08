@@ -7,3 +7,8 @@ export {
   isDetectorActive,
   type ModuleHook,
 } from "./module-hook.js";
+export {
+  installDetectorModuleHooks,
+  getDetectorManager,
+  resetDetectorHooks,
+} from "./early-hooks.js";

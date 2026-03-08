@@ -1,0 +1,13 @@
+{
+  "name": "example-detectors",
+  "private": true,
+  "type": "module",
+  "scripts": {},
+  "dependencies": {
+    "vitiate": "workspace:*"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0",
+    "vitest": "^3.1.0"
+  }
+}

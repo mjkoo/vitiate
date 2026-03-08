@@ -2,6 +2,11 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { VulnerabilityError } from "./vulnerability-error.js";
 import { DetectorManager } from "./manager.js";
 import { installHook, setDetectorActive } from "./module-hook.js";
+import {
+  installDetectorModuleHooks,
+  getDetectorManager,
+  resetDetectorHooks,
+} from "./early-hooks.js";
 import { PrototypePollutionDetector } from "./prototype-pollution.js";
 import { CommandInjectionDetector } from "./command-injection.js";
 import { PathTraversalDetector } from "./path-traversal.js";
@@ -465,5 +470,79 @@ describe("PathTraversalDetector", () => {
     expect(tokenStrings).toContain("/var/www/uploads");
     // Depth-based traversal: /var/www/uploads has 3 components
     expect(tokenStrings).toContain("../../../etc/passwd");
+  });
+});
+
+// ── 10.7 installDetectorModuleHooks lifecycle ─────────────────────────────
+
+describe("installDetectorModuleHooks", () => {
+  afterEach(() => {
+    resetDetectorHooks();
+    setDetectorActive(false);
+  });
+
+  it("creates a DetectorManager with default config", () => {
+    installDetectorModuleHooks(undefined);
+    const manager = getDetectorManager();
+    expect(manager).toBeInstanceOf(DetectorManager);
+    expect(manager!.activeDetectorNames).toContain("command-injection");
+    expect(manager!.activeDetectorNames).toContain("path-traversal");
+    expect(manager!.activeDetectorNames).toContain("prototype-pollution");
+  });
+
+  it("is idempotent when called with the same config", () => {
+    installDetectorModuleHooks(undefined);
+    const first = getDetectorManager();
+
+    installDetectorModuleHooks(undefined);
+    const second = getDetectorManager();
+
+    expect(second).toBe(first);
+  });
+
+  it("reconfigures when called with a different config", () => {
+    installDetectorModuleHooks(undefined);
+    const first = getDetectorManager();
+    expect(first!.activeDetectorNames).toContain("command-injection");
+
+    installDetectorModuleHooks({ commandInjection: false });
+    const second = getDetectorManager();
+
+    expect(second).not.toBe(first);
+    expect(second!.activeDetectorNames).not.toContain("command-injection");
+  });
+
+  it("returns null before any installation", () => {
+    expect(getDetectorManager()).toBeNull();
+  });
+
+  it("hooks are functional through require after installation", () => {
+    installDetectorModuleHooks(undefined);
+    setDetectorActive(true);
+
+    const childProcess = require("child_process");
+    expect(() => childProcess.execSync("echo vitiate_cmd_inject")).toThrow(
+      VulnerabilityError,
+    );
+  });
+
+  it("resetDetectorHooks tears down and clears the manager", () => {
+    installDetectorModuleHooks(undefined);
+    expect(getDetectorManager()).not.toBeNull();
+
+    resetDetectorHooks();
+    expect(getDetectorManager()).toBeNull();
+
+    // Hooks are torn down — no VulnerabilityError thrown
+    setDetectorActive(true);
+    const childProcess = require("child_process");
+    const fn = () => {
+      try {
+        childProcess.execSync("echo vitiate_cmd_inject", { timeout: 1000 });
+      } catch (e: unknown) {
+        if (e instanceof VulnerabilityError) throw e;
+      }
+    };
+    expect(fn).not.toThrow();
   });
 });
