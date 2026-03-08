@@ -40,6 +40,21 @@ function resolveSetupPath(): string {
   throw new Error(`Cannot find setup file: tried ${tsPath} and ${jsPath}`);
 }
 
+/**
+ * Vite/Vitest plugin that instruments JavaScript and TypeScript source with
+ * edge coverage counters and comparison tracing via the SWC WASM plugin.
+ *
+ * @example
+ * ```ts
+ * // vitest.config.ts
+ * import { defineConfig } from "vitest/config";
+ * import { vitiatePlugin } from "vitiate";
+ *
+ * export default defineConfig({
+ *   plugins: [vitiatePlugin()],
+ * });
+ * ```
+ */
 export function vitiatePlugin(options?: VitiatePluginOptions): Plugin {
   const { include, exclude } = resolveInstrumentOptions(options?.instrument);
   const fuzz = options?.fuzz;

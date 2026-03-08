@@ -326,6 +326,23 @@ type FuzzFn = {
   todo: (name: string) => void;
 };
 
+/**
+ * Register a fuzz test. Works like Vitest's `test()` but drives the target
+ * with coverage-guided mutations instead of static inputs.
+ *
+ * In fuzzing mode (`VITIATE_FUZZ=1`), the target is fed mutated `Buffer`
+ * inputs by LibAFL. In regression mode (default), saved crash/corpus
+ * entries are replayed deterministically.
+ *
+ * @example
+ * ```ts
+ * import { fuzz } from "vitiate";
+ *
+ * fuzz("parses without crashing", (data) => {
+ *   JSON.parse(data.toString());
+ * });
+ * ```
+ */
 export const fuzz: FuzzFn = Object.assign(
   function fuzzImpl(
     name: string,

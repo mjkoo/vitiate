@@ -14,6 +14,9 @@ import type { FuzzerConfig } from "vitiate-napi";
 import {
   isSupervisorChild,
   getDictionaryPathEnv,
+  isDebugMode,
+  getCoverageMapSize,
+  DEFAULT_MAX_INPUT_LEN,
   type FuzzOptions,
 } from "./config.js";
 import {
@@ -32,6 +35,7 @@ import {
   createReporter,
   startReporting,
   stopReporting,
+  printBanner,
   printCrash,
   printSummary,
 } from "./reporter.js";
@@ -326,6 +330,17 @@ export async function runFuzzLoop(
     fuzzerConfig.dictionaryPath = dictionaryPath;
   }
 
+  const debug = isDebugMode();
+
+  if (debug) {
+    process.stderr.write(
+      `vitiate[debug]: fuzzerConfig=${JSON.stringify(fuzzerConfig)}\n`,
+    );
+    process.stderr.write(
+      `vitiate[debug]: options=${JSON.stringify(options)}\n`,
+    );
+  }
+
   const fuzzer = new Fuzzer(coverageMap, fuzzerConfig);
 
   // Load seeds
@@ -334,6 +349,12 @@ export async function runFuzzLoop(
   const extraCorpus = corpusDirs ? loadCorpusFromDirs(corpusDirs) : [];
   for (const seed of [...seedCorpus, ...cachedCorpus, ...extraCorpus]) {
     fuzzer.addSeed(seed);
+  }
+
+  if (debug) {
+    process.stderr.write(
+      `vitiate[debug]: corpus=${JSON.stringify({ seed: seedCorpus.length, cached: cachedCorpus.length, extra: extraCorpus.length })}\n`,
+    );
   }
 
   // In supervisor (child) mode, attach to the parent's shared memory region
@@ -354,6 +375,12 @@ export async function runFuzzLoop(
       : path.join(testDir, "testdata", "fuzz", sanitizeTestName(testName)) +
         path.sep);
 
+  if (debug) {
+    process.stderr.write(
+      `vitiate[debug]: artifactPrefix=${resolvedArtifactPrefix}\n`,
+    );
+  }
+
   // Install platform-specific crash handler (Windows SEH; no-op on Unix).
   if (shmemHandle) {
     installExceptionHandler(shmemHandle, resolvedArtifactPrefix);
@@ -369,7 +396,22 @@ export async function runFuzzLoop(
       ? new Watchdog(resolvedArtifactPrefix, shmemHandle)
       : null;
 
-  const reporter = createReporter();
+  const quiet = options.quiet === true;
+  const showBanner = !quiet && options.banner !== false;
+  if (showBanner) {
+    const totalCorpusSize =
+      seedCorpus.length + cachedCorpus.length + extraCorpus.length;
+    printBanner({
+      testName,
+      maxLen: options.maxLen ?? DEFAULT_MAX_INPUT_LEN,
+      timeoutMs: options.timeoutMs,
+      seed: options.seed,
+      corpusSize: totalCorpusSize,
+      mapSize: getCoverageMapSize(),
+    });
+  }
+
+  const reporter = createReporter(quiet);
   startReporting(reporter, () => fuzzer.stats);
 
   const startTime = Date.now();

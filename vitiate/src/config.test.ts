@@ -3,6 +3,7 @@ import {
   isFuzzingMode,
   isOptimizeMode,
   isMergeMode,
+  isDebugMode,
   checkModeExclusion,
   isLibfuzzerCompat,
   getCorpusOutputDir,
@@ -122,6 +123,28 @@ describe("config", () => {
     it("returns false when merge is false in IPC blob", () => {
       process.env["VITIATE_CLI_IPC"] = JSON.stringify({ merge: false });
       expect(isMergeMode()).toBe(false);
+    });
+  });
+
+  describe("isDebugMode", () => {
+    const originalDebug = process.env["VITIATE_DEBUG"];
+
+    afterEach(() => {
+      if (originalDebug === undefined) {
+        delete process.env["VITIATE_DEBUG"];
+      } else {
+        process.env["VITIATE_DEBUG"] = originalDebug;
+      }
+    });
+
+    it("returns false when VITIATE_DEBUG is not set", () => {
+      delete process.env["VITIATE_DEBUG"];
+      expect(isDebugMode()).toBe(false);
+    });
+
+    it("returns true when VITIATE_DEBUG is 1", () => {
+      process.env["VITIATE_DEBUG"] = "1";
+      expect(isDebugMode()).toBe(true);
     });
   });
 

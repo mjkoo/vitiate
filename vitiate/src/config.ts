@@ -51,6 +51,19 @@ const FuzzOptionsSchema = v.object({
    * `true` = force enable, `false` = force disable, absent = auto-detect (inverted: enabled for binary corpus).
    */
   redqueen: v.optional(v.boolean()),
+  /**
+   * Startup banner control.
+   * `true` = force show, `false` = force hide, absent = auto (show).
+   * Controls the one-line startup banner only. Suppressed when `quiet` is `true`.
+   */
+  banner: v.optional(v.boolean()),
+  /**
+   * Quiet mode.
+   * `true` = suppress banner, periodic status lines, and summary.
+   * `false` = force verbose, absent = auto (not quiet).
+   * Crash output always prints regardless of this flag.
+   */
+  quiet: v.optional(v.boolean()),
 });
 
 export type FuzzOptions = v.InferOutput<typeof FuzzOptionsSchema>;
@@ -75,7 +88,9 @@ export interface InstrumentOptions {
 }
 
 export interface VitiatePluginOptions {
+  /** File inclusion/exclusion patterns for SWC instrumentation. */
   instrument?: InstrumentOptions;
+  /** Default fuzz options applied to all `fuzz()` tests (overridden by per-test and env options). */
   fuzz?: FuzzOptions;
   /** Cache directory path, resolved relative to project root. */
   cacheDir?: string;
@@ -267,7 +282,12 @@ const KNOWN_VITIATE_ENV_VARS = new Set([
   "VITIATE_SHMEM",
   "VITIATE_FUZZ_OPTIONS",
   "VITIATE_CLI_IPC",
+  "VITIATE_DEBUG",
 ]);
+
+export function isDebugMode(): boolean {
+  return envTruthy("VITIATE_DEBUG");
+}
 
 export function warnUnknownVitiateEnvVars(): void {
   for (const key of Object.keys(process.env)) {

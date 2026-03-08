@@ -18,8 +18,8 @@ import { option, argument } from "@optique/core/primitives";
 import { integer, string } from "@optique/core/valueparser";
 import { optional, multiple, withDefault } from "@optique/core/modifiers";
 import { type InferValue, parseSync } from "@optique/core/parser";
-import { formatMessage } from "@optique/core/message";
-import { runSync } from "@optique/run";
+import { formatMessage, text } from "@optique/core/message";
+import { runSync, type RunOptions } from "@optique/run";
 import escapeStringRegexp from "escape-string-regexp";
 import { ShmemHandle } from "vitiate-napi";
 import { vitiatePlugin } from "./plugin.js";
@@ -345,8 +345,19 @@ async function main(): Promise<void> {
   } = toCliArgs(
     runSync(cliParser, {
       programName: "vitiate",
-      help: "option",
-    }),
+      brief: [text("Coverage-guided JavaScript fuzzer")],
+      description: [
+        text(
+          "Instruments JS/TS source with edge coverage counters via SWC and " +
+            "drives mutation-based fuzzing via LibAFL. Accepts libFuzzer-compatible " +
+            "flags. Configuration via per-test options, VITIATE_FUZZ_OPTIONS JSON " +
+            "env var, or CLI flags.",
+        ),
+      ],
+      help: {
+        option: { names: ["-help", "--help"] },
+      },
+    } satisfies RunOptions),
   );
 
   if (!isSupervisorChild()) {

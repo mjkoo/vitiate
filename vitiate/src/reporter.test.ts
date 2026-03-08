@@ -22,7 +22,7 @@ describe("reporter", () => {
   });
 
   it("reportStatus writes a status line to stderr", () => {
-    const state = createReporter();
+    const state = createReporter(false);
     const stats: FuzzerStats = {
       totalExecs: 50000,
       corpusSize: 100,
@@ -54,7 +54,7 @@ describe("reporter", () => {
   });
 
   it("printSummary writes final summary to stderr", () => {
-    const state = createReporter();
+    const state = createReporter(false);
     const stats: FuzzerStats = {
       totalExecs: 100000,
       corpusSize: 200,
@@ -74,7 +74,7 @@ describe("reporter", () => {
   });
 
   it("first reportStatus after startReporting shows 0 new when corpus hasn't grown", () => {
-    const state = createReporter();
+    const state = createReporter(false);
     const stats: FuzzerStats = {
       totalExecs: 0,
       corpusSize: 50,

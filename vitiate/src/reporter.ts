@@ -7,13 +7,28 @@ export interface ReporterState {
   startTime: number;
   intervalId: ReturnType<typeof setInterval> | null;
   lastCorpusSize: number;
+  quiet: boolean;
 }
 
-export function createReporter(): ReporterState {
+export interface BannerInfo {
+  testName: string;
+  maxLen: number;
+  timeoutMs: number | undefined;
+  seed: number | undefined;
+  corpusSize: number;
+  mapSize: number;
+}
+
+export function printBanner(info: BannerInfo): void {
+  process.stderr.write(`vitiate: ${JSON.stringify(info)}\n`);
+}
+
+export function createReporter(quiet: boolean): ReporterState {
   return {
     startTime: Date.now(),
     intervalId: null,
     lastCorpusSize: 0,
+    quiet,
   };
 }
 
@@ -24,6 +39,7 @@ export function startReporting(
 ): void {
   state.startTime = Date.now();
   state.lastCorpusSize = getStats().corpusSize;
+  if (state.quiet) return;
   state.intervalId = setInterval(() => {
     reportStatus(state, getStats());
   }, intervalMs);
@@ -56,6 +72,7 @@ export function printCrash(error: Error, artifactPath: string): void {
 }
 
 export function printSummary(state: ReporterState, stats: FuzzerStats): void {
+  if (state.quiet) return;
   const elapsed = ((Date.now() - state.startTime) / 1000).toFixed(1);
   process.stderr.write(
     `\nfuzz: done - execs: ${stats.totalExecs}, corpus: ${stats.corpusSize}, edges: ${stats.coverageEdges}, elapsed: ${elapsed}s\n`,
