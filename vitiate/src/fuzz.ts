@@ -5,6 +5,10 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { test } from "vitest";
+// Vitest coupling: getCurrentTest() is expected to return a Test object with
+// .name, .file.filepath, and a .suite chain (Suite with .name and .suite).
+// The suite chain is walked in buildTestNamePattern(). If Vitest changes this
+// shape, update buildTestNamePattern() accordingly. Verified against vitest 3.x.
 import { getCurrentTest } from "vitest/suite";
 import escapeStringRegexp from "escape-string-regexp";
 import { ShmemHandle } from "vitiate-napi";

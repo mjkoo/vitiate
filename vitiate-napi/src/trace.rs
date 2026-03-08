@@ -68,38 +68,55 @@ fn eval_comparison(env: &Env, left: Unknown, right: Unknown, op: &str) -> Result
     );
     let cmp_fn: Unknown = env.run_script(&cache_script)?;
 
-    // Call the cached function with our operands
-    unsafe {
-        let mut result = std::ptr::null_mut();
-        let mut undefined = std::ptr::null_mut();
-        let status = napi::sys::napi_get_undefined(env.raw(), &mut undefined);
-        if status != napi::sys::Status::napi_ok {
-            return Err(Error::from_reason("trace_cmp: failed to get undefined"));
-        }
+    // SAFETY: env.raw() is valid (napi-rs Env parameter). cmp_fn, left, right
+    // are Unknown values obtained in this callback scope.
+    unsafe { call_js_comparison(env.raw(), cmp_fn.raw(), left.raw(), right.raw()) }
+}
 
-        let args = [left.raw(), right.raw()];
-        let status = napi::sys::napi_call_function(
-            env.raw(),
-            undefined,
-            cmp_fn.raw(),
-            2,
-            args.as_ptr(),
-            &mut result,
-        );
-        if status != napi::sys::Status::napi_ok {
-            return Err(Error::from_reason(
-                "trace_cmp: failed to call comparison function",
-            ));
-        }
+/// Call a JS function with two arguments and extract the boolean result.
+///
+/// Uses raw NAPI C API calls to avoid `JsUnknown` allocation overhead on this
+/// hot path (called for every non-strict comparison in instrumented code).
+///
+/// # Safety
+///
+/// - `env` must be a valid `napi_env` handle from the current callback scope.
+/// - `func`, `left`, and `right` must be valid `napi_value` handles in the
+///   current scope.
+///
+/// These invariants are guaranteed when called from `eval_comparison`, which
+/// receives its `Env` and `Unknown` values from the `#[napi]` framework.
+unsafe fn call_js_comparison(
+    env: napi::sys::napi_env,
+    func: napi::sys::napi_value,
+    left: napi::sys::napi_value,
+    right: napi::sys::napi_value,
+) -> Result<bool> {
+    let mut result = std::ptr::null_mut();
+    let mut undefined = std::ptr::null_mut();
 
-        let mut bool_result = false;
-        let status = napi::sys::napi_get_value_bool(env.raw(), result, &mut bool_result);
-        if status != napi::sys::Status::napi_ok {
-            return Err(Error::from_reason(
-                "trace_cmp: comparison did not return boolean",
-            ));
-        }
-
-        Ok(bool_result)
+    let status = unsafe { napi::sys::napi_get_undefined(env, &mut undefined) };
+    if status != napi::sys::Status::napi_ok {
+        return Err(Error::from_reason("trace_cmp: failed to get undefined"));
     }
+
+    let args = [left, right];
+    let status = unsafe {
+        napi::sys::napi_call_function(env, undefined, func, 2, args.as_ptr(), &mut result)
+    };
+    if status != napi::sys::Status::napi_ok {
+        return Err(Error::from_reason(
+            "trace_cmp: failed to call comparison function",
+        ));
+    }
+
+    let mut bool_result = false;
+    let status = unsafe { napi::sys::napi_get_value_bool(env, result, &mut bool_result) };
+    if status != napi::sys::Status::napi_ok {
+        return Err(Error::from_reason(
+            "trace_cmp: comparison did not return boolean",
+        ));
+    }
+
+    Ok(bool_result)
 }

@@ -28,7 +28,7 @@ const GENERALIZATION_BRACKETS: [(u8, u8); 6] = [
 /// type of gap-finding pass that ablates portions of the input and checks
 /// whether novel coverage indices survive.
 #[derive(Debug)]
-pub(super) enum GeneralizationPhase {
+pub(crate) enum GeneralizationPhase {
     /// Initial stability check: execute the original input unmodified.
     Verify,
     /// Offset-based gap-finding. `level` indexes into `GENERALIZATION_OFFSETS`,

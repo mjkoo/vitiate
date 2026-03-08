@@ -6,6 +6,7 @@
  */
 import type { ChildProcess } from "node:child_process";
 import type { ShmemHandle } from "vitiate-napi";
+import { watchdogExitCode } from "vitiate-napi";
 import {
   writeArtifact,
   writeArtifactWithPrefix,
@@ -14,9 +15,9 @@ import {
 
 /**
  * Exit code used by the watchdog's `_exit` fallback for timeouts.
- * Must be kept in sync with `WATCHDOG_EXIT_CODE` in `vitiate-napi/src/watchdog.rs`.
+ * Sourced from the Rust watchdog module via napi-rs (single source of truth).
  */
-export const WATCHDOG_EXIT_CODE = 77;
+export const WATCHDOG_EXIT_CODE = watchdogExitCode();
 
 /**
  * Maximum number of child respawns before the parent gives up.

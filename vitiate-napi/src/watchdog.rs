@@ -19,8 +19,15 @@ use crate::shmem_stash::{ShmemHandle, ShmemView};
 use crate::v8_shim;
 
 /// Exit code used by the watchdog's `_exit` fallback for timeouts.
-/// Must be kept in sync with `WATCHDOG_EXIT_CODE` in `vitiate/src/cli.ts`.
+/// Also exposed to JavaScript via the [`watchdog_exit_code()`] napi getter.
 pub(crate) const WATCHDOG_EXIT_CODE: i32 = 77;
+
+/// Returns the exit code used by the watchdog's `_exit` fallback for timeouts.
+#[napi]
+#[cfg_attr(test, allow(dead_code))]
+pub fn watchdog_exit_code() -> i32 {
+    WATCHDOG_EXIT_CODE
+}
 
 /// Internal watchdog state protected by a mutex.
 struct WatchdogState {

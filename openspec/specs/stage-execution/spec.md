@@ -253,8 +253,8 @@ The system SHALL provide `fuzzer.abortStage(exitKind: ExitKind)` which cleanly t
 2. Zero the coverage map (may contain partial/corrupt data from the crashed execution).
 3. Increment `total_execs` and `state.executions` (the aborted execution still counts as a target invocation).
 4. Transition `StageState` to `None` (regardless of which stage variant was active — Colorization, Redqueen, I2S, Generalization, Grimoire, or Unicode).
-5. NOT evaluate coverage or add the crashed/timed-out input to the corpus.
-6. NOT add the crash/timeout to the solutions corpus — the crash artifact is written by the JS fuzz loop, but `solutionCount` is not incremented by `abortStage()`.
+5. NOT evaluate coverage or add the crashed/timed-out input to the main corpus.
+6. If the exit kind is Crash or Timeout, add the stage input to the solutions corpus and increment `solutionCount`. This ensures `FuzzerStats` reflects stage-discovered crashes consistently with main-loop crashes recorded by `reportResult()`. If the exit kind is Ok, do not record a solution.
 
 After `abortStage()` returns, the crash/timeout input and error are available in the JS fuzz loop for artifact writing via the existing crash-handling path. Stage-discovered crashes are NOT minimized inline. The aborted execution's timing is intentionally not reported since the execution was abnormal.
 
@@ -303,7 +303,8 @@ After `abortStage()` returns, the crash/timeout input and error are available in
 - **AND** the coverage map SHALL be zeroed
 - **AND** `total_execs` and `state.executions` SHALL each increment by 1
 - **AND** no corpus entry SHALL be added for the crashed execution
-- **AND** `solutionCount` SHALL NOT be incremented
+- **AND** the stage input SHALL be added to the solutions corpus
+- **AND** `solutionCount` SHALL be incremented by 1
 
 #### Scenario: abortStage is safe to call with no active stage
 

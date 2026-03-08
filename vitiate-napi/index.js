@@ -586,3 +586,4 @@ module.exports.IterationResult = nativeBinding.IterationResult
 module.exports.traceCmp = nativeBinding.traceCmp
 module.exports.v8ShimAvailable = nativeBinding.v8ShimAvailable
 module.exports.version = nativeBinding.version
+module.exports.watchdogExitCode = nativeBinding.watchdogExitCode

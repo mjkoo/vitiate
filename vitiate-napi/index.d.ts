@@ -241,3 +241,6 @@ export declare function traceCmp(left: unknown, right: unknown, cmpId: number, o
 export declare function v8ShimAvailable(): boolean
 
 export declare function version(): string
+
+/** Returns the exit code used by the watchdog's `_exit` fallback for timeouts. */
+export declare function watchdogExitCode(): number
