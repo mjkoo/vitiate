@@ -271,6 +271,7 @@ fn test_grimoire_override_through_constructor() {
             unicode: None,
             redqueen: None,
             dictionary_path: None,
+            detector_tokens: None,
         }),
     )
     .unwrap();
@@ -297,6 +298,7 @@ fn test_grimoire_override_disabled_through_constructor() {
             unicode: None,
             redqueen: None,
             dictionary_path: None,
+            detector_tokens: None,
         }),
     )
     .unwrap();

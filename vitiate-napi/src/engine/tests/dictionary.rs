@@ -14,6 +14,7 @@ fn make_config_with_dict(dict_path: &str) -> FuzzerConfig {
         unicode: None,
         redqueen: None,
         dictionary_path: Some(dict_path.to_string()),
+        detector_tokens: None,
     }
 }
 
@@ -113,6 +114,7 @@ fn no_dictionary_path_does_not_add_tokens_metadata() {
         unicode: None,
         redqueen: None,
         dictionary_path: None,
+        detector_tokens: None,
     };
     let fuzzer = Fuzzer::new(coverage_map, Some(config)).unwrap();
 

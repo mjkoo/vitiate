@@ -66,6 +66,8 @@ export const cliParser = object({
   artifactPrefix: optional(option("-artifact_prefix", string())),
   // Dictionary file
   dict: optional(option("-dict", string())),
+  // Detector configuration
+  detectors: optional(option("-detectors", string())),
   // libFuzzer-compatible flags: accepted for OSS-Fuzz compatibility
   fork: optional(option("-fork", integer({ min: 0 }))),
   jobs: optional(option("-jobs", integer({ min: 0 }))),
@@ -89,6 +91,87 @@ function warnUnsupportedFlags(parsed: InferValue<typeof cliParser>): void {
       `vitiate: warning: -jobs=${parsed.jobs} is ignored; vitiate runs a single job at a time (equivalent to -jobs=1)\n`,
     );
   }
+}
+
+/** Known detector names (camelCase, matching FuzzOptions.detectors keys). */
+const KNOWN_DETECTOR_NAMES = new Set([
+  "prototypePollution",
+  "commandInjection",
+  "pathTraversal",
+]);
+
+/**
+ * Parse the `-detectors` flag value into a `FuzzOptions.detectors` config object.
+ *
+ * When `-detectors` is specified, ALL defaults are disabled. Only explicitly
+ * listed detectors are enabled. This avoids the need for a `none` sentinel
+ * and makes the flag self-contained: you get exactly what you list.
+ *
+ * Syntax: comma-separated directives:
+ * - `name` → enable
+ * - `name.key=value` → enable with option
+ */
+export function parseDetectorsFlag(spec: string): FuzzOptions["detectors"] {
+  // Start with all detectors disabled — the flag overrides all defaults.
+  const detectors: Record<string, unknown> = {};
+  for (const name of KNOWN_DETECTOR_NAMES) {
+    detectors[name] = false;
+  }
+
+  const directives = spec
+    .split(",")
+    .map((d) => d.trim())
+    .filter(Boolean);
+
+  for (const directive of directives) {
+    // Option: name.key=value
+    const dotIdx = directive.indexOf(".");
+    if (dotIdx !== -1) {
+      const name = directive.slice(0, dotIdx);
+      if (!KNOWN_DETECTOR_NAMES.has(name)) {
+        process.stderr.write(
+          `vitiate: error: unknown detector: ${name}\nValid detectors: ${[...KNOWN_DETECTOR_NAMES].join(", ")}\n`,
+        );
+        process.exit(1);
+      }
+      const rest = directive.slice(dotIdx + 1);
+      const eqIdx = rest.indexOf("=");
+      if (eqIdx === -1) {
+        process.stderr.write(
+          `vitiate: error: invalid detector option syntax: ${directive} (expected name.key=value)\n`,
+        );
+        process.exit(1);
+      }
+      const key = rest.slice(0, eqIdx);
+      const value = rest.slice(eqIdx + 1);
+      const existing = detectors[name];
+      if (typeof existing === "object" && existing !== null) {
+        (existing as Record<string, string>)[key] = value;
+      } else {
+        detectors[name] = { [key]: value };
+      }
+      continue;
+    }
+
+    // Enable: name
+    if (!KNOWN_DETECTOR_NAMES.has(directive)) {
+      process.stderr.write(
+        `vitiate: error: unknown detector: ${directive}\nValid detectors: ${[...KNOWN_DETECTOR_NAMES].join(", ")}\n`,
+      );
+      process.exit(1);
+    }
+    // Only set to true if not already an options object
+    if (
+      !(
+        typeof detectors[directive] === "object" &&
+        detectors[directive] !== null
+      )
+    ) {
+      detectors[directive] = true;
+    }
+  }
+
+  return detectors as FuzzOptions["detectors"];
 }
 
 function toCliArgs(parsed: InferValue<typeof cliParser>): CliArgs {
@@ -121,6 +204,12 @@ function toCliArgs(parsed: InferValue<typeof cliParser>): CliArgs {
     dictPath = resolved;
   }
 
+  // Parse -detectors flag
+  const detectors =
+    parsed.detectors !== undefined
+      ? parseDetectorsFlag(parsed.detectors)
+      : undefined;
+
   return {
     testFile,
     corpusDirs,
@@ -138,6 +227,7 @@ function toCliArgs(parsed: InferValue<typeof cliParser>): CliArgs {
       minimizeBudget,
       minimizeTimeLimitMs:
         minimizeTimeLimit != null ? minimizeTimeLimit * 1000 : undefined,
+      detectors,
     },
   };
 }

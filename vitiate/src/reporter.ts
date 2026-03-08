@@ -17,6 +17,7 @@ export interface BannerInfo {
   seed: number | undefined;
   corpusSize: number;
   mapSize: number;
+  detectors?: string[];
 }
 
 export function printBanner(info: BannerInfo): void {

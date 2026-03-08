@@ -2,25 +2,18 @@
 
 ### Requirement: Core fuzzing iteration cycle
 
-The fuzz loop SHALL implement the following cycle for each iteration:
+The fuzz loop SHALL integrate detector lifecycle hooks around target execution. On each iteration:
 
-1. Call `fuzzer.getNextInput()` to get a mutated input.
-2. Stash the input to the cross-process shmem region via the shared-memory-stash capability, if a shmem handle is available.
-3. Record the start time via `process.hrtime.bigint()`.
-4. Call `watchdog.runTarget(target, input, timeoutMs)` which internally arms the watchdog, calls the target at the NAPI C level, and disarms on return. If V8 TerminateExecution fires during the call, the C++ shim intercepts it and returns `exitKind=2` (timeout). If the target throws, it returns `exitKind=1` (crash). If the target returns a Promise, it returns `exitKind=0` with the Promise in `result`.
-5. If `runTarget` returned a Promise: re-arm the watchdog, await the Promise, and disarm in a `finally` block. On catch, check `watchdog.didFire` to classify as `Timeout` vs `Crash`.
-6. Record the end time and compute `execTimeNs` as the elapsed nanoseconds (as a `number`, converted from BigInt via `Number()`).
-7. Determine `ExitKind`: `Ok` if the target returns normally, `Crash` if it throws, `Timeout` if the watchdog fired.
-8. Call `fuzzer.reportResult(exitKind, execTimeNs)` which reads coverage, masks unstable edges, updates corpus, zeroes the map, and drains CmpLog.
-9. If `reportResult` returns `Interesting`: enter the calibration loop (see Requirement: Calibration loop in fuzz loop). If calibration completes normally, enter the stage execution loop (see Requirement: Stage execution loop after calibration). If the stage execution loop encounters a crash or timeout, the stage loop calls `abortStage()` and falls through to step 10 using the stage input and error.
-10. If a crash or timeout needs artifact writing (either from `reportResult` returning `Solution` at step 8, or from a stage crash/timeout at step 9):
-    - For normal-iteration crashes where `reportResult` returned `Solution` and `exitKind` is `Crash`, attempt in-process crash minimization before writing the artifact.
-    - For stage-discovered crashes, skip minimization and write the raw stage input as the artifact.
-    - For timeouts (normal or stage), write the input as a timeout artifact without minimization.
-    - **Before writing the artifact, compute the dedup key from the exit kind and error. If the dedup key matches an existing entry in the crash dedup map, apply the dedup policy: if the new input is smaller, atomically replace the existing artifact via `replaceArtifact` and update the map entry, then continue to the next iteration (a replacement is not a new crash); if not smaller, suppress the write, increment `duplicateCrashesSkipped`, and continue to the next iteration (a suppressed duplicate is not a new crash). If the dedup key is `undefined`, proceed with the write unconditionally (fail open). If the dedup key is new (not in the map), write the artifact and add the key to the map.**
-    - After writing a new artifact (not suppressed or replaced by dedup):
-      - If `stopOnCrash` is `true`: the loop terminates.
-      - If `stopOnCrash` is `false`: increment the crash counter, append the artifact path to the crash artifact list, and continue to the next iteration — UNLESS `maxCrashes` is non-zero and the crash counter has reached `maxCrashes`, in which case print a warning to stderr and terminate the loop.
+1. Call `fuzzer.getNextInput()` to obtain the next mutated input.
+2. If a `ShmemHandle` is available, stash the current input for crash recovery.
+3. Call `detectorManager.beforeIteration()` to allow detectors to capture baseline state.
+4. Execute the target function with the input, under watchdog protection if `timeoutMs > 0`.
+5. Determine `ExitKind`: `Ok` if the target returns normally, `Crash` if it throws (including `VulnerabilityError` from module-hook detectors), `Timeout` if the watchdog fired.
+6. If `ExitKind` is `Ok`, call `detectorManager.afterIteration()`. If this throws a `VulnerabilityError`, upgrade the result to `ExitKind.Crash` with the `VulnerabilityError` as the error.
+7. Call `fuzzer.reportResult(exitKind, execTimeNs)` which reads coverage, masks unstable edges, updates corpus, zeroes the map, and drains CmpLog.
+8. If `reportResult` returns `Solution`, handle the crash: minimize (for JS crashes only, including `VulnerabilityError`), write the artifact, increment crash count, and check termination conditions (`stopOnCrash`, `maxCrashes`).
+9. If `reportResult` returns `Interesting`, run calibration and then run stages (I2S, Generalization, Grimoire). Detector lifecycle hooks SHALL also wrap target execution during calibration re-runs and stage executions (see requirements below).
+10. Every 1 000 iterations, yield to the event loop.
 
 The shmem stash (step 2) SHALL occur whenever the `VITIATE_SUPERVISOR` environment variable is set, regardless of whether the supervisor was spawned by the CLI entry point or by the `fuzz()` test callback. The fuzz loop does not need to know which entry point spawned the supervisor — the `VITIATE_SUPERVISOR` env var is the sole indicator.
 
@@ -34,12 +27,41 @@ The loop SHALL terminate when any of these conditions is met:
 
 For `runs` and the time limit, a value of 0 means unlimited (equivalent to no limit being set). The loop runs until a termination condition is met.
 
-#### Scenario: Normal iteration
+#### Scenario: Normal iteration with no detector finding
 
 - **WHEN** the target executes without throwing
-- **THEN** the watchdog is disarmed
-- **AND** `reportResult(ExitKind.Ok, execTimeNs)` is called with the measured execution time
-- **AND** the loop continues to the next iteration
+- **AND** `detectorManager.afterIteration()` returns without throwing
+- **THEN** `reportResult(ExitKind.Ok, execTimeNs)` SHALL be called
+- **AND** the loop SHALL continue to the next iteration
+
+#### Scenario: Target throws VulnerabilityError from module hook
+
+- **WHEN** the target calls a hooked function (e.g., `child_process.exec`) during execution
+- **AND** the hook throws a `VulnerabilityError`
+- **THEN** the iteration SHALL be classified as `ExitKind.Crash`
+- **AND** `reportResult(ExitKind.Crash, execTimeNs)` SHALL be called
+- **AND** the `VulnerabilityError` SHALL be passed to artifact writing
+
+#### Scenario: afterIteration detector throws VulnerabilityError
+
+- **WHEN** the target executes without throwing
+- **AND** `detectorManager.afterIteration()` throws a `VulnerabilityError`
+- **THEN** the iteration SHALL be upgraded from `ExitKind.Ok` to `ExitKind.Crash`
+- **AND** `reportResult(ExitKind.Crash, execTimeNs)` SHALL be called
+- **AND** the `VulnerabilityError` SHALL be passed to artifact writing
+
+#### Scenario: Timeout bypasses afterIteration
+
+- **WHEN** the watchdog fires and the iteration is classified as `ExitKind.Timeout`
+- **THEN** `detectorManager.afterIteration()` SHALL NOT be called
+- **AND** the timeout SHALL be handled as before (artifact written, no minimization)
+
+#### Scenario: Detector findings are minimized
+
+- **WHEN** a `VulnerabilityError` is thrown (either during execution or in `afterIteration()`)
+- **AND** `reportResult` returns `Solution`
+- **THEN** the fuzz loop SHALL invoke crash minimization on the input
+- **AND** the minimized input SHALL be verified to still trigger the same `VulnerabilityError` before writing the artifact
 
 #### Scenario: Target throws
 
@@ -223,6 +245,30 @@ The calibration loop SHALL use the same watchdog and timeout configuration as th
 - **THEN** the calibration loop SHALL break immediately
 - **AND** `calibrateFinish()` SHALL still be called
 
+### Requirement: Detector lifecycle during calibration
+
+The detector lifecycle hooks SHALL wrap target execution during calibration re-runs, identically to the main iteration cycle. For each calibration re-run:
+
+1. Call `detectorManager.beforeIteration()` before executing the target.
+2. Execute the target.
+3. If the target returns normally (`ExitKind.Ok`), call `detectorManager.afterIteration()`. If this throws a `VulnerabilityError`, upgrade to `ExitKind.Crash`.
+4. If a crash or timeout occurs (including `VulnerabilityError`), break out of the calibration loop as specified by the base calibration requirement.
+
+#### Scenario: Detector finding during calibration breaks loop
+
+- **WHEN** the target is being re-run during calibration
+- **AND** the target's execution triggers a `VulnerabilityError` (via module hook or `afterIteration()`)
+- **THEN** the calibration loop SHALL break immediately
+- **AND** `calibrateFinish()` SHALL still be called
+- **AND** the `VulnerabilityError` and input SHALL be passed to artifact writing
+
+#### Scenario: Clean calibration with detectors active
+
+- **WHEN** calibration re-runs the target multiple times
+- **AND** no detector fires on any re-run
+- **THEN** calibration SHALL complete normally
+- **AND** `beforeIteration()`/`afterIteration()` SHALL have been called for each re-run
+
 #### Scenario: Non-interesting result skips calibration
 
 - **WHEN** `reportResult()` returns a result that is NOT `Interesting` (e.g., not-interesting or Solution)
@@ -333,6 +379,59 @@ The stage execution loop SHALL use the same three-branch target execution patter
 - **THEN** each stage execution SHALL call the target directly
 - **AND** if the target returns a Promise, the stage loop SHALL await it
 - **AND** exceptions during the call SHALL trigger `abortStage(ExitKind.Crash)`
+
+### Requirement: Detector lifecycle during stage execution
+
+The detector lifecycle hooks SHALL wrap target execution during stage iterations (I2S, Generalization, Grimoire), identically to the main iteration cycle. For each stage execution:
+
+1. Call `detectorManager.beforeIteration()` before executing the target with the stage input.
+2. Execute the target.
+3. If the target returns normally (`ExitKind.Ok`), call `detectorManager.afterIteration()`. If this throws a `VulnerabilityError`, upgrade to `ExitKind.Crash`.
+4. If a crash or timeout occurs (including `VulnerabilityError`), call `fuzzer.abortStage(exitKind)`, break out of the stage loop, and proceed to artifact writing. Stage-discovered detector findings SHALL NOT be minimized (same as stage-discovered crashes).
+
+#### Scenario: Detector finding during stage aborts stage
+
+- **WHEN** a stage execution triggers a `VulnerabilityError` (via module hook or `afterIteration()`)
+- **THEN** `fuzzer.abortStage(ExitKind.Crash)` SHALL be called
+- **AND** the stage loop SHALL break
+- **AND** the raw stage input SHALL be written as a `crash-{hash}` artifact WITHOUT minimization
+
+#### Scenario: Clean stage execution with detectors active
+
+- **WHEN** the stage loop executes multiple inputs
+- **AND** no detector fires on any stage execution
+- **THEN** the stage SHALL complete normally
+- **AND** `beforeIteration()`/`afterIteration()` SHALL have been called for each stage execution
+
+### Requirement: Detector lifecycle initialization and teardown
+
+The fuzz loop SHALL initialize the `DetectorManager` before entering the iteration loop and tear it down after exiting. Specifically:
+
+1. After constructing the `Fuzzer` but before the first `getNextInput()`, call `detectorManager.setup()`.
+2. After the iteration loop exits (normally or due to termination condition), call `detectorManager.teardown()`.
+
+#### Scenario: Setup before first iteration
+
+- **WHEN** the fuzz loop begins
+- **THEN** `detectorManager.setup()` SHALL be called before any target execution
+- **AND** module hooks installed by detectors SHALL be active for all iterations
+
+#### Scenario: Teardown after loop exit
+
+- **WHEN** the fuzz loop exits (due to time limit, run limit, `stopOnCrash`, or `maxCrashes`)
+- **THEN** `detectorManager.teardown()` SHALL be called
+- **AND** module hooks SHALL be restored to their original state
+
+### Requirement: DetectorManager construction in fuzz loop
+
+The fuzz loop SHALL construct a `DetectorManager` from the resolved `FuzzOptions.detectors` configuration. The detector tokens from `detectorManager.getTokens()` SHALL be included in the `FuzzerConfig` passed to the `Fuzzer` constructor, so they are available to the mutation engine from the first iteration.
+
+#### Scenario: Detector tokens passed to Fuzzer
+
+- **WHEN** the fuzz loop constructs the `Fuzzer`
+- **AND** detectors are active
+- **THEN** `detectorManager.getTokens()` SHALL be called before `Fuzzer` construction
+- **AND** the returned tokens SHALL be passed as `detectorTokens` in `FuzzerConfig`
 
 ### Requirement: Seed loading
 

@@ -1301,6 +1301,75 @@ describe("fuzz loop", () => {
       ).rejects.toThrow("Failed to load dictionary file");
     });
   });
+
+  it("prototype pollution detector finds planted bug in fuzz loop", async () => {
+    await setupFuzzingMode();
+    // Target with a planted prototype pollution vulnerability:
+    // When the fuzz input contains "__proto__", the target unsafely assigns
+    // a property on Object.prototype. The prototype pollution detector
+    // catches the modification in afterIteration(). The fuzzer has "__proto__"
+    // as a dictionary token from the detector, so it finds this quickly.
+    const target = (data: Buffer): void => {
+      const str = data.toString("utf8");
+      if (str.includes("__proto__")) {
+        // Vulnerable: writes directly to Object.prototype.
+        const obj: Record<string, unknown> = {};
+        (obj as Record<string, Record<string, unknown>>)["__proto__"]![
+          "polluted"
+        ] = true;
+      }
+    };
+
+    const result = await runFuzzLoop(
+      target,
+      tmpDir,
+      "proto-pollution",
+      "test.fuzz.ts",
+      {
+        runs: 100000,
+        fuzzTimeMs: 60000,
+        grimoire: false,
+        unicode: false,
+        redqueen: false,
+        quiet: true,
+        // Detectors enabled by default (Tier 1)
+      },
+    );
+
+    expect(result.crashed).toBe(true);
+    expect(result.crashArtifactPath).toBeDefined();
+    expect(result.crashArtifactPath!).toContain("crash-");
+    expect(existsSync(result.crashArtifactPath!)).toBe(true);
+  });
+
+  it("VulnerabilityError throws produce standard crash-{hash} artifacts", async () => {
+    await setupFuzzingMode();
+    const { VulnerabilityError } = await import("./detectors/index.js");
+    const target = (_data: Buffer): void => {
+      throw new VulnerabilityError("test-detector", "Test Vulnerability", {
+        test: true,
+      });
+    };
+
+    const result = await runFuzzLoop(
+      target,
+      tmpDir,
+      "vuln-artifact",
+      "test.fuzz.ts",
+      {
+        runs: 10,
+        grimoire: false,
+        unicode: false,
+        redqueen: false,
+        quiet: true,
+      },
+    );
+
+    expect(result.crashed).toBe(true);
+    expect(result.crashArtifactPath).toBeDefined();
+    expect(result.crashArtifactPath!).toContain("crash-");
+    expect(existsSync(result.crashArtifactPath!)).toBe(true);
+  });
 }, 60000);
 
 describe("checkDedupPolicy", () => {

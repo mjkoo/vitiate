@@ -176,6 +176,13 @@ export interface FuzzerConfig {
    * into state metadata before any fuzz iterations execute.
    */
   dictionaryPath?: string
+  /**
+   * Pre-seeded dictionary tokens from active bug detectors.
+   * Inserted into `Tokens` state metadata after user dictionary tokens.
+   * Exempt from `MAX_DICTIONARY_SIZE` cap; marked as pre-promoted to
+   * prevent CmpLog from re-discovering them.
+   */
+  detectorTokens?: Array<Buffer>
 }
 
 export interface FuzzerStats {

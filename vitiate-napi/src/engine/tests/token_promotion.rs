@@ -231,6 +231,7 @@ fn user_provided_tokens_present_in_state_with_cmplog_promotion() {
         unicode: None,
         redqueen: None,
         dictionary_path: Some(dict_path.to_str().unwrap().to_string()),
+        detector_tokens: None,
     };
     let mut fuzzer = crate::engine::Fuzzer::new(coverage_map, Some(config)).unwrap();
     fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
@@ -287,6 +288,7 @@ fn user_tokens_do_not_count_toward_cmplog_cap() {
         unicode: None,
         redqueen: None,
         dictionary_path: Some(dict_path.to_str().unwrap().to_string()),
+        detector_tokens: None,
     };
     let mut fuzzer = crate::engine::Fuzzer::new(coverage_map, Some(config)).unwrap();
     fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
@@ -316,6 +318,125 @@ fn user_tokens_do_not_count_toward_cmplog_cap() {
     assert!(
         token_list.contains(&b"cmplog_new".as_slice()),
         "CmpLog token should be promoted even when user tokens exceed MAX_DICTIONARY_SIZE"
+    );
+
+    cmplog::disable();
+}
+
+#[test]
+fn detector_tokens_inserted_and_exempt_from_cap() {
+    cmplog::disable();
+    cmplog::drain();
+
+    let coverage_map: Buffer = vec![0u8; 256].into();
+    let config = crate::types::FuzzerConfig {
+        max_input_len: None,
+        seed: Some(42),
+        grimoire: None,
+        unicode: None,
+        redqueen: None,
+        dictionary_path: None,
+        detector_tokens: Some(vec![
+            Buffer::from(b"__proto__".to_vec()),
+            Buffer::from(b"constructor".to_vec()),
+            Buffer::from(b"../".to_vec()),
+        ]),
+    };
+    let mut fuzzer = crate::engine::Fuzzer::new(coverage_map, Some(config)).unwrap();
+    fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+
+    // Detector tokens should be in Tokens metadata.
+    let tokens = fuzzer.state.metadata::<Tokens>().unwrap();
+    let token_list: Vec<&[u8]> = tokens.tokens().iter().map(|t| t.as_slice()).collect();
+    assert!(token_list.contains(&b"__proto__".as_slice()));
+    assert!(token_list.contains(&b"constructor".as_slice()));
+    assert!(token_list.contains(&b"../".as_slice()));
+
+    // Detector tokens should be pre-promoted (won't be re-discovered by CmpLog).
+    assert!(
+        fuzzer
+            .token_tracker
+            .promoted
+            .contains(b"__proto__".as_slice())
+    );
+    assert!(
+        fuzzer
+            .token_tracker
+            .promoted
+            .contains(b"constructor".as_slice())
+    );
+    assert!(fuzzer.token_tracker.promoted.contains(b"../".as_slice()));
+    assert_eq!(fuzzer.token_tracker.pre_seeded_count, 3);
+
+    // CmpLog promotion should still work — detector tokens don't count toward cap.
+    for _ in 0..TOKEN_PROMOTION_THRESHOLD {
+        let _input = fuzzer.get_next_input().unwrap();
+        cmplog::push(
+            CmpValues::Bytes((
+                make_cmplog_bytes(b"cmplog_val"),
+                make_cmplog_bytes(b"other_val"),
+            )),
+            0,
+            cmplog::CmpLogOperator::Equal,
+        );
+        fuzzer.report_result(ExitKind::Ok, 50_000.0).unwrap();
+    }
+
+    let tokens = fuzzer.state.metadata::<Tokens>().unwrap();
+    let token_list: Vec<&[u8]> = tokens.tokens().iter().map(|t| t.as_slice()).collect();
+    assert!(
+        token_list.contains(&b"cmplog_val".as_slice()),
+        "CmpLog token should be promoted despite detector tokens in promoted set"
+    );
+
+    cmplog::disable();
+}
+
+#[test]
+fn duplicate_detector_tokens_do_not_cause_underflow() {
+    cmplog::disable();
+    cmplog::drain();
+
+    // Pass duplicate detector tokens — HashSet deduplicates but pre_seeded_count
+    // would be the Vec length. With saturating_sub this must not panic or
+    // permanently disable CmpLog promotion.
+    let coverage_map: Buffer = vec![0u8; 256].into();
+    let config = crate::types::FuzzerConfig {
+        max_input_len: None,
+        seed: Some(42),
+        grimoire: None,
+        unicode: None,
+        redqueen: None,
+        dictionary_path: None,
+        detector_tokens: Some(vec![
+            Buffer::from(b"../".to_vec()),
+            Buffer::from(b"../".to_vec()),
+            Buffer::from(b"../".to_vec()),
+        ]),
+    };
+    let mut fuzzer = crate::engine::Fuzzer::new(coverage_map, Some(config)).unwrap();
+    fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+
+    // promoted has 1 entry (deduplicated), pre_seeded_count is 3.
+    // saturating_sub(3) from 1 = 0, so CmpLog promotion should still work.
+    assert_eq!(fuzzer.token_tracker.promoted.len(), 1);
+    assert_eq!(fuzzer.token_tracker.pre_seeded_count, 3);
+
+    for _ in 0..TOKEN_PROMOTION_THRESHOLD {
+        let _input = fuzzer.get_next_input().unwrap();
+        cmplog::push(
+            CmpValues::Bytes((make_cmplog_bytes(b"after_dup"), make_cmplog_bytes(b"other"))),
+            0,
+            cmplog::CmpLogOperator::Equal,
+        );
+        fuzzer.report_result(ExitKind::Ok, 50_000.0).unwrap();
+    }
+
+    let tokens = fuzzer.state.metadata::<Tokens>().unwrap();
+    let token_list: Vec<&[u8]> = tokens.tokens().iter().map(|t| t.as_slice()).collect();
+    assert!(
+        token_list.contains(&b"after_dup".as_slice()),
+        "CmpLog promotion should work even with duplicate detector tokens"
     );
 
     cmplog::disable();

@@ -1,3 +1,4 @@
+use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
 
 #[napi(object)]
@@ -17,6 +18,11 @@ pub struct FuzzerConfig {
     /// If provided, tokens are parsed via `Tokens::from_file()` and seeded
     /// into state metadata before any fuzz iterations execute.
     pub dictionary_path: Option<String>,
+    /// Pre-seeded dictionary tokens from active bug detectors.
+    /// Inserted into `Tokens` state metadata after user dictionary tokens.
+    /// Exempt from `MAX_DICTIONARY_SIZE` cap; marked as pre-promoted to
+    /// prevent CmpLog from re-discovering them.
+    pub detector_tokens: Option<Vec<Buffer>>,
 }
 
 #[napi]

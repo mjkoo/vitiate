@@ -228,6 +228,7 @@ fn test_unicode_explicit_enable_through_constructor() {
             unicode: Some(true),
             redqueen: None,
             dictionary_path: None,
+            detector_tokens: None,
         }),
     )
     .unwrap();
@@ -249,6 +250,7 @@ fn test_unicode_explicit_disable_through_constructor() {
             unicode: Some(false),
             redqueen: None,
             dictionary_path: None,
+            detector_tokens: None,
         }),
     )
     .unwrap();
@@ -271,6 +273,7 @@ fn test_unicode_and_grimoire_independent_explicit_control() {
             unicode: Some(true),
             redqueen: None,
             dictionary_path: None,
+            detector_tokens: None,
         }),
     )
     .unwrap();
@@ -372,6 +375,7 @@ fn test_shared_deferred_threshold_with_one_feature_explicit() {
             unicode: None,
             redqueen: None,
             dictionary_path: None,
+            detector_tokens: None,
         }),
     )
     .unwrap();

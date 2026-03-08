@@ -119,6 +119,7 @@ fn test_redqueen_explicit_enable() {
             unicode: None,
             redqueen: Some(true),
             dictionary_path: None,
+            detector_tokens: None,
         }),
     )
     .unwrap();
@@ -140,6 +141,7 @@ fn test_redqueen_explicit_disable() {
             unicode: None,
             redqueen: Some(false),
             dictionary_path: None,
+            detector_tokens: None,
         }),
     )
     .unwrap();
@@ -161,6 +163,7 @@ fn test_redqueen_auto_detect_empty_corpus_defaults_false() {
             unicode: None,
             redqueen: None,
             dictionary_path: None,
+            detector_tokens: None,
         }),
     )
     .unwrap();

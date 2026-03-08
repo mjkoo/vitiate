@@ -19,6 +19,8 @@ import {
   DEFAULT_MAX_INPUT_LEN,
   type FuzzOptions,
 } from "./config.js";
+import { DetectorManager, VulnerabilityError } from "./detectors/index.js";
+import { setDetectorActive } from "./detectors/module-hook.js";
 import {
   loadSeedCorpus,
   loadCachedCorpus,
@@ -184,17 +186,25 @@ function writeCrashArtifact(
  * Run calibration iterations for a newly interesting corpus entry.
  * Returns true if calibration completed normally (no crash/timeout).
  */
+interface CalibrationResult {
+  completed: boolean;
+  /** Non-null only for VulnerabilityError crashes (detector findings during calibration). */
+  detectorCrash?: { exitKind: ExitKind; error: VulnerabilityError };
+}
+
 async function runCalibration(
   target: (data: Buffer) => void | Promise<void>,
   input: Buffer,
   watchdog: Watchdog | null,
   timeoutMs: number | undefined,
   fuzzer: Fuzzer,
-): Promise<boolean> {
+  detectorManager: DetectorManager,
+): Promise<CalibrationResult> {
   let needsMore = true;
   while (needsMore) {
     const calibrationStartNs = process.hrtime.bigint();
 
+    detectorManager.beforeIteration();
     const calibrationResult = await executeTarget(
       target,
       input,
@@ -202,8 +212,41 @@ async function runCalibration(
       timeoutMs,
     );
 
-    if (calibrationResult.exitKind !== ExitKind.Ok) {
-      return false;
+    let { exitKind } = calibrationResult;
+    let detectorError: VulnerabilityError | undefined;
+
+    if (exitKind === ExitKind.Ok) {
+      try {
+        detectorManager.afterIteration();
+      } catch (e) {
+        if (e instanceof VulnerabilityError) {
+          exitKind = ExitKind.Crash;
+          detectorError = e;
+        } else {
+          throw e;
+        }
+      }
+    } else {
+      setDetectorActive(false);
+    }
+
+    if (exitKind !== ExitKind.Ok) {
+      // Detector findings during calibration are surfaced as crashes.
+      // Regular crashes/timeouts during calibration are silently swallowed
+      // (existing behavior — calibration re-runs the same input, crashes
+      // indicate instability, not a new finding).
+      const vulnError =
+        detectorError ??
+        (calibrationResult.error instanceof VulnerabilityError
+          ? calibrationResult.error
+          : undefined);
+      if (vulnError) {
+        return {
+          completed: false,
+          detectorCrash: { exitKind, error: vulnError },
+        };
+      }
+      return { completed: false };
     }
 
     const calibrationTimeNs = Number(
@@ -211,7 +254,7 @@ async function runCalibration(
     );
     needsMore = fuzzer.calibrateRun(calibrationTimeNs);
   }
-  return true;
+  return { completed: true };
 }
 
 interface StageCrash {
@@ -231,6 +274,7 @@ async function runStage(
   timeoutMs: number | undefined,
   fuzzer: Fuzzer,
   shmemHandle: ShmemHandle | null,
+  detectorManager: DetectorManager,
 ): Promise<StageCrash | null> {
   let stageResult = fuzzer.beginStage();
 
@@ -239,8 +283,24 @@ async function runStage(
     shmemHandle?.stashInput(stageInput);
 
     const stageStartNs = process.hrtime.bigint();
-    const { exitKind: stageExitKind, error: stageCaughtError } =
+    detectorManager.beforeIteration();
+    let { exitKind: stageExitKind, error: stageCaughtError } =
       await executeTarget(target, stageInput, watchdog, timeoutMs);
+
+    if (stageExitKind === ExitKind.Ok) {
+      try {
+        detectorManager.afterIteration();
+      } catch (e) {
+        if (e instanceof VulnerabilityError) {
+          stageExitKind = ExitKind.Crash;
+          stageCaughtError = e;
+        } else {
+          throw e;
+        }
+      }
+    } else {
+      setDetectorActive(false);
+    }
 
     if (stageExitKind !== ExitKind.Ok) {
       try {
@@ -343,6 +403,9 @@ export async function runFuzzLoop(
     getDictionaryPathEnv() ??
     (libfuzzerCompat ? undefined : getDictionaryPath(testDir, testName));
 
+  // Construct detector manager from config
+  const detectorManager = new DetectorManager(options.detectors);
+
   const fuzzerConfig: FuzzerConfig = {};
   if (options.maxLen !== undefined) {
     fuzzerConfig.maxInputLen = options.maxLen;
@@ -361,6 +424,12 @@ export async function runFuzzLoop(
   }
   if (dictionaryPath !== undefined) {
     fuzzerConfig.dictionaryPath = dictionaryPath;
+  }
+
+  // Collect detector tokens for the mutation dictionary
+  const detectorTokens = detectorManager.getTokens();
+  if (detectorTokens.length > 0) {
+    fuzzerConfig.detectorTokens = detectorTokens;
   }
 
   const debug = isDebugMode();
@@ -434,6 +503,7 @@ export async function runFuzzLoop(
   if (showBanner) {
     const totalCorpusSize =
       seedCorpus.length + cachedCorpus.length + extraCorpus.length;
+    const activeDetectors = detectorManager.activeDetectorNames;
     printBanner({
       testName,
       maxLen: options.maxLen ?? DEFAULT_MAX_INPUT_LEN,
@@ -441,11 +511,15 @@ export async function runFuzzLoop(
       seed: options.seed,
       corpusSize: totalCorpusSize,
       mapSize: getCoverageMapSize(),
+      detectors: activeDetectors.length > 0 ? activeDetectors : undefined,
     });
   }
 
   const reporter = createReporter(quiet);
   startReporting(reporter, () => fuzzer.stats);
+
+  // Initialize detectors before first iteration
+  detectorManager.setup();
 
   const startTime = Date.now();
   // `|| Infinity`: 0 means "unlimited" for both fields, matching libFuzzer convention.
@@ -561,12 +635,31 @@ export async function runFuzzLoop(
       shmemHandle?.stashInput(input);
 
       const startNs = process.hrtime.bigint();
-      const { exitKind, error: caughtError } = await executeTarget(
+      detectorManager.beforeIteration();
+      let { exitKind, error: caughtError } = await executeTarget(
         target,
         input,
         watchdog,
         timeoutMs,
       );
+
+      // Run afterIteration for Ok exits only; may upgrade to Crash
+      if (exitKind === ExitKind.Ok) {
+        try {
+          detectorManager.afterIteration();
+        } catch (e) {
+          if (e instanceof VulnerabilityError) {
+            exitKind = ExitKind.Crash;
+            caughtError = e;
+          } else {
+            throw e;
+          }
+        }
+      } else {
+        // Timeout or crash from executeTarget — deactivate detector window
+        setDetectorActive(false);
+      }
+
       const execTimeNs = Number(process.hrtime.bigint() - startNs);
       const iterResult = fuzzer.reportResult(exitKind, execTimeNs);
       iteration++;
@@ -585,6 +678,8 @@ export async function runFuzzLoop(
             timeoutMs,
             shmemHandle,
             options,
+            detectorManager,
+            caughtError instanceof VulnerabilityError,
           );
         }
 
@@ -604,24 +699,39 @@ export async function runFuzzLoop(
 
         // Calibration loop: re-run target to average timing and detect unstable edges.
         // The original fuzz iteration counts as calibration run #1; additional runs start here.
-        const calibrationCompleted = await runCalibration(
+        const calibrationResult = await runCalibration(
           target,
           input,
           watchdog,
           timeoutMs,
           fuzzer,
+          detectorManager,
         );
         fuzzer.calibrateFinish();
 
+        // If calibration found a detector vulnerability, handle it as a crash
+        if (calibrationResult.detectorCrash) {
+          if (
+            handleCrash(
+              input,
+              calibrationResult.detectorCrash.exitKind,
+              calibrationResult.detectorCrash.error,
+            )
+          ) {
+            break;
+          }
+        }
+
         // Stage execution loop: run concentrated I2S mutations on the freshly
         // calibrated corpus entry. Only enter if calibration completed normally.
-        if (calibrationCompleted) {
+        if (calibrationResult.completed) {
           const stageCrash = await runStage(
             target,
             watchdog,
             timeoutMs,
             fuzzer,
             shmemHandle,
+            detectorManager,
           );
           if (stageCrash) {
             // Stage crashes are NOT minimized — write raw input.
@@ -644,6 +754,7 @@ export async function runFuzzLoop(
       }
     }
   } finally {
+    detectorManager.teardown();
     stopReporting(reporter);
     printSummary(reporter, fuzzer.stats, duplicateCrashesSkipped);
     watchdog?.shutdown();
@@ -666,7 +777,9 @@ export async function runFuzzLoop(
  * Minimize a crashing input using the fuzz loop's execution infrastructure.
  *
  * Creates a testCandidate wrapper around executeTarget() and delegates to
- * the minimization engine.
+ * the minimization engine. The `wasDetectorFinding` flag ensures the minimizer
+ * only accepts the same crash kind as the original: VulnerabilityError for
+ * detector findings, regular ExitKind.Crash for ordinary exceptions.
  */
 async function minimizeCrashInput(
   input: Buffer,
@@ -675,11 +788,29 @@ async function minimizeCrashInput(
   timeoutMs: number | undefined,
   shmemHandle: ShmemHandle | null,
   options: FuzzOptions,
+  detectorManager: DetectorManager,
+  wasDetectorFinding: boolean,
 ): Promise<Buffer> {
   const testCandidate = async (candidate: Buffer): Promise<boolean> => {
     shmemHandle?.stashInput(candidate);
+    detectorManager.beforeIteration();
     const result = await executeTarget(target, candidate, watchdog, timeoutMs);
-    return result.exitKind === ExitKind.Crash;
+
+    if (result.exitKind === ExitKind.Ok) {
+      try {
+        detectorManager.afterIteration();
+      } catch (e) {
+        if (e instanceof VulnerabilityError) {
+          return wasDetectorFinding;
+        }
+        throw e;
+      }
+      return false;
+    }
+
+    // Timeout or crash from executeTarget — deactivate detector window
+    setDetectorActive(false);
+    return result.exitKind === ExitKind.Crash && !wasDetectorFinding;
   };
 
   return minimize(input, testCandidate, {

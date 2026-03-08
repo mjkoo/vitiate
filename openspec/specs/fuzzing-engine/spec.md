@@ -13,6 +13,7 @@ The config SHALL support the following fields, all optional with defaults:
 - `seed` (bigint, optional): RNG seed for reproducible mutation sequences. If omitted,
   a random seed is used.
 - `dictionaryPath` (string, optional): Absolute path to an AFL/libfuzzer-format dictionary file. If provided, the file SHALL be parsed via `Tokens::from_file()` during construction and the resulting tokens SHALL be added as `Tokens` state metadata before any fuzz iterations execute. If the file does not exist or contains malformed content, construction SHALL fail with an error indicating the file path and nature of the failure.
+- `detectorTokens` (array of `Buffer`, optional): Pre-seeded dictionary tokens from active bug detectors. If provided, each buffer SHALL be inserted into the `Tokens` state metadata during construction, after any user-provided dictionary tokens. Detector tokens SHALL be exempt from the `MAX_DICTIONARY_SIZE` cap (treated identically to user-provided dictionary tokens). If CmpLog subsequently observes a comparison operand matching a pre-seeded detector token, the token SHALL NOT be promoted a second time into the dictionary.
 
 On construction, the Fuzzer SHALL enable the CmpLog accumulator so that `traceCmp` calls
 record comparison operands. The Fuzzer SHALL also initialize `CmpValuesMetadata` on the
@@ -76,6 +77,32 @@ On construction, the Fuzzer SHALL additionally initialize:
 - **WHEN** `new Fuzzer(createCoverageMap(65536))` is called with no config
 - **THEN** `stage_state` SHALL be `StageState::None`
 - **AND** `last_interesting_corpus_id` SHALL be `None`
+
+#### Scenario: Create with detector tokens
+
+- **WHEN** `new Fuzzer(coverageMap, { detectorTokens: [Buffer.from("__proto__"), Buffer.from("../")] })` is called
+- **THEN** the `Tokens` state metadata SHALL contain `"__proto__"` and `"../"` as token entries
+- **AND** the tokens SHALL be available to `TokenInsert` and `TokenReplace` from the first `getNextInput()` call
+
+#### Scenario: Detector tokens coexist with user dictionary
+
+- **WHEN** `new Fuzzer(coverageMap, { dictionaryPath: "/path/to/json.dict", detectorTokens: [Buffer.from("__proto__")] })` is called
+- **AND** the dictionary file contains valid entries
+- **THEN** both user dictionary tokens and detector tokens SHALL be present in `Tokens` metadata
+- **AND** user dictionary tokens SHALL be loaded first, followed by detector tokens
+
+#### Scenario: Detector tokens exempt from CmpLog cap
+
+- **WHEN** the `Fuzzer` is constructed with 50 detector tokens
+- **AND** CmpLog promotion reaches `MAX_DICTIONARY_SIZE`
+- **THEN** all 50 detector tokens SHALL remain in `Tokens` metadata (not counted toward cap)
+
+#### Scenario: CmpLog does not re-promote detector tokens
+
+- **WHEN** the `Fuzzer` is constructed with detector token `"__proto__"`
+- **AND** CmpLog observes `"__proto__"` as a comparison operand at runtime
+- **THEN** `"__proto__"` SHALL NOT be promoted a second time
+- **AND** `"__proto__"` SHALL appear exactly once in `Tokens` metadata
 
 ### Requirement: Add seed inputs
 

@@ -18,6 +18,40 @@ const PositiveInteger = v.pipe(
 );
 const AnyInteger = v.pipe(v.number(), v.integer(), v.finite());
 
+const PathTraversalOptionsSchema = v.object({
+  /** Sandbox root directory. Paths escaping this are flagged. Defaults to cwd. */
+  sandboxRoot: v.optional(v.string()),
+});
+
+const DetectorsSchema = v.pipe(
+  v.record(v.string(), v.unknown()),
+  v.transform((input) => {
+    // Extract known keys, silently ignore unknown keys for forward compatibility
+    const result: Record<string, unknown> = {};
+    const knownBooleans = ["prototypePollution", "commandInjection"];
+    const knownWithOptions = ["pathTraversal"];
+
+    for (const key of knownBooleans) {
+      if (key in input) {
+        result[key] = input[key];
+      }
+    }
+    for (const key of knownWithOptions) {
+      if (key in input) {
+        result[key] = input[key];
+      }
+    }
+    return result;
+  }),
+  v.object({
+    prototypePollution: v.optional(v.boolean()),
+    commandInjection: v.optional(v.boolean()),
+    pathTraversal: v.optional(
+      v.union([v.boolean(), PathTraversalOptionsSchema]),
+    ),
+  }),
+);
+
 const FuzzOptionsSchema = v.object({
   /** Maximum input length in bytes (must be at least 1). */
   maxLen: v.optional(PositiveInteger),
@@ -75,6 +109,14 @@ const FuzzOptionsSchema = v.object({
    * 0 = unlimited. Only effective when `stopOnCrash` is `false`.
    */
   maxCrashes: v.optional(NonNegativeInteger),
+  /**
+   * Per-detector enable/disable and configuration.
+   * `boolean` per detector: `true` = enable, `false` = disable.
+   * Options object for detectors that support configuration (e.g., pathTraversal).
+   * Absent key = tier default (Tier 1 on, Tier 2 off).
+   * Unknown keys are silently ignored for forward compatibility.
+   */
+  detectors: v.optional(DetectorsSchema),
 });
 
 export type FuzzOptions = v.InferOutput<typeof FuzzOptionsSchema>;

@@ -1406,4 +1406,50 @@ describe("config", () => {
       expect(resolveStopOnCrash(undefined, true, true)).toBe(false);
     });
   });
+
+  describe("detectors schema validation", () => {
+    it("accepts boolean detector values", () => {
+      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        detectors: { prototypePollution: false },
+      });
+      const options = getCliOptions();
+      expect(options.detectors?.prototypePollution).toBe(false);
+    });
+
+    it("accepts options object for pathTraversal", () => {
+      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        detectors: { pathTraversal: { sandboxRoot: "./uploads" } },
+      });
+      const options = getCliOptions();
+      expect(options.detectors?.pathTraversal).toEqual({
+        sandboxRoot: "./uploads",
+      });
+    });
+
+    it("accepts empty detectors object (uses defaults)", () => {
+      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        detectors: {},
+      });
+      const options = getCliOptions();
+      expect(options.detectors).toEqual({});
+    });
+
+    it("absent detectors key results in undefined", () => {
+      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({});
+      const options = getCliOptions();
+      expect(options.detectors).toBeUndefined();
+    });
+
+    it("silently ignores unknown detector keys", () => {
+      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        detectors: { ssrf: true, prototypePollution: true },
+      });
+      const options = getCliOptions();
+      expect(options.detectors?.prototypePollution).toBe(true);
+      // ssrf should be stripped (unknown key)
+      expect(
+        (options.detectors as Record<string, unknown>)?.["ssrf"],
+      ).toBeUndefined();
+    });
+  });
 });

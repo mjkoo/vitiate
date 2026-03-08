@@ -204,6 +204,10 @@ impl Fuzzer {
         let unicode_override = config.as_ref().and_then(|c| c.unicode);
         let redqueen_override = config.as_ref().and_then(|c| c.redqueen);
         let dictionary_path = config.as_ref().and_then(|c| c.dictionary_path.clone());
+        let detector_tokens: Option<Vec<Vec<u8>>> = config
+            .as_ref()
+            .and_then(|c| c.detector_tokens.as_ref())
+            .map(|tokens| tokens.iter().map(|b| b.to_vec()).collect());
 
         let map_ptr = coverage_map.as_mut_ptr();
         let map_len = coverage_map.len();
@@ -307,6 +311,25 @@ impl Fuzzer {
             state.add_metadata(tokens);
         }
 
+        // Insert detector tokens into the mutation dictionary after user tokens.
+        // Mark each as pre-promoted so CmpLog won't re-discover them.
+        let mut token_tracker = TokenTracker::new();
+        if let Some(ref dt) = detector_tokens
+            && !dt.is_empty()
+        {
+            if !state.has_metadata::<Tokens>() {
+                state.add_metadata(Tokens::default());
+            }
+            // PANIC: Tokens metadata is guaranteed to exist — inserted above if absent.
+            let tokens = state.metadata_mut::<Tokens>().unwrap();
+            for bytes in dt {
+                tokens.add_token(bytes);
+                // Mark as pre-promoted to prevent CmpLog re-promotion.
+                token_tracker.promoted.insert(bytes.clone());
+            }
+            token_tracker.pre_seeded_count = dt.len();
+        }
+
         Ok(Self {
             features: FeatureDetection::new(
                 grimoire_override,
@@ -332,7 +355,7 @@ impl Fuzzer {
             last_corpus_id: None,
             calibration: CalibrationState::new(),
             unstable_entries: HashSet::new(),
-            token_tracker: TokenTracker::new(),
+            token_tracker,
             stage_state: StageState::None,
             last_interesting_corpus_id: None,
             last_stage_input: None,

@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { parseArgs } from "./cli.js";
+import { parseArgs, parseDetectorsFlag } from "./cli.js";
 import { getCliOptions } from "./config.js";
 
 function argv(...args: string[]): string[] {
@@ -325,6 +325,98 @@ describe("forkExplicit in CliArgs", () => {
   it("leaves forkExplicit undefined when -fork is absent", () => {
     const result = parseArgs(argv("./test.ts"));
     expect(result.forkExplicit).toBeUndefined();
+  });
+});
+
+describe("-detectors flag", () => {
+  it("enables only listed detectors, disabling all others", () => {
+    const result = parseArgs(
+      argv("./test.ts", "-detectors=prototypePollution"),
+    );
+    expect(result.fuzzOptions.detectors).toEqual({
+      prototypePollution: true,
+      commandInjection: false,
+      pathTraversal: false,
+    });
+  });
+
+  it("parses dotted option syntax", () => {
+    const result = parseArgs(
+      argv("./test.ts", "-detectors=pathTraversal.sandboxRoot=/var/www"),
+    );
+    expect(result.fuzzOptions.detectors).toEqual({
+      prototypePollution: false,
+      commandInjection: false,
+      pathTraversal: { sandboxRoot: "/var/www" },
+    });
+  });
+
+  it("exits with error for invalid detector name", () => {
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("process.exit called");
+    }) as typeof process.exit);
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+
+    try {
+      expect(() =>
+        parseArgs(argv("./test.ts", "-detectors=nonexistent")),
+      ).toThrow("process.exit called");
+      expect(stderrSpy).toHaveBeenCalledWith(
+        expect.stringContaining("unknown detector"),
+      );
+    } finally {
+      exitSpy.mockRestore();
+      stderrSpy.mockRestore();
+    }
+  });
+
+  it("returns undefined detectors when -detectors is not provided", () => {
+    const result = parseArgs(argv("./test.ts"));
+    expect(result.fuzzOptions.detectors).toBeUndefined();
+  });
+});
+
+describe("parseDetectorsFlag", () => {
+  it("enables listed detector and disables all others", () => {
+    expect(parseDetectorsFlag("prototypePollution")).toEqual({
+      prototypePollution: true,
+      commandInjection: false,
+      pathTraversal: false,
+    });
+  });
+
+  it("disables all when empty string", () => {
+    expect(parseDetectorsFlag("")).toEqual({
+      prototypePollution: false,
+      commandInjection: false,
+      pathTraversal: false,
+    });
+  });
+
+  it("parses dotted option and enables that detector", () => {
+    expect(parseDetectorsFlag("pathTraversal.sandboxRoot=/var/www")).toEqual({
+      prototypePollution: false,
+      commandInjection: false,
+      pathTraversal: { sandboxRoot: "/var/www" },
+    });
+  });
+
+  it("combined enable and option", () => {
+    expect(
+      parseDetectorsFlag("pathTraversal,pathTraversal.sandboxRoot=/var/www"),
+    ).toEqual({
+      prototypePollution: false,
+      commandInjection: false,
+      pathTraversal: { sandboxRoot: "/var/www" },
+    });
+  });
+
+  it("enables multiple detectors", () => {
+    expect(parseDetectorsFlag("prototypePollution,commandInjection")).toEqual({
+      prototypePollution: true,
+      commandInjection: true,
+      pathTraversal: false,
+    });
   });
 });
 
