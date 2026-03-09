@@ -9,15 +9,15 @@
  * correctness signal — if detectors intercept the right calls and the
  * snapshot-diff catches prototype mutations, the regression test fails.
  *
- * **Fuzz mode** (probabilistic): Runs the full fuzzer pipeline with
- * detector-guided seeds. The fuzzer mutates seeds, so the exact trigger
- * inputs may not be replayed verbatim — but CmpLog guidance and detector
- * tokens in the dictionary should guide mutations back toward the triggers
- * within the time budget. Validates crash artifact writing and dedupe.
+ * **Fuzz mode**: Runs the full fuzzer pipeline with detector-guided seeds.
+ * The initial seed evaluation phase replays seeds verbatim (no mutation),
+ * so exact trigger inputs fire detectors on the first pass. With
+ * `stopOnCrash: true`, the fuzzer exits after the first crash artifact.
  *
  * Seed files:
  * - seed-proto: "proto __proto__" → prototype pollution detector (snapshot diff)
  * - seed-exec: "exec vitiate_cmd_inject" → command injection detector (module hook)
+ * - seed-read: "read /etc/passwd" → path traversal detector (module hook)
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { spawn } from "node:child_process";
@@ -91,10 +91,9 @@ describe("detector pipeline: regression mode (deterministic)", () => {
 describe("detector pipeline: fuzz mode", () => {
   let exitCode = 0;
 
-  // Seeds guide the fuzzer toward detector triggers. With CmpLog and
-  // detector tokens, crashes should be found well under the time budget.
-  // This test is inherently probabilistic — see CLAUDE.md fuzz-pipeline
-  // exception for test determinism policy.
+  // The initial seed evaluation phase replays seeds verbatim, so the first
+  // seed that triggers a detector produces a crash on the first iteration.
+  // With stopOnCrash: true, the fuzz run exits immediately after one crash.
   beforeAll(async () => {
     rmSync(CORPUS_CACHE_DIR, { recursive: true, force: true });
     for (const artifact of findArtifacts(ARTIFACT_DIR)) {
@@ -104,17 +103,16 @@ describe("detector pipeline: fuzz mode", () => {
     exitCode = await runVitest(
       "vitest.fuzz-pipeline.config.ts",
       { VITIATE_FUZZ: "1" },
-      120_000,
+      60_000,
     );
-  }, 120_000);
+  }, 60_000);
 
   it("exits non-zero when crashes are found", () => {
     expect(exitCode).toBe(1);
   });
 
-  it("produces crash artifacts with bounded dedupe", () => {
+  it("produces a crash artifact", () => {
     const artifacts = findArtifacts(ARTIFACT_DIR);
-    expect(artifacts.length).toBeGreaterThanOrEqual(1);
-    expect(artifacts.length).toBeLessThanOrEqual(10);
+    expect(artifacts.length).toBe(1);
   });
 });

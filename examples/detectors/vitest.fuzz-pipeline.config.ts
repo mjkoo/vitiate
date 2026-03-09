@@ -5,8 +5,8 @@ export default defineConfig({
   plugins: [
     vitiatePlugin({
       fuzz: {
-        fuzzTimeMs: 30_000,
-        stopOnCrash: false,
+        fuzzTimeMs: 10_000,
+        stopOnCrash: true,
       },
     }),
   ],

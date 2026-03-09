@@ -1418,11 +1418,17 @@ describe("config", () => {
 
     it("accepts options object for pathTraversal", () => {
       process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
-        detectors: { pathTraversal: { sandboxRoot: "./uploads" } },
+        detectors: {
+          pathTraversal: {
+            allowedPaths: ["/var/www"],
+            deniedPaths: ["/var/www/secrets"],
+          },
+        },
       });
       const options = getCliOptions();
       expect(options.detectors?.pathTraversal).toEqual({
-        sandboxRoot: "./uploads",
+        allowedPaths: ["/var/www"],
+        deniedPaths: ["/var/www/secrets"],
       });
     });
 

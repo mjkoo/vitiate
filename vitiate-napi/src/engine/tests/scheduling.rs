@@ -61,13 +61,13 @@ fn test_power_scoring_favors_fast_high_coverage_entry() {
 fn test_n_fuzz_entry_set_on_interesting_input() {
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
 
-    // Add a seed so the scheduler has something to select.
+    // Add a seed so the fuzzer has something to evaluate.
     fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
 
-    // get_next_input selects and mutates.
+    // get_next_input returns the seed verbatim.
     let _input = fuzzer.get_next_input().unwrap();
 
-    // Write novel coverage.
+    // Write novel coverage so report_result adds the seed to the corpus.
     unsafe {
         *fuzzer.map_ptr.add(10) = 1;
     }
@@ -88,33 +88,27 @@ fn test_n_fuzz_entry_set_on_interesting_input() {
         expected,
         "n_fuzz_entry should be corpus_id % N_FUZZ_SIZE, not default 0"
     );
-    // For corpus ID > 0 (seed is ID 0, interesting entry is ID 1+), this should be nonzero.
-    assert_ne!(
-        meta.n_fuzz_entry(),
-        0,
-        "n_fuzz_entry for the second corpus entry should not be 0"
-    );
 }
 
 #[test]
-fn test_seed_has_n_fuzz_entry() {
+fn test_seeds_not_in_corpus_before_evaluation() {
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
 
     // Add two seeds.
     fuzzer.add_seed(Buffer::from(b"seed0".to_vec())).unwrap();
     fuzzer.add_seed(Buffer::from(b"seed1".to_vec())).unwrap();
 
-    // Verify each seed has n_fuzz_entry = usize::from(id) % N_FUZZ_SIZE.
-    for id in fuzzer.state.corpus().ids() {
-        let tc = fuzzer.state.corpus().get(id).unwrap().borrow();
-        let meta = tc.metadata::<SchedulerTestcaseMetadata>().unwrap();
-        let expected = usize::from(id) % N_FUZZ_SIZE;
-        assert_eq!(
-            meta.n_fuzz_entry(),
-            expected,
-            "seed {id:?} should have n_fuzz_entry = {expected}"
-        );
-    }
+    // Seeds should be queued, not in the corpus.
+    assert_eq!(
+        fuzzer.state.corpus().count(),
+        0,
+        "corpus should be empty before seed evaluation"
+    );
+    assert_eq!(
+        fuzzer.unevaluated_seeds.len(),
+        2,
+        "two seeds should be queued"
+    );
 }
 
 #[test]
@@ -125,7 +119,25 @@ fn test_n_fuzz_incremented_on_selection() {
     fuzzer.add_seed(Buffer::from(b"seed0".to_vec())).unwrap();
     fuzzer.add_seed(Buffer::from(b"seed1".to_vec())).unwrap();
 
-    // Record the initial n_fuzz values for both seeds' entries.
+    // Evaluate seeds: get_next_input returns them verbatim, then report_result
+    // with novel coverage adds them to the corpus.
+    let seed_count = fuzzer.unevaluated_seeds.len();
+    for i in 0..seed_count {
+        let _ = fuzzer.get_next_input().unwrap();
+        // Write novel coverage at distinct edges so both seeds are interesting.
+        unsafe {
+            *fuzzer.map_ptr.add(10 + i) = 1;
+        }
+        fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
+    }
+
+    // Now both seeds should be in the corpus.
+    assert!(
+        fuzzer.state.corpus().count() >= 2,
+        "both seeds should be in the corpus after evaluation"
+    );
+
+    // Record the initial n_fuzz values for all corpus entries.
     let mut initial_counts: Vec<(CorpusId, usize, u32)> = Vec::new();
     for id in fuzzer.state.corpus().ids() {
         let tc = fuzzer.state.corpus().get(id).unwrap().borrow();
@@ -139,12 +151,13 @@ fn test_n_fuzz_incremented_on_selection() {
         initial_counts.push((id, idx, count));
     }
 
-    // Call get_next_input multiple times to trigger n_fuzz increments.
-    for _ in 0..20 {
+    // Call get_next_input multiple times to trigger n_fuzz increments via scheduler.
+    let scheduled_calls = 20u32;
+    for _ in 0..scheduled_calls {
         let _ = fuzzer.get_next_input().unwrap();
     }
 
-    // Verify that at least one seed's n_fuzz counter was incremented.
+    // Verify that at least one entry's n_fuzz counter was incremented.
     let mut any_incremented = false;
     for &(_, idx, initial) in &initial_counts {
         let current = fuzzer
@@ -161,7 +174,7 @@ fn test_n_fuzz_incremented_on_selection() {
         "n_fuzz counters should be incremented after get_next_input selections"
     );
 
-    // Verify total increments match total get_next_input calls.
+    // Verify total increments match scheduled (non-seed) get_next_input calls.
     let total_increments: u32 = initial_counts
         .iter()
         .map(|&(_, idx, initial)| {
@@ -174,7 +187,7 @@ fn test_n_fuzz_incremented_on_selection() {
         })
         .sum();
     assert_eq!(
-        total_increments, 20,
-        "total n_fuzz increments should equal the number of get_next_input calls"
+        total_increments, scheduled_calls,
+        "total n_fuzz increments should equal the number of scheduled get_next_input calls"
     );
 }

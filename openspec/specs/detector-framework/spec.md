@@ -118,8 +118,9 @@ The `setDetectorActive()` function SHALL be an internal implementation detail of
 
 #### Scenario: Options object implies enabled
 
-- **WHEN** `DetectorManager` is constructed with `{ pathTraversal: { sandboxRoot: "/var/www" } }`
-- **THEN** the path traversal detector SHALL be active with `sandboxRoot` set to `"/var/www"`
+- **WHEN** `DetectorManager` is constructed with `{ pathTraversal: { allowedPaths: ["/var/www"] } }`
+- **THEN** the path traversal detector SHALL be active with the specified `allowedPaths`
+- **AND** the default `deniedPaths: ["/etc/passwd"]` SHALL apply
 
 #### Scenario: Lifecycle delegation order
 
@@ -212,7 +213,7 @@ The following detector fields SHALL be defined for Tier 1 detectors:
 
 - `prototypePollution?: boolean`
 - `commandInjection?: boolean`
-- `pathTraversal?: boolean | { sandboxRoot?: string }`
+- `pathTraversal?: boolean | { allowedPaths?: string[]; deniedPaths?: string[] }`
 
 Tier 2 detector fields (`redos`, `ssrf`, `unsafeEval`) are NOT included in this change. They SHALL be added to the schema when their respective detectors are implemented. The schema SHALL accept and silently ignore unknown keys within the `detectors` object to allow forward-compatible configuration files.
 
@@ -222,11 +223,17 @@ Tier 2 detector fields (`redos`, `ssrf`, `unsafeEval`) are NOT included in this 
 - **THEN** the configuration SHALL validate successfully
 - **AND** the prototype pollution detector SHALL be disabled
 
-#### Scenario: Valid options object configuration
+#### Scenario: Valid options object with allowedPaths and deniedPaths
 
-- **WHEN** `detectors: { pathTraversal: { sandboxRoot: "./uploads" } }` is provided in `FuzzOptions`
+- **WHEN** `detectors: { pathTraversal: { allowedPaths: ["/var/www"], deniedPaths: ["/var/www/secrets"] } }` is provided in `FuzzOptions`
 - **THEN** the configuration SHALL validate successfully
-- **AND** the path traversal detector SHALL be enabled with `sandboxRoot` resolved to `"./uploads"`
+- **AND** the path traversal detector SHALL be enabled with the specified policy
+
+#### Scenario: Valid options object with partial config
+
+- **WHEN** `detectors: { pathTraversal: { deniedPaths: ["/etc/passwd"] } }` is provided in `FuzzOptions`
+- **THEN** the configuration SHALL validate successfully
+- **AND** the path traversal detector SHALL use the default `allowedPaths: ["/"]` and the provided `deniedPaths`
 
 #### Scenario: Empty detectors object uses defaults
 

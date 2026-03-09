@@ -342,12 +342,12 @@ describe("-detectors flag", () => {
 
   it("parses dotted option syntax", () => {
     const result = parseArgs(
-      argv("./test.ts", "-detectors=pathTraversal.sandboxRoot=/var/www"),
+      argv("./test.ts", "-detectors=pathTraversal.deniedPaths=/etc/passwd"),
     );
     expect(result.fuzzOptions.detectors).toEqual({
       prototypePollution: false,
       commandInjection: false,
-      pathTraversal: { sandboxRoot: "/var/www" },
+      pathTraversal: { deniedPaths: "/etc/passwd" },
     });
   });
 
@@ -394,20 +394,42 @@ describe("parseDetectorsFlag", () => {
   });
 
   it("parses dotted option and enables that detector", () => {
-    expect(parseDetectorsFlag("pathTraversal.sandboxRoot=/var/www")).toEqual({
-      prototypePollution: false,
-      commandInjection: false,
-      pathTraversal: { sandboxRoot: "/var/www" },
-    });
+    expect(parseDetectorsFlag("pathTraversal.deniedPaths=/etc/passwd")).toEqual(
+      {
+        prototypePollution: false,
+        commandInjection: false,
+        pathTraversal: { deniedPaths: "/etc/passwd" },
+      },
+    );
   });
 
   it("combined enable and option", () => {
     expect(
-      parseDetectorsFlag("pathTraversal,pathTraversal.sandboxRoot=/var/www"),
+      parseDetectorsFlag("pathTraversal,pathTraversal.deniedPaths=/etc/passwd"),
     ).toEqual({
       prototypePollution: false,
       commandInjection: false,
-      pathTraversal: { sandboxRoot: "/var/www" },
+      pathTraversal: { deniedPaths: "/etc/passwd" },
+    });
+  });
+
+  it("parses delimiter-separated value as raw string (schema coerces)", () => {
+    const raw = `pathTraversal.deniedPaths=/etc/passwd${path.delimiter}/proc/self/environ`;
+    expect(parseDetectorsFlag(raw)).toEqual({
+      prototypePollution: false,
+      commandInjection: false,
+      pathTraversal: {
+        deniedPaths: `/etc/passwd${path.delimiter}/proc/self/environ`,
+      },
+    });
+  });
+
+  it("preserves raw string value (schema splits on path.delimiter)", () => {
+    const input = `pathTraversal.deniedPaths=a${path.delimiter}b`;
+    const result = parseDetectorsFlag(input);
+    expect(result).toBeDefined();
+    expect(result!.pathTraversal).toEqual({
+      deniedPaths: `a${path.delimiter}b`,
     });
   });
 
@@ -417,6 +439,32 @@ describe("parseDetectorsFlag", () => {
       commandInjection: true,
       pathTraversal: false,
     });
+  });
+
+  it("end-to-end: schema coerces CLI string to array via VITIATE_FUZZ_OPTIONS", () => {
+    // Simulate: CLI produces raw string → JSON env var → getCliOptions schema coercion
+    const cliResult = parseDetectorsFlag(
+      `pathTraversal.deniedPaths=/etc/passwd${path.delimiter}/proc/self/environ`,
+    );
+    const prev = process.env["VITIATE_FUZZ_OPTIONS"];
+    try {
+      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        detectors: cliResult,
+      });
+      const options = getCliOptions();
+      const pt = options.detectors?.pathTraversal;
+      expect(pt).toBeTruthy();
+      expect(typeof pt === "object" && pt !== null).toBe(true);
+      if (typeof pt === "object" && pt !== null) {
+        expect(pt.deniedPaths).toEqual(["/etc/passwd", "/proc/self/environ"]);
+      }
+    } finally {
+      if (prev === undefined) {
+        delete process.env["VITIATE_FUZZ_OPTIONS"];
+      } else {
+        process.env["VITIATE_FUZZ_OPTIONS"] = prev;
+      }
+    }
   });
 });
 

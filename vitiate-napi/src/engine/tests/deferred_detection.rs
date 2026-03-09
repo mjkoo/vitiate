@@ -1,9 +1,9 @@
+use super::helpers::SEED_EXEC_TIME;
 use super::helpers::{
     TestFuzzerBuilder, make_cmplog_bytes, make_coverage_map, make_state_and_feedback,
 };
 use crate::cmplog;
 use crate::engine::DEFAULT_SEEDS;
-use crate::engine::SEED_EXEC_TIME;
 use crate::engine::cmplog_metadata::set_n_fuzz_entry_for_corpus_id;
 use crate::engine::feature_detection::DEFERRED_DETECTION_THRESHOLD;
 use crate::engine::feature_detection::FeatureDetection;

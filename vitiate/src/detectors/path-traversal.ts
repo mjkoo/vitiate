@@ -1,11 +1,16 @@
 /**
- * Path traversal detector: hooks fs functions and checks whether resolved
- * path arguments escape a configured sandbox root.
+ * Path traversal detector: hooks fs and fs/promises module functions and checks
+ * whether resolved path arguments violate a configured access policy.
+ *
+ * Policy evaluation: denied > allowed > deny.
  */
+import { createRequire } from "node:module";
 import nodePath from "node:path";
 import type { Detector } from "./types.js";
 import { VulnerabilityError } from "./vulnerability-error.js";
 import { installHook, type ModuleHook } from "./module-hook.js";
+
+const require = createRequire(import.meta.url);
 
 const ENCODER = new TextEncoder();
 
@@ -63,60 +68,56 @@ const STATIC_TOKENS = [
   "..%2f",
 ];
 
-function isPathEscaping(pathArg: unknown, resolvedRoot: string): boolean {
-  if (typeof pathArg !== "string" && !Buffer.isBuffer(pathArg)) {
-    return false;
-  }
-  const pathStr = typeof pathArg === "string" ? pathArg : pathArg.toString();
-
-  const resolved = nodePath.resolve(pathStr);
-  // Must equal root or be a child of root (root + sep prefix)
-  if (resolved === resolvedRoot) return false;
-  if (resolved.startsWith(resolvedRoot + nodePath.sep)) return false;
-  return true;
-}
-
 export class PathTraversalDetector implements Detector {
   readonly name = "path-traversal";
   readonly tier = 1 as const;
 
-  private readonly sandboxRoot: string;
-  private readonly resolvedRoot: string;
+  private readonly resolvedAllowedPaths: string[];
+  private readonly resolvedDeniedPaths: string[];
   private hooks: ModuleHook[] = [];
 
-  constructor(sandboxRoot?: string) {
-    this.sandboxRoot = sandboxRoot ?? process.cwd();
-    this.resolvedRoot = nodePath.resolve(this.sandboxRoot);
+  constructor(allowedPaths?: string[], deniedPaths?: string[]) {
+    this.resolvedAllowedPaths = (allowedPaths ?? ["/"]).map((p) =>
+      nodePath.resolve(p),
+    );
+    this.resolvedDeniedPaths = (deniedPaths ?? ["/etc/passwd"]).map((p) =>
+      nodePath.resolve(p),
+    );
   }
 
   getTokens(): Uint8Array[] {
     const tokens = STATIC_TOKENS.map((t) => ENCODER.encode(t));
 
-    // Config-dependent tokens
-    tokens.push(ENCODER.encode(this.sandboxRoot));
-
-    // Generate traversal sequence matching sandbox depth
-    const depth = this.resolvedRoot.split(nodePath.sep).filter(Boolean).length;
-    if (depth > 0) {
-      const traversal = "../".repeat(depth) + "etc/passwd";
-      tokens.push(ENCODER.encode(traversal));
+    for (const denied of this.resolvedDeniedPaths) {
+      tokens.push(ENCODER.encode(denied));
     }
 
     return tokens;
   }
 
   setup(): void {
+    this.installModuleHooks("fs");
+    this.installModuleHooks("fs/promises");
+  }
+
+  private installModuleHooks(moduleSpecifier: string): void {
+    // Determine which functions exist on the module (fs/promises
+    // lacks sync variants; use runtime check rather than hardcoded list).
+    const mod = require(moduleSpecifier) as Record<string, unknown>;
+
     for (const fn of SINGLE_PATH_FUNCTIONS) {
+      if (typeof mod[fn] !== "function") continue;
       this.hooks.push(
-        installHook("fs", fn, (...args: unknown[]) => {
+        installHook(moduleSpecifier, fn, (...args: unknown[]) => {
           this.checkPath(args[0], fn, "path");
         }),
       );
     }
 
     for (const fn of DUAL_PATH_FUNCTIONS) {
+      if (typeof mod[fn] !== "function") continue;
       this.hooks.push(
-        installHook("fs", fn, (...args: unknown[]) => {
+        installHook(moduleSpecifier, fn, (...args: unknown[]) => {
           this.checkPath(args[0], fn, "source");
           this.checkPath(args[1], fn, "destination");
         }),
@@ -143,7 +144,10 @@ export class PathTraversalDetector implements Detector {
     this.hooks = [];
   }
 
-  /** Check a path argument; throws VulnerabilityError if it escapes the sandbox. */
+  /**
+   * Check a path argument against the access policy.
+   * Throws VulnerabilityError if the path is denied.
+   */
   private checkPath(
     pathArg: unknown,
     functionName: string,
@@ -154,26 +158,54 @@ export class PathTraversalDetector implements Detector {
     }
 
     const pathStr = typeof pathArg === "string" ? pathArg : pathArg.toString();
-    const hasNullByte = pathStr.includes("\x00");
 
-    if (hasNullByte) {
+    // Null byte detection — always deny before policy evaluation.
+    if (pathStr.includes("\x00")) {
       throw new VulnerabilityError(this.name, "Path Traversal", {
         function: functionName,
         argument: argumentName,
         path: pathStr,
-        sandboxRoot: this.resolvedRoot,
         nullByte: true,
       });
     }
 
-    if (isPathEscaping(pathArg, this.resolvedRoot)) {
-      throw new VulnerabilityError(this.name, "Path Traversal", {
-        function: functionName,
-        argument: argumentName,
-        path: pathStr,
-        resolvedPath: nodePath.resolve(pathStr),
-        sandboxRoot: this.resolvedRoot,
-      });
+    const resolved = nodePath.resolve(pathStr);
+
+    // Policy evaluation: denied > allowed > deny.
+    for (const denied of this.resolvedDeniedPaths) {
+      if (this.matchesEntry(resolved, denied)) {
+        throw new VulnerabilityError(this.name, "Path Traversal", {
+          function: functionName,
+          argument: argumentName,
+          path: pathStr,
+          resolvedPath: resolved,
+          deniedEntry: denied,
+        });
+      }
     }
+
+    for (const allowed of this.resolvedAllowedPaths) {
+      if (this.matchesEntry(resolved, allowed)) {
+        return; // Path is allowed.
+      }
+    }
+
+    // Not in any allowed path — deny.
+    throw new VulnerabilityError(this.name, "Path Traversal", {
+      function: functionName,
+      argument: argumentName,
+      path: pathStr,
+      resolvedPath: resolved,
+    });
+  }
+
+  /** Separator-aware prefix match: exact or starts with entry + path.sep. */
+  private matchesEntry(resolved: string, entry: string): boolean {
+    if (resolved === entry) return true;
+    // Root paths (/ on POSIX, C:\ on Windows) are prefixes of all absolute paths.
+    if (entry === nodePath.parse(entry).root && entry.length > 0) {
+      return resolved.startsWith(entry);
+    }
+    return resolved.startsWith(entry + nodePath.sep);
   }
 }

@@ -1,6 +1,11 @@
 use std::time::Duration;
 
 use libafl::HasMetadata;
+
+/// Nominal execution time assigned to seeds when manually constructing
+/// testcases in test helpers (not used in production — seeds are evaluated
+/// through the normal coverage pipeline).
+pub(crate) const SEED_EXEC_TIME: Duration = Duration::from_millis(1);
 use libafl::corpus::{Corpus, CorpusId, InMemoryCorpus, SchedulerTestcaseMetadata, Testcase};
 use libafl::events::NopEventManager;
 use libafl::executors::ExitKind as LibaflExitKind;
@@ -23,7 +28,7 @@ use napi::bindgen_prelude::*;
 use crate::cmplog;
 use crate::engine::{
     CrashObjective, EDGES_OBSERVER_NAME, Fuzzer, FuzzerFeedback, FuzzerScheduler, FuzzerState,
-    SEED_EXEC_TIME, StageState, TimeoutObjective,
+    StageState, TimeoutObjective,
 };
 use crate::types::{ExitKind, FuzzerConfig, IterationResult};
 
@@ -97,7 +102,7 @@ pub(super) fn make_scheduler(map_ptr: *mut u8, map_len: usize) -> FuzzerSchedule
 pub(super) fn make_seed_testcase(data: &[u8]) -> Testcase<BytesInput> {
     let mut tc = Testcase::new(BytesInput::new(data.to_vec()));
     tc.set_exec_time(SEED_EXEC_TIME);
-    let mut meta = SchedulerTestcaseMetadata::new(0);
+    let mut meta = SchedulerTestcaseMetadata::new(1);
     meta.set_cycle_and_time((SEED_EXEC_TIME, 1));
     tc.add_metadata(meta);
     tc.add_metadata(MapIndexesMetadata::new(vec![]));

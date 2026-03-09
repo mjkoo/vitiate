@@ -79,8 +79,12 @@ impl Fuzzer {
         self.total_execs += 1;
         *self.state.executions_mut() += 1;
 
-        let _eval =
-            self.evaluate_coverage(&stage_input, exec_time_ns, LibaflExitKind::Ok, corpus_id)?;
+        let _eval = self.evaluate_coverage(
+            &stage_input,
+            exec_time_ns,
+            LibaflExitKind::Ok,
+            Some(corpus_id),
+        )?;
 
         let next_iteration = iteration + 1;
         if next_iteration >= max_iterations {

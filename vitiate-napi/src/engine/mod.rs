@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
 use libafl::corpus::{Corpus, CorpusId, InMemoryCorpus, SchedulerTestcaseMetadata, Testcase};
@@ -56,10 +56,7 @@ use mutator::I2SSpliceReplace;
 pub(crate) use stages::StageState;
 
 use calibration::CalibrationState;
-use cmplog_metadata::{
-    build_aflpp_cmp_metadata, extract_tokens_from_cmplog, flatten_orig_cmpvals,
-    set_n_fuzz_entry_for_corpus_id,
-};
+use cmplog_metadata::{build_aflpp_cmp_metadata, extract_tokens_from_cmplog, flatten_orig_cmpvals};
 use token_tracker::TokenTracker;
 
 pub(crate) const EDGES_OBSERVER_NAME: &str = "edges";
@@ -74,9 +71,6 @@ const DEFAULT_SEEDS: &[&[u8]] = &[
     b"{}",               // empty JSON object
     b"test",             // short printable ASCII
 ];
-
-/// Nominal execution time assigned to seeds (not calibrated).
-const SEED_EXEC_TIME: Duration = Duration::from_millis(1);
 
 /// Maximum power-of-two stacked mutations per Grimoire iteration (2^3 = 8 max).
 const GRIMOIRE_MAX_STACK_POW: usize = 3;
@@ -181,6 +175,11 @@ pub struct Fuzzer {
     unicode_mutator: UnicodeMutator,
     /// Feature auto-detection state for Grimoire, unicode, and REDQUEEN.
     features: FeatureDetection,
+    /// Seeds awaiting initial verbatim evaluation (no mutation).
+    /// Populated by `queue_seed()`, drained by `get_next_input()`.
+    unevaluated_seeds: VecDeque<BytesInput>,
+    /// Whether `add_seed()` was called at least once (user-provided seeds).
+    has_user_seeds: bool,
 }
 
 // SAFETY: `Fuzzer` contains `*mut u8` which is `!Send`. napi-rs requires `Send`
@@ -363,23 +362,78 @@ impl Fuzzer {
             redqueen_mutator,
             redqueen_ran_for_entry: false,
             unicode_mutator,
+            unevaluated_seeds: VecDeque::new(),
+            has_user_seeds: false,
         })
     }
 
     #[napi]
     pub fn add_seed(&mut self, input: Buffer) -> Result<()> {
-        self.add_seed_internal(BytesInput::new(input.to_vec()))?;
+        self.has_user_seeds = true;
+        self.queue_seed(BytesInput::new(input.to_vec()));
         Ok(())
     }
 
     #[napi]
     pub fn get_next_input(&mut self) -> Result<Buffer> {
-        // Auto-seed if corpus is empty.
-        if self.state.corpus().count() == 0 {
-            for seed in DEFAULT_SEEDS {
-                self.add_seed_internal(BytesInput::new(seed.to_vec()))?;
+        // Auto-seed if corpus is empty and no seeds are queued.
+        if self.state.corpus().count() == 0 && self.unevaluated_seeds.is_empty() {
+            if (self.has_user_seeds || self.features.auto_seed_count > 0)
+                && self.solution_count == 0
+            {
+                // Either user-provided seeds all failed, or auto-seeds already
+                // tried and all failed. No seed produced any coverage or
+                // crashes — this indicates instrumentation is not active.
+                return Err(Error::from_reason(
+                    "All seeds evaluated but none produced coverage. \
+                     This usually means instrumentation is not active — \
+                     check that the vitiate plugin is loaded and \
+                     globalThis.__vitiate_cov is initialized. If instrumentation \
+                     is active, ensure at least one seed exercises a code path \
+                     that contains instrumented edges.",
+                ));
             }
-            self.features.set_auto_seed_count(DEFAULT_SEEDS.len());
+            if self.features.auto_seed_count == 0 {
+                // No auto-seeds tried yet — push default seeds to populate
+                // the corpus. This covers both the initial case (no user seeds)
+                // and the case where user seeds all crashed (solutions found
+                // but corpus still empty).
+                for seed in DEFAULT_SEEDS {
+                    self.queue_seed(BytesInput::new(seed.to_vec()));
+                }
+                self.features.set_auto_seed_count(DEFAULT_SEEDS.len());
+            }
+        }
+
+        // All seeds crashed but none produced coverage — the corpus is empty
+        // and no seeds remain to evaluate. Provide a clear error instead of
+        // falling through to the scheduler which would produce a confusing
+        // "Scheduler failed" error on an empty corpus.
+        if self.state.corpus().count() == 0
+            && self.unevaluated_seeds.is_empty()
+            && self.solution_count > 0
+        {
+            return Err(Error::from_reason(
+                "No seed produced coverage and the corpus is empty — the fuzzer \
+                 cannot continue without at least one non-crashing seed that \
+                 exercises instrumented code.",
+            ));
+        }
+
+        // Drain unevaluated seeds first: return verbatim (no mutation).
+        // This mirrors libFuzzer's initial seed evaluation phase, ensuring
+        // seeds are executed with their original content before mutation begins.
+        // Seeds are not in the corpus yet — evaluate_coverage will add them
+        // if they produce novel coverage.
+        if let Some(seed_input) = self.unevaluated_seeds.pop_front() {
+            // No last_corpus_id — seed isn't in corpus yet.
+            // evaluate_coverage treats None as root depth (1).
+            self.last_corpus_id = None;
+            let mut bytes: Vec<u8> = seed_input.into();
+            bytes.truncate(self.max_input_len as usize);
+            let buffer = Buffer::from(bytes.as_slice());
+            self.last_input = Some(BytesInput::new(bytes));
+            return Ok(buffer);
         }
 
         // Select a corpus entry and clone its input.
@@ -445,14 +499,13 @@ impl Fuzzer {
             ExitKind::Timeout => LibaflExitKind::Timeout,
         };
 
-        // last_corpus_id is always set by getNextInput before reportResult.
-        let parent_corpus_id = self.last_corpus_id.unwrap_or(CorpusId::from(0usize));
-
+        // Seeds set last_corpus_id = None (they aren't in the corpus yet).
+        // Mutated inputs always have Some(corpus_id) from the scheduler.
         let eval = self.evaluate_coverage(
             input.as_ref(),
             exec_time_ns,
             libafl_exit_kind,
-            parent_corpus_id,
+            self.last_corpus_id,
         )?;
 
         let result = if eval.is_solution {
@@ -605,28 +658,14 @@ impl Fuzzer {
 }
 
 impl Fuzzer {
-    /// Add a seed to the corpus with nominal metadata for scheduling.
+    /// Queue a seed for verbatim evaluation during the initial seed phase.
     ///
-    /// Seeds receive empty `MapIndexesMetadata` so `MinimizerScheduler::update_score()`
-    /// succeeds without error. Seeds cover no edges, so they cannot become favored.
-    fn add_seed_internal(&mut self, input: BytesInput) -> Result<CorpusId> {
-        let mut testcase = Testcase::new(input);
-        testcase.set_exec_time(SEED_EXEC_TIME);
-        let mut sched_meta = SchedulerTestcaseMetadata::new(0);
-        sched_meta.set_cycle_and_time((SEED_EXEC_TIME, 1));
-        testcase.add_metadata(sched_meta);
-        testcase.add_metadata(MapIndexesMetadata::new(vec![]));
-
-        let id = self
-            .state
-            .corpus_mut()
-            .add(testcase)
-            .map_err(|e| Error::from_reason(format!("Failed to add seed: {e}")))?;
-        self.scheduler
-            .on_add(&mut self.state, id)
-            .map_err(|e| Error::from_reason(format!("Failed to notify scheduler: {e}")))?;
-        set_n_fuzz_entry_for_corpus_id(&self.state, id)?;
-        Ok(id)
+    /// Seeds are stored as raw inputs and NOT added to the corpus upfront.
+    /// `get_next_input()` drains this queue, and `report_result()` /
+    /// `evaluate_coverage()` adds the seed to the corpus only if it produces
+    /// novel coverage. This avoids phantom corpus entries with empty metadata.
+    fn queue_seed(&mut self, input: BytesInput) {
+        self.unevaluated_seeds.push_back(input);
     }
 }
 

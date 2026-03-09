@@ -1,4 +1,5 @@
 import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 
 // Safety: The fuzzer generates arbitrary data, so we gate each dangerous
 // operation on exactly the patterns the detectors look for. This ensures
@@ -41,6 +42,15 @@ export function processInput(input: string): void {
       // harmlessly fails with "command not found" for the sentinel string.
       if (arg === CMD_INJECT_SENTINEL) {
         execSync(arg);
+      }
+      break;
+    case "read":
+      // Only pass to readFileSync if arg is exactly the path traversal
+      // sentinel. The detector hook intercepts and throws VulnerabilityError
+      // before the read occurs, but this gate prevents arbitrary file reads
+      // even if detectors are disabled.
+      if (arg === "/etc/passwd") {
+        readFileSync(arg);
       }
       break;
   }

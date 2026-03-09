@@ -43,8 +43,8 @@ The `FuzzOptions` SHALL support:
 
 #### Scenario: Detector options object passed through
 
-- **WHEN** `fuzz("server", (data) => serve(data), { detectors: { pathTraversal: { sandboxRoot: "./uploads" } } })` is called
-- **THEN** the path traversal detector SHALL be enabled with `sandboxRoot` set to `"./uploads"`
+- **WHEN** `fuzz("server", (data) => serve(data), { detectors: { pathTraversal: { allowedPaths: ["/var/www"], deniedPaths: ["/var/www/secrets"] } } })` is called
+- **THEN** the path traversal detector SHALL be enabled with the specified `allowedPaths` and `deniedPaths`
 
 ### Requirement: Regression mode behavior
 

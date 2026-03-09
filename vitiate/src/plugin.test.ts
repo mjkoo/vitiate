@@ -415,6 +415,63 @@ describe("plugin", () => {
       expect(result!.code).toContain("const { readFileSync } = __vitiate_fs;");
     });
 
+    it("rewrites fs/promises named imports", () => {
+      const hooks = findPlugin(vitiatePlugin(), "vitiate:hooks");
+      const result = callHooksTransform(
+        hooks,
+        'import { readFile } from "fs/promises";',
+      );
+      expect(result).not.toBeNull();
+      expect(result!.code).toContain(
+        'import __vitiate_fs_promises from "fs/promises";',
+      );
+      expect(result!.code).toContain(
+        "const { readFile } = __vitiate_fs_promises;",
+      );
+    });
+
+    it("rewrites node:fs/promises named imports", () => {
+      const hooks = findPlugin(vitiatePlugin(), "vitiate:hooks");
+      const result = callHooksTransform(
+        hooks,
+        'import { readFile } from "node:fs/promises";',
+      );
+      expect(result).not.toBeNull();
+      expect(result!.code).toContain(
+        'import __vitiate_fs_promises from "node:fs/promises";',
+      );
+      expect(result!.code).toContain(
+        "const { readFile } = __vitiate_fs_promises;",
+      );
+    });
+
+    it("bail-out skips source with 'fs' only in identifiers", () => {
+      const hooks = findPlugin(vitiatePlugin(), "vitiate:hooks");
+      const result = callHooksTransform(
+        hooks,
+        "const offset = 42;\nconst buffs = [];",
+      );
+      expect(result).toBeNull();
+    });
+
+    it("bail-out proceeds for source with import from 'fs'", () => {
+      const hooks = findPlugin(vitiatePlugin(), "vitiate:hooks");
+      const result = callHooksTransform(
+        hooks,
+        'import { readFileSync } from "fs";',
+      );
+      expect(result).not.toBeNull();
+    });
+
+    it("bail-out proceeds for source with fs/promises reference", () => {
+      const hooks = findPlugin(vitiatePlugin(), "vitiate:hooks");
+      const result = callHooksTransform(
+        hooks,
+        'import { readFile } from "fs/promises";',
+      );
+      expect(result).not.toBeNull();
+    });
+
     it("does not touch dynamic imports", () => {
       const hooks = findPlugin(vitiatePlugin(), "vitiate:hooks");
       const code = 'const cp = await import("child_process");';

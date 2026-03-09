@@ -208,7 +208,7 @@ impl Fuzzer {
                     &stage_input,
                     exec_time_ns,
                     LibaflExitKind::Ok,
-                    corpus_id,
+                    Some(corpus_id),
                 )?;
             }
         } else {

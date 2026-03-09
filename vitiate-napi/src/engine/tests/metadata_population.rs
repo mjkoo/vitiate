@@ -1,6 +1,7 @@
+use super::helpers::SEED_EXEC_TIME;
 use super::helpers::{make_coverage_map, make_fuzzer, make_scheduler, make_seed_testcase};
 use crate::engine::DEFAULT_SEEDS;
-use crate::engine::{EDGES_OBSERVER_NAME, SEED_EXEC_TIME};
+use crate::engine::EDGES_OBSERVER_NAME;
 use libafl::HasMetadata;
 use libafl::corpus::Corpus;
 use libafl::corpus::SchedulerTestcaseMetadata;
@@ -60,7 +61,7 @@ fn test_metadata_populated_on_interesting_input() {
         .filter(|&&b| b > 0)
         .count() as u64;
 
-    // Compute depth from parent (seed at depth 0).
+    // Compute depth from parent (seed at depth 1).
     let depth = state
         .corpus()
         .get(seed_id)
@@ -85,7 +86,7 @@ fn test_metadata_populated_on_interesting_input() {
     assert!(tc.exec_time().is_some());
     assert_eq!(tc.exec_time().unwrap(), Duration::from_micros(500));
     let meta = tc.metadata::<SchedulerTestcaseMetadata>().unwrap();
-    assert_eq!(meta.depth(), 1);
+    assert_eq!(meta.depth(), 2);
     assert_eq!(meta.bitmap_size(), 2); // two nonzero bytes
     assert_eq!(meta.cycle_and_time(), (exec_time, 1));
 }
@@ -104,7 +105,7 @@ fn test_explicit_seed_has_scheduler_metadata() {
     let meta = tc
         .metadata::<SchedulerTestcaseMetadata>()
         .expect("seed should have SchedulerTestcaseMetadata");
-    assert_eq!(meta.depth(), 0);
+    assert_eq!(meta.depth(), 1);
     assert_eq!(*tc.exec_time(), Some(Duration::from_millis(1)));
 }
 
@@ -118,7 +119,7 @@ fn test_auto_seed_has_scheduler_metadata() {
     for seed in DEFAULT_SEEDS {
         let mut testcase = Testcase::new(BytesInput::new(seed.to_vec()));
         testcase.set_exec_time(SEED_EXEC_TIME);
-        let mut sched_meta = SchedulerTestcaseMetadata::new(0);
+        let mut sched_meta = SchedulerTestcaseMetadata::new(1);
         sched_meta.set_cycle_and_time((SEED_EXEC_TIME, 1));
         testcase.add_metadata(sched_meta);
         testcase.add_metadata(MapIndexesMetadata::new(vec![]));
@@ -135,7 +136,7 @@ fn test_auto_seed_has_scheduler_metadata() {
         let meta = tc
             .metadata::<SchedulerTestcaseMetadata>()
             .expect("auto-seed should have SchedulerTestcaseMetadata");
-        assert_eq!(meta.depth(), 0);
+        assert_eq!(meta.depth(), 1);
         assert_eq!(*tc.exec_time(), Some(Duration::from_millis(1)));
     }
 }

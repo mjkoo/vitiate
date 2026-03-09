@@ -31,10 +31,10 @@ assert.equal(stats.solutionCount, 0);
 assert.equal(stats.coverageEdges, 0);
 assert.equal(stats.execsPerSec, 0);
 
-// Add a seed.
+// Add a seed (queued for evaluation, not yet in corpus).
 fuzzer.addSeed(Buffer.from("hello"));
 stats = fuzzer.stats;
-assert.equal(stats.corpusSize, 1);
+assert.equal(stats.corpusSize, 0);
 
 // Run 1000 iterations with a target that sets coverage map bytes based on input.
 const ITERATIONS = 1000;

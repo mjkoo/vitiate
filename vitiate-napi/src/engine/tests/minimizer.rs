@@ -23,6 +23,15 @@ fn test_map_indexes_metadata_contains_all_covered_edges() {
 
     fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
 
+    // Evaluate the seed to add it to the corpus (produces novel coverage at edge 5).
+    let _seed_output = fuzzer.get_next_input().unwrap();
+    unsafe {
+        *fuzzer.map_ptr.add(5) = 1;
+    }
+    let result = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
+    assert!(matches!(result, IterationResult::Interesting));
+    let seed_corpus_id = fuzzer.calibration.corpus_id.unwrap();
+
     // First iteration: set edges {10, 20, 30} as covered. All are novel.
     unsafe {
         *fuzzer.map_ptr.add(10) = 1;
@@ -30,14 +39,13 @@ fn test_map_indexes_metadata_contains_all_covered_edges() {
         *fuzzer.map_ptr.add(30) = 3;
     }
     fuzzer.last_input = Some(BytesInput::new(b"input1".to_vec()));
-    fuzzer.last_corpus_id = Some(CorpusId::from(0usize));
+    fuzzer.last_corpus_id = Some(seed_corpus_id);
     let result = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
     assert!(matches!(result, IterationResult::Interesting));
 
     // The corpus entry should have MapIndexesMetadata with all 3 edges.
-    // MapIndexesMetadata has refcnt > 0 after update_score, so it must be present.
-    let id = CorpusId::from(1usize); // second entry (after seed)
-    let tc = fuzzer.state.corpus().get(id).unwrap().borrow();
+    let interesting_id = fuzzer.calibration.corpus_id.unwrap();
+    let tc = fuzzer.state.corpus().get(interesting_id).unwrap().borrow();
     let meta = tc
         .metadata::<MapIndexesMetadata>()
         .expect("MapIndexesMetadata should be present (refcnt > 0 after update_score)");
@@ -56,13 +64,13 @@ fn test_map_indexes_metadata_contains_all_covered_edges() {
         *fuzzer.map_ptr.add(50) = 1;
     }
     fuzzer.last_input = Some(BytesInput::new(b"input2".to_vec()));
-    fuzzer.last_corpus_id = Some(CorpusId::from(0usize));
+    fuzzer.last_corpus_id = Some(seed_corpus_id);
     let result = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
     assert!(matches!(result, IterationResult::Interesting));
 
     // The entry should have MapIndexesMetadata with ALL 5 edges.
-    let id2 = CorpusId::from(2usize);
-    let tc2 = fuzzer.state.corpus().get(id2).unwrap().borrow();
+    let interesting_id2 = fuzzer.calibration.corpus_id.unwrap();
+    let tc2 = fuzzer.state.corpus().get(interesting_id2).unwrap().borrow();
     let meta = tc2
         .metadata::<MapIndexesMetadata>()
         .expect("MapIndexesMetadata should be present (refcnt > 0 after update_score)");

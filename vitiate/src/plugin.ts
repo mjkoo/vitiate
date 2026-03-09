@@ -36,7 +36,7 @@ const JS_TS_EXTENSIONS = /\.(?:[cm]?[jt]sx?|[jt]s)(?:\?.*)?$/;
  * import + destructuring so the values are read from the live CJS module
  * object at evaluation time (after setup.ts installs hooks).
  */
-const HOOKED_MODULES = new Set(["child_process", "fs"]);
+const HOOKED_MODULES = new Set(["child_process", "fs", "fs/promises"]);
 
 /**
  * Check if a module specifier refers to a hooked built-in module.
@@ -177,9 +177,28 @@ function rewriteHookedImports(
   code: string,
 ): { code: string; map: ReturnType<MagicString["generateMap"]> } | null {
   // Quick bail-out: if the code doesn't reference any hooked module, skip parsing.
+  // For "fs", use patterns that match import/require contexts (quoted strings,
+  // fs/ prefix) to avoid matching unrelated identifiers containing "fs" (e.g.,
+  // "offset"). For other modules like "child_process" and "fs/promises",
+  // code.includes() is sufficiently specific.
   let hasHooked = false;
   for (const mod of HOOKED_MODULES) {
-    if (code.includes(mod)) {
+    if (mod === "fs") {
+      // Match quoted "fs" / 'fs' in import contexts. Also match
+      // :fs" / :fs' for node:fs specifiers. The "fs/promises" entry in
+      // HOOKED_MODULES handles that module via the else branch.
+      // False positives are acceptable (proceed to parse), false negatives
+      // (skipping a file with fs imports) are not.
+      if (
+        code.includes('"fs"') ||
+        code.includes("'fs'") ||
+        code.includes(':fs"') ||
+        code.includes(":fs'")
+      ) {
+        hasHooked = true;
+        break;
+      }
+    } else if (code.includes(mod)) {
       hasHooked = true;
       break;
     }
@@ -227,7 +246,8 @@ function rewriteHookedImports(
     const count = varCounters.get(bare) ?? 0;
     varCounters.set(bare, count + 1);
     const varName =
-      `__vitiate_${bare.replace(/-/g, "_")}` + (count > 0 ? `_${count}` : "");
+      `__vitiate_${bare.replace(/[-/]/g, "_")}` +
+      (count > 0 ? `_${count}` : "");
 
     const defaultName = parsed.defaultImport ?? varName;
     const obj = parsed.defaultImport ?? varName;

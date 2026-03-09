@@ -19,6 +19,7 @@ mod novelty;
 mod pipeline;
 mod redqueen;
 mod scheduling;
+mod seed_evaluation;
 mod stage_lifecycle;
 mod token_promotion;
 mod unicode;

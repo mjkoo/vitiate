@@ -2,6 +2,7 @@
  * Mode detection and configuration for vitiate.
  */
 
+import path from "node:path";
 import * as v from "valibot";
 
 const NonNegativeInteger = v.pipe(
@@ -18,9 +19,19 @@ const PositiveInteger = v.pipe(
 );
 const AnyInteger = v.pipe(v.number(), v.integer(), v.finite());
 
+/** Coerce a CLI string value to an array by splitting on path.delimiter. */
+const StringOrStringArray = v.pipe(
+  v.union([v.string(), v.array(v.string())]),
+  v.transform((input) =>
+    typeof input === "string" ? input.split(path.delimiter) : input,
+  ),
+);
+
 const PathTraversalOptionsSchema = v.object({
-  /** Sandbox root directory. Paths escaping this are flagged. Defaults to cwd. */
-  sandboxRoot: v.optional(v.string()),
+  /** Paths (and subtrees) that are permitted. Defaults to ["/"]. */
+  allowedPaths: v.optional(StringOrStringArray),
+  /** Paths (and subtrees) that are denied. Denied takes priority over allowed. Defaults to ["/etc/passwd"]. */
+  deniedPaths: v.optional(StringOrStringArray),
 });
 
 const DetectorsSchema = v.pipe(

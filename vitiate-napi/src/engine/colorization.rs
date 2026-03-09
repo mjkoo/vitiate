@@ -531,7 +531,7 @@ impl Fuzzer {
             &stage_input,
             exec_time_ns,
             libafl::executors::ExitKind::Ok,
-            corpus_id,
+            Some(corpus_id),
         )?;
 
         // Move to the next candidate.

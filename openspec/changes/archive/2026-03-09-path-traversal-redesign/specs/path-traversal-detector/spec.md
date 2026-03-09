@@ -1,8 +1,4 @@
-## Purpose
-
-Bug detector that hooks `fs` and `fs/promises` module functions to detect path traversal vulnerabilities during fuzzing.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Path traversal detection via filesystem hooks
 
@@ -164,3 +160,11 @@ The detector SHALL NOT include `allowedPaths` entries, the sandbox root path its
 
 - **WHEN** the detector is configured with `{ deniedPaths: ["/etc/passwd", "/proc/self/environ"] }`
 - **THEN** `getTokens()` SHALL include `"/etc/passwd"` and `"/proc/self/environ"`
+
+## REMOVED Requirements
+
+### Requirement: Config-dependent tokens match sandbox depth
+
+**Reason**: The sandbox-depth-based token computation (e.g., `"../../../etc/passwd"` for a three-component path) couples the dictionary to the fuzzer's own filesystem layout. Generic traversal tokens (`../`, `../../`, `../../../`) combined with `deniedPaths` entries provide better coverage without environment dependency.
+
+**Migration**: The static tokens `"../"`, `"../../"`, `"../../../"` remain. The mutator discovers the correct chain length through composition. Denied paths are included as tokens directly.

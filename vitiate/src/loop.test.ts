@@ -52,10 +52,27 @@ describe("fuzz loop", () => {
     setCacheDir(path.join(tmpDir, ".cache"));
   }
 
+  /**
+   * Simulate instrumentation by writing to the coverage map.
+   * Without this, no input produces novel coverage and the corpus stays
+   * empty after seed evaluation. In production, SWC instrumentation
+   * inserts these writes automatically.
+   */
+  function simulateCoverage(_data: Buffer): void {
+    const cov = globalThis.__vitiate_cov;
+    if (!cov || !Buffer.isBuffer(cov)) return;
+    // Set a single fixed edge to 1 (idempotent). This ensures the seed
+    // produces novel coverage (so the corpus is non-empty) without making
+    // every subsequent input "interesting" — which would trigger calibration
+    // and stage execution, inflating totalExecs beyond the runs limit.
+    cov[0] = 1;
+  }
+
   it("runs against a trivial target and terminates after runs limit", async () => {
     await setupFuzzingMode();
     let callCount = 0;
-    const target = (_data: Buffer): void => {
+    const target = (data: Buffer): void => {
+      simulateCoverage(data);
       callCount++;
     };
 
@@ -68,13 +85,15 @@ describe("fuzz loop", () => {
     );
 
     expect(result.crashed).toBe(false);
-    expect(callCount).toBe(100);
+    // callCount >= runs because calibration re-runs also call the target.
+    expect(callCount).toBeGreaterThanOrEqual(100);
     expect(result.totalExecs).toBe(100);
   });
 
   it("detects a crash and writes crash artifact", async () => {
     await setupFuzzingMode();
     const target = (data: Buffer): void => {
+      simulateCoverage(data);
       // Crash when we get input with first byte 0x42
       if (data.length > 0 && data[0] === 0x42) {
         throw new Error("found the bug!");
@@ -109,7 +128,8 @@ describe("fuzz loop", () => {
   it("runs an async target and terminates after runs limit", async () => {
     await setupFuzzingMode();
     let callCount = 0;
-    const target = async (_data: Buffer): Promise<void> => {
+    const target = async (data: Buffer): Promise<void> => {
+      simulateCoverage(data);
       callCount++;
       await Promise.resolve();
     };
@@ -127,13 +147,15 @@ describe("fuzz loop", () => {
     );
 
     expect(result.crashed).toBe(false);
-    expect(callCount).toBe(100);
+    // callCount >= runs because calibration re-runs also call the target.
+    expect(callCount).toBeGreaterThanOrEqual(100);
     expect(result.totalExecs).toBe(100);
   });
 
   it("detects a crash from an async target", async () => {
     await setupFuzzingMode();
     const target = async (data: Buffer): Promise<void> => {
+      simulateCoverage(data);
       await Promise.resolve();
       if (data.length > 0 && data[0] === 0x42) {
         throw new Error("async crash!");
@@ -158,7 +180,8 @@ describe("fuzz loop", () => {
 
   it("times out a synchronous target that blocks the event loop", async () => {
     await setupFuzzingMode();
-    const target = (_data: Buffer): void => {
+    const target = (data: Buffer): void => {
+      simulateCoverage(data);
       // Infinite synchronous loop - only interruptible via V8 TerminateExecution
       for (;;) {
         /* intentionally empty */
@@ -189,7 +212,8 @@ describe("fuzz loop", () => {
   it("does not time out a fast async target", async () => {
     await setupFuzzingMode();
     let callCount = 0;
-    const target = async (_data: Buffer): Promise<void> => {
+    const target = async (data: Buffer): Promise<void> => {
+      simulateCoverage(data);
       callCount++;
       await Promise.resolve();
     };
@@ -206,7 +230,8 @@ describe("fuzz loop", () => {
     );
 
     expect(result.crashed).toBe(false);
-    expect(callCount).toBe(10);
+    // callCount >= runs because calibration re-runs also call the target.
+    expect(callCount).toBeGreaterThanOrEqual(10);
   });
 
   it("does not produce unhandled rejections for fast async targets with timeout", async () => {
@@ -219,7 +244,8 @@ describe("fuzz loop", () => {
 
     try {
       let callCount = 0;
-      const target = async (_data: Buffer): Promise<void> => {
+      const target = async (data: Buffer): Promise<void> => {
+        simulateCoverage(data);
         callCount++;
         await Promise.resolve();
       };
@@ -240,7 +266,8 @@ describe("fuzz loop", () => {
       await new Promise((resolve) => setImmediate(resolve));
 
       expect(result.crashed).toBe(false);
-      expect(callCount).toBe(50);
+      // callCount >= runs because calibration re-runs also call the target.
+      expect(callCount).toBeGreaterThanOrEqual(50);
       expect(rejections).toEqual([]);
     } finally {
       process.removeListener("unhandledRejection", onRejection);
@@ -250,6 +277,7 @@ describe("fuzz loop", () => {
   it("does not misclassify a normal crash as a timeout", async () => {
     await setupFuzzingMode();
     const target = (data: Buffer): void => {
+      simulateCoverage(data);
       // Crash on any non-empty input - this is a regular throw, not a timeout
       if (data.length > 0 && data[0] === 0x42) {
         throw new Error("regular crash, not a timeout");
@@ -280,13 +308,33 @@ describe("fuzz loop", () => {
 
     try {
       await expect(
-        runFuzzLoop((_data: Buffer) => {}, tmpDir, "no-cov", "test.fuzz.ts", {
-          runs: 1,
-        }),
+        runFuzzLoop(
+          (_data: Buffer): void => {},
+          tmpDir,
+          "no-cov",
+          "test.fuzz.ts",
+          {
+            runs: 1,
+          },
+        ),
       ).rejects.toThrow("coverage map not initialized");
     } finally {
       globalThis.__vitiate_cov = saved;
     }
+  });
+
+  it("throws when no seeds produce coverage", async () => {
+    await setupFuzzingMode();
+    // Target does NOT call simulateCoverage — no coverage is ever written.
+    const target = (_data: Buffer): void => {
+      // no-op: simulates broken instrumentation
+    };
+
+    await expect(
+      runFuzzLoop(target, tmpDir, "no-cov-seeds", "test.fuzz.ts", {
+        runs: 100,
+      }),
+    ).rejects.toThrow(/none produced coverage/);
   });
 
   it("loads extra corpus dirs as seeds", async () => {
@@ -297,6 +345,7 @@ describe("fuzz loop", () => {
     writeFileSync(path.join(extraDir, "seed-crash"), "GET!");
 
     const target = (data: Buffer): void => {
+      simulateCoverage(data);
       // Crash when we see the exact seed from the extra corpus dir
       if (data.length >= 4 && data.subarray(0, 4).toString() === "GET!") {
         throw new Error("extra corpus seed hit");
@@ -324,6 +373,7 @@ describe("fuzz loop", () => {
     // The fuzzer will find this with a larger input; minimization should
     // shrink it to exactly 2 bytes.
     const target = (data: Buffer): void => {
+      simulateCoverage(data);
       for (let i = 0; i < data.length - 1; i++) {
         if (data[i] === 0xde && data[i + 1] === 0xad) {
           throw new Error("found DEAD pattern");
@@ -356,6 +406,7 @@ describe("fuzz loop", () => {
   it("runs=0 means unlimited iterations (runs until crash or other limit)", async () => {
     await setupFuzzingMode();
     const target = (data: Buffer): void => {
+      simulateCoverage(data);
       if (data.length > 0 && data[0] === 0x42) {
         throw new Error("found the bug!");
       }
@@ -392,6 +443,7 @@ describe("fuzz loop", () => {
     let callCount = 0;
     const covMap = globalThis.__vitiate_cov as Buffer;
     const target = (data: Buffer): void => {
+      simulateCoverage(data);
       callCount++;
       // Set a unique coverage edge per distinct first byte value.
       // This guarantees new coverage (interesting) for early iterations with
@@ -427,6 +479,7 @@ describe("fuzz loop", () => {
     let callCount = 0;
     const covMap = globalThis.__vitiate_cov as Buffer;
     const target = async (data: Buffer): Promise<void> => {
+      simulateCoverage(data);
       callCount++;
       await Promise.resolve();
       if (data.length > 0) {
@@ -460,6 +513,7 @@ describe("fuzz loop", () => {
     let callCount = 0;
     const covMap = globalThis.__vitiate_cov as Buffer;
     const target = async (data: Buffer): Promise<void> => {
+      simulateCoverage(data);
       callCount++;
       await Promise.resolve();
       if (data.length > 0) {
@@ -491,6 +545,7 @@ describe("fuzz loop", () => {
   it("fuzzTimeMs=0 means unlimited total time (runs until crash or runs limit)", async () => {
     await setupFuzzingMode();
     const target = (data: Buffer): void => {
+      simulateCoverage(data);
       if (data.length > 0 && data[0] === 0x42) {
         throw new Error("found the bug!");
       }
@@ -521,6 +576,7 @@ describe("fuzz loop", () => {
       let callCount = 0;
       const covMap = globalThis.__vitiate_cov as Buffer;
       const target = (data: Buffer): void => {
+        simulateCoverage(data);
         callCount++;
         if (data.length > 0) {
           covMap[data[0]!] = 1;
@@ -553,6 +609,7 @@ describe("fuzz loop", () => {
       let callCount = 0;
       const covMap = globalThis.__vitiate_cov as Buffer;
       const target = (data: Buffer): void => {
+        simulateCoverage(data);
         callCount++;
         if (data.length > 0) {
           covMap[data[0]!] = 1;
@@ -578,6 +635,7 @@ describe("fuzz loop", () => {
       await setupFuzzingMode();
       const covMap = globalThis.__vitiate_cov as Buffer;
       const target = (data: Buffer): void => {
+        simulateCoverage(data);
         if (data.length > 0) {
           covMap[data[0]!] = 1;
         }
@@ -622,6 +680,7 @@ describe("fuzz loop", () => {
       let callCount = 0;
       const covMap = globalThis.__vitiate_cov as Buffer;
       const target = async (data: Buffer): Promise<void> => {
+        simulateCoverage(data);
         callCount++;
         await Promise.resolve();
         if (data.length > 0) {
@@ -649,6 +708,7 @@ describe("fuzz loop", () => {
       await setupFuzzingMode();
       const covMap = globalThis.__vitiate_cov as Buffer;
       const target = (data: Buffer): void => {
+        simulateCoverage(data);
         if (data.length > 0) {
           covMap[data[0]!] = 1;
         }
@@ -695,6 +755,7 @@ describe("fuzz loop", () => {
       await setupFuzzingMode();
       const covMap = globalThis.__vitiate_cov as Buffer;
       const target = (data: Buffer): void => {
+        simulateCoverage(data);
         if (data.length > 0) {
           covMap[data[0]!] = 1;
         }
@@ -795,6 +856,7 @@ describe("fuzz loop", () => {
       let callCount = 0;
       const covMap = globalThis.__vitiate_cov as Buffer;
       const target = (data: Buffer): void => {
+        simulateCoverage(data);
         callCount++;
         if (data.length > 0) {
           covMap[data[0]!] = 1;
@@ -824,6 +886,9 @@ describe("fuzz loop", () => {
       let crashOnNextNonNovel = false;
 
       const target = (data: Buffer): void => {
+        // No simulateCoverage here — this test writes its own coverage
+        // via covMap[data[0]!] and needs exact control over which inputs
+        // are "novel" to match the crashOnNextNonNovel mechanism.
         callCount++;
         if (data.length > 0) {
           covMap[data[0]!] = 1;
@@ -886,6 +951,7 @@ describe("fuzz loop", () => {
       }
       const sites = [crashSiteA, crashSiteB, crashSiteC];
       const target = (data: Buffer): void => {
+        simulateCoverage(data);
         if (data.length > 1 && data[0] === 0x42) {
           sites[data[1]! % 3]!();
         }
@@ -911,6 +977,7 @@ describe("fuzz loop", () => {
     it("loop stops on crash when stopOnCrash=true (default)", async () => {
       await setupFuzzingMode();
       const target = (data: Buffer): void => {
+        simulateCoverage(data);
         if (data.length > 0 && data[0] === 0x42) {
           throw new Error("crash!");
         }
@@ -943,6 +1010,7 @@ describe("fuzz loop", () => {
       }
 
       const target = (data: Buffer): void => {
+        simulateCoverage(data);
         if (data.length > 0 && data[0] === 0x42) {
           crashSiteA();
         }
@@ -999,6 +1067,7 @@ describe("fuzz loop", () => {
           throw new Error("crash B!");
         }
         const target = (data: Buffer): void => {
+          simulateCoverage(data);
           if (data.length > 1 && data[0] === 0x42) {
             if (data[1]! % 2 === 0) crashSiteA();
             else crashSiteB();
@@ -1025,7 +1094,9 @@ describe("fuzz loop", () => {
 
     it("no crashes found returns crashCount 0 and empty crashArtifactPaths", async () => {
       await setupFuzzingMode();
-      const target = (_data: Buffer): void => {};
+      const target = (data: Buffer): void => {
+        simulateCoverage(data);
+      };
 
       const result = await runFuzzLoop(
         target,
@@ -1049,6 +1120,7 @@ describe("fuzz loop", () => {
       const covMap = globalThis.__vitiate_cov as Buffer;
       let crashCount = 0;
       const target = (data: Buffer): void => {
+        simulateCoverage(data);
         if (data.length > 0) {
           covMap[data[0]!] = 1;
         }
@@ -1085,6 +1157,7 @@ describe("fuzz loop", () => {
     it("first crash is saved and dedup map is populated", async () => {
       await setupFuzzingMode();
       const target = (data: Buffer): void => {
+        simulateCoverage(data);
         if (data.length > 0 && data[0] === 0x42) {
           throw new Error("first crash");
         }
@@ -1115,6 +1188,7 @@ describe("fuzz loop", () => {
       }
 
       const target = (data: Buffer): void => {
+        simulateCoverage(data);
         // Always throw the same error from the same function — same dedup key
         if (data.length > 0 && data[0] === 0x42) {
           crashCount++;
@@ -1146,6 +1220,7 @@ describe("fuzz loop", () => {
       // Use different throw sites so each crash produces a unique dedup key,
       // but also use errors with no parseable stack to test fail-open behavior.
       const target = (data: Buffer): void => {
+        simulateCoverage(data);
         if (data.length > 0 && data[0] === 0x42) {
           _crashCount++;
           const err = new Error("unparseable");
@@ -1173,6 +1248,7 @@ describe("fuzz loop", () => {
       await setupFuzzingMode();
       let _crashCount = 0;
       const target = (data: Buffer): void => {
+        simulateCoverage(data);
         // Crash when first byte is 0x42 — same bug regardless of input size
         if (data.length > 0 && data[0] === 0x42) {
           _crashCount++;
@@ -1206,7 +1282,9 @@ describe("fuzz loop", () => {
 
     it("duplicateCrashesSkipped is 0 when no duplicates found", async () => {
       await setupFuzzingMode();
-      const target = (_data: Buffer): void => {};
+      const target = (data: Buffer): void => {
+        simulateCoverage(data);
+      };
 
       const result = await runFuzzLoop(
         target,
@@ -1226,6 +1304,7 @@ describe("fuzz loop", () => {
     it("includes crashCount and crashArtifactPaths on crash", async () => {
       await setupFuzzingMode();
       const target = (data: Buffer): void => {
+        simulateCoverage(data);
         if (data.length > 0 && data[0] === 0x42) {
           throw new Error("found the bug!");
         }
@@ -1247,7 +1326,9 @@ describe("fuzz loop", () => {
 
     it("includes crashCount=0 and empty crashArtifactPaths on no crash", async () => {
       await setupFuzzingMode();
-      const target = (_data: Buffer): void => {};
+      const target = (data: Buffer): void => {
+        simulateCoverage(data);
+      };
 
       const result = await runFuzzLoop(
         target,
@@ -1278,7 +1359,9 @@ describe("fuzz loop", () => {
         "not a valid line",
       );
 
-      const target = (_data: Buffer): void => {};
+      const target = (data: Buffer): void => {
+        simulateCoverage(data);
+      };
       const result = await runFuzzLoop(
         target,
         tmpDir,
@@ -1306,7 +1389,9 @@ describe("fuzz loop", () => {
         "not a valid line",
       );
 
-      const target = (_data: Buffer): void => {};
+      const target = (data: Buffer): void => {
+        simulateCoverage(data);
+      };
       await expect(
         runFuzzLoop(target, tmpDir, testName, "test.fuzz.ts", {
           runs: 10,
@@ -1326,6 +1411,7 @@ describe("fuzz loop", () => {
     // catches the modification in afterIteration(). The fuzzer has "__proto__"
     // as a dictionary token from the detector, so it finds this quickly.
     const target = (data: Buffer): void => {
+      simulateCoverage(data);
       const str = data.toString("utf8");
       if (str.includes("__proto__")) {
         // Vulnerable: writes directly to Object.prototype.
@@ -1361,7 +1447,8 @@ describe("fuzz loop", () => {
   it("VulnerabilityError throws produce standard crash-{hash} artifacts", async () => {
     await setupFuzzingMode();
     const { VulnerabilityError } = await import("./detectors/index.js");
-    const target = (_data: Buffer): void => {
+    const target = (data: Buffer): void => {
+      simulateCoverage(data);
       throw new VulnerabilityError("test-detector", "Test Vulnerability", {
         test: true,
       });

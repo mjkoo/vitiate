@@ -36,9 +36,9 @@ const DETECTOR_REGISTRY: DetectorRegistration[] = [
     create: (options?: unknown) => {
       const opts =
         typeof options === "object" && options !== null
-          ? (options as { sandboxRoot?: string })
+          ? (options as { allowedPaths?: string[]; deniedPaths?: string[] })
           : undefined;
-      return new PathTraversalDetector(opts?.sandboxRoot);
+      return new PathTraversalDetector(opts?.allowedPaths, opts?.deniedPaths);
     },
     tier: 1,
   },

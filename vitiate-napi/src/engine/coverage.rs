@@ -74,7 +74,7 @@ impl Fuzzer {
         input: &[u8],
         exec_time_ns: f64,
         exit_kind: LibaflExitKind,
-        parent_corpus_id: CorpusId,
+        parent_corpus_id: Option<CorpusId>,
     ) -> Result<CoverageEvalResult> {
         // Mask unstable edges before observer construction. This prevents
         // non-deterministic coverage edges from triggering false-positive
@@ -190,15 +190,20 @@ impl Fuzzer {
                     testcase.set_exec_time(exec_time);
 
                     // Compute depth from parent corpus entry.
-                    let depth = match self.state.corpus().get(parent_corpus_id) {
-                        Ok(entry) => {
-                            let parent_tc = entry.borrow();
-                            match parent_tc.metadata::<SchedulerTestcaseMetadata>() {
-                                Ok(meta) => meta.depth() + 1,
-                                Err(_) => 0,
+                    // LibAFL convention: root testcases have depth 1, children have
+                    // parent_depth + 1. Seeds (parent_corpus_id = None) are roots.
+                    let depth = match parent_corpus_id {
+                        Some(id) => match self.state.corpus().get(id) {
+                            Ok(entry) => {
+                                let parent_tc = entry.borrow();
+                                match parent_tc.metadata::<SchedulerTestcaseMetadata>() {
+                                    Ok(meta) => meta.depth() + 1,
+                                    Err(_) => 1 + 1, // parent exists but has no metadata — default parent depth to 1
+                                }
                             }
-                        }
-                        Err(_) => 0,
+                            Err(_) => 1, // parent not found — treat as root
+                        },
+                        None => 1, // no parent (seed evaluation) — root depth
                     };
 
                     // Create per-testcase scheduler metadata.

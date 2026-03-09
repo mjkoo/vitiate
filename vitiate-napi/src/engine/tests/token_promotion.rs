@@ -9,6 +9,19 @@ use libafl::mutators::Tokens;
 use libafl::observers::cmp::CmpValues;
 use napi::bindgen_prelude::Buffer;
 
+/// Write novel coverage on index 1 so the first seed enters the corpus.
+/// Without this, the corpus stays empty and `get_next_input()` errors on
+/// the second call (zero-coverage seed exhaustion guard).
+///
+/// # Safety
+/// `idx` must be within the fuzzer's coverage map bounds. No other observer
+/// may be live.
+unsafe fn seed_coverage(fuzzer: &mut crate::engine::Fuzzer) {
+    unsafe {
+        *fuzzer.map_ptr.add(1) = 1;
+    }
+}
+
 #[test]
 fn test_report_result_populates_tokens_from_cmplog() {
     cmplog::disable();
@@ -21,8 +34,12 @@ fn test_report_result_populates_tokens_from_cmplog() {
 
     // Push the same CmpLog entries TOKEN_PROMOTION_THRESHOLD times so
     // the tokens get promoted into the dictionary.
-    for _ in 0..TOKEN_PROMOTION_THRESHOLD {
+    for i in 0..TOKEN_PROMOTION_THRESHOLD {
         let _input = fuzzer.get_next_input().unwrap();
+        // SAFETY: index 1 is within the 256-byte map; no other observer is live.
+        if i == 0 {
+            unsafe { seed_coverage(&mut fuzzer) };
+        }
         cmplog::push(
             CmpValues::Bytes((make_cmplog_bytes(b"http"), make_cmplog_bytes(b"javascript"))),
             0,
@@ -61,8 +78,12 @@ fn test_tokens_accumulate_across_report_result_calls() {
 
     // Push two different comparisons TOKEN_PROMOTION_THRESHOLD times each
     // so both pairs get promoted.
-    for _ in 0..TOKEN_PROMOTION_THRESHOLD {
+    for i in 0..TOKEN_PROMOTION_THRESHOLD {
         let _input = fuzzer.get_next_input().unwrap();
+        // SAFETY: index 1 is within the 256-byte map; no other observer is live.
+        if i == 0 {
+            unsafe { seed_coverage(&mut fuzzer) };
+        }
         cmplog::push(
             CmpValues::Bytes((make_cmplog_bytes(b"http"), make_cmplog_bytes(b"javascript"))),
             0,
@@ -100,6 +121,10 @@ fn test_token_candidates_capped_at_max() {
     // Each token is observed only once, so none are promoted.
     for i in 0..(MAX_TOKEN_CANDIDATES + 100) {
         let _input = fuzzer.get_next_input().unwrap();
+        // SAFETY: index 1 is within the 256-byte map; no other observer is live.
+        if i == 0 {
+            unsafe { seed_coverage(&mut fuzzer) };
+        }
         let token_bytes = format!("tok_{i:06}");
         cmplog::push(
             CmpValues::Bytes((
@@ -130,8 +155,12 @@ fn test_promoted_tokens_not_reinserted_into_candidates() {
     fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
 
     // Push a token TOKEN_PROMOTION_THRESHOLD observations to promote it.
-    for _ in 0..TOKEN_PROMOTION_THRESHOLD {
+    for i in 0..TOKEN_PROMOTION_THRESHOLD {
         let _input = fuzzer.get_next_input().unwrap();
+        // SAFETY: index 1 is within the 256-byte map; no other observer is live.
+        if i == 0 {
+            unsafe { seed_coverage(&mut fuzzer) };
+        }
         cmplog::push(
             CmpValues::Bytes((
                 make_cmplog_bytes(b"promote_me"),
@@ -243,8 +272,12 @@ fn user_provided_tokens_present_in_state_with_cmplog_promotion() {
     assert!(token_list.contains(&b"user_token_b".as_slice()));
 
     // Now promote a CmpLog token.
-    for _ in 0..TOKEN_PROMOTION_THRESHOLD {
+    for i in 0..TOKEN_PROMOTION_THRESHOLD {
         let _input = fuzzer.get_next_input().unwrap();
+        // SAFETY: index 1 is within the 256-byte map; no other observer is live.
+        if i == 0 {
+            unsafe { seed_coverage(&mut fuzzer) };
+        }
         cmplog::push(
             CmpValues::Bytes((
                 make_cmplog_bytes(b"cmplog_tok"),
@@ -299,8 +332,12 @@ fn user_tokens_do_not_count_toward_cmplog_cap() {
 
     // CmpLog promotion should still work (promoted set is empty).
     assert_eq!(fuzzer.token_tracker.promoted.len(), 0);
-    for _ in 0..TOKEN_PROMOTION_THRESHOLD {
+    for i in 0..TOKEN_PROMOTION_THRESHOLD {
         let _input = fuzzer.get_next_input().unwrap();
+        // SAFETY: index 1 is within the 256-byte map; no other observer is live.
+        if i == 0 {
+            unsafe { seed_coverage(&mut fuzzer) };
+        }
         cmplog::push(
             CmpValues::Bytes((
                 make_cmplog_bytes(b"cmplog_new"),
@@ -369,8 +406,12 @@ fn detector_tokens_inserted_and_exempt_from_cap() {
     assert_eq!(fuzzer.token_tracker.pre_seeded_count, 3);
 
     // CmpLog promotion should still work — detector tokens don't count toward cap.
-    for _ in 0..TOKEN_PROMOTION_THRESHOLD {
+    for i in 0..TOKEN_PROMOTION_THRESHOLD {
         let _input = fuzzer.get_next_input().unwrap();
+        // SAFETY: index 1 is within the 256-byte map; no other observer is live.
+        if i == 0 {
+            unsafe { seed_coverage(&mut fuzzer) };
+        }
         cmplog::push(
             CmpValues::Bytes((
                 make_cmplog_bytes(b"cmplog_val"),
@@ -422,8 +463,12 @@ fn duplicate_detector_tokens_do_not_cause_underflow() {
     assert_eq!(fuzzer.token_tracker.promoted.len(), 1);
     assert_eq!(fuzzer.token_tracker.pre_seeded_count, 3);
 
-    for _ in 0..TOKEN_PROMOTION_THRESHOLD {
+    for i in 0..TOKEN_PROMOTION_THRESHOLD {
         let _input = fuzzer.get_next_input().unwrap();
+        // SAFETY: index 1 is within the 256-byte map; no other observer is live.
+        if i == 0 {
+            unsafe { seed_coverage(&mut fuzzer) };
+        }
         cmplog::push(
             CmpValues::Bytes((make_cmplog_bytes(b"after_dup"), make_cmplog_bytes(b"other"))),
             0,

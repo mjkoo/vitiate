@@ -17,7 +17,7 @@ use napi::bindgen_prelude::Buffer;
 use std::time::Duration;
 
 #[test]
-fn test_depth_root_entry_has_depth_zero() {
+fn test_depth_root_entry_has_depth_one() {
     let (map_ptr, mut map) = make_coverage_map(1024);
     let (mut state, mut feedback, mut scheduler, ..) = make_fuzzer(map_ptr, map.len());
     let mut mgr = NopEventManager::new();
@@ -50,7 +50,7 @@ fn test_depth_root_entry_has_depth_zero() {
         .unwrap();
 
     // Compute depth with no parent (last_corpus_id = None).
-    let depth = 0u64; // No parent → depth 0
+    let depth = 1u64; // No parent → root depth 1 (LibAFL convention)
     let mut sched_meta = SchedulerTestcaseMetadata::new(depth);
     sched_meta.set_bitmap_size(1);
     sched_meta.set_cycle_and_time((Duration::from_micros(100), 1));
@@ -60,10 +60,10 @@ fn test_depth_root_entry_has_depth_zero() {
     let id = state.corpus_mut().add(testcase).unwrap();
     scheduler.on_add(&mut state, id).unwrap();
 
-    // Verify depth is 0.
+    // Verify depth is 1 (root depth, LibAFL convention).
     let tc = state.corpus().get(id).unwrap().borrow();
     let meta = tc.metadata::<SchedulerTestcaseMetadata>().unwrap();
-    assert_eq!(meta.depth(), 0);
+    assert_eq!(meta.depth(), 1);
 }
 
 #[test]
@@ -72,12 +72,12 @@ fn test_depth_increments_from_parent() {
     let (mut state, mut feedback, mut scheduler, ..) = make_fuzzer(map_ptr, map.len());
     let mut mgr = NopEventManager::new();
 
-    // Add a seed at depth 0.
+    // Add a seed at depth 1 (root, LibAFL convention).
     let tc = make_seed_testcase(b"seed");
     let seed_id = state.corpus_mut().add(tc).unwrap();
     scheduler.on_add(&mut state, seed_id).unwrap();
 
-    // Add an interesting entry with seed as parent (depth 0 → child depth 1).
+    // Add an interesting entry with seed as parent (depth 1 → child depth 2).
     map[0] = 1;
     let observer =
         unsafe { StdMapObserver::from_mut_ptr(EDGES_OBSERVER_NAME, map.as_mut_ptr(), map.len()) };
@@ -108,7 +108,7 @@ fn test_depth_increments_from_parent() {
         .metadata::<SchedulerTestcaseMetadata>()
         .unwrap()
         .depth();
-    assert_eq!(parent_depth, 0);
+    assert_eq!(parent_depth, 1);
     let child_depth = parent_depth + 1;
 
     let mut sched_meta = SchedulerTestcaseMetadata::new(child_depth);
@@ -120,43 +120,62 @@ fn test_depth_increments_from_parent() {
     let child_id = state.corpus_mut().add(testcase).unwrap();
     scheduler.on_add(&mut state, child_id).unwrap();
 
-    // Verify child depth is 1.
+    // Verify child depth is 2.
     let tc = state.corpus().get(child_id).unwrap().borrow();
     let meta = tc.metadata::<SchedulerTestcaseMetadata>().unwrap();
-    assert_eq!(meta.depth(), 1);
+    assert_eq!(meta.depth(), 2);
 }
 
 #[test]
-fn test_depth_parent_without_metadata_defaults_to_zero() {
-    let (map_ptr, _map) = make_coverage_map(1024);
-    let (mut state, ..) = make_fuzzer(map_ptr, 1024);
+fn test_depth_parent_without_metadata_defaults_to_one() {
+    // Exercises the fallback in coverage.rs where a parent testcase exists
+    // but has no SchedulerTestcaseMetadata — parent depth defaults to 1,
+    // so the child's depth should be 2 (parent_depth + 1).
+    let mut fuzzer = TestFuzzerBuilder::new(1024).build();
 
-    // Add an entry without SchedulerTestcaseMetadata.
-    let tc = Testcase::new(BytesInput::new(b"bare".to_vec()));
-    let bare_id = state.corpus_mut().add(tc).unwrap();
+    // Add a seed so the scheduler has something to work with.
+    fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
 
-    // Attempt to read parent metadata — should fail, default to 0.
-    let depth = match state.corpus().get(bare_id) {
-        Ok(entry) => {
-            let parent_tc = entry.borrow();
-            match parent_tc.metadata::<SchedulerTestcaseMetadata>() {
-                Ok(meta) => meta.depth() + 1,
-                Err(_) => 0, // No metadata → depth 0
-            }
-        }
-        Err(_) => 0,
-    };
-    assert_eq!(depth, 0);
+    // Add a bare Testcase without SchedulerTestcaseMetadata.
+    let bare_tc = Testcase::new(BytesInput::new(b"bare".to_vec()));
+    let bare_id = fuzzer.state.corpus_mut().add(bare_tc).unwrap();
+
+    // Point last_corpus_id at the bare entry (simulating get_next_input
+    // having selected it) and set up a dummy last_input.
+    fuzzer.last_corpus_id = Some(bare_id);
+    fuzzer.last_input = Some(BytesInput::new(b"child_of_bare".to_vec()));
+
+    // Write novel coverage so evaluate_coverage() creates a new corpus entry.
+    unsafe {
+        *fuzzer.map_ptr.add(10) = 1;
+    }
+    let result = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
+    assert!(matches!(result, IterationResult::Interesting));
+
+    let child_id = fuzzer
+        .calibration
+        .corpus_id
+        .expect("should have calibration corpus_id");
+    fuzzer.calibrate_finish().unwrap();
+
+    // Verify the child's depth is 2: parent defaulted to depth 1, child = 1 + 1.
+    let tc = fuzzer.state.corpus().get(child_id).unwrap().borrow();
+    let meta = tc.metadata::<SchedulerTestcaseMetadata>().unwrap();
+    assert_eq!(
+        meta.depth(),
+        2,
+        "child of parent without metadata should have depth 2 (parent defaults to 1)"
+    );
 }
 
 #[test]
 fn test_depth_chain_across_three_levels() {
     let mut fuzzer = TestFuzzerBuilder::new(1024).build();
 
-    // Add a seed at depth 0.
+    // Add a seed at depth 1 (root, LibAFL convention).
     fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
 
-    // --- Level 0 → 1: first interesting input ---
+    // --- Seed → depth 1: first interesting input ---
     let _input = fuzzer.get_next_input().unwrap();
     unsafe {
         *fuzzer.map_ptr.add(10) = 1;
@@ -169,14 +188,14 @@ fn test_depth_chain_across_three_levels() {
         .expect("should have calibration corpus_id");
     fuzzer.calibrate_finish().unwrap();
 
-    // Verify depth 1.
+    // Seeds have no parent (last_corpus_id = None) → root depth 1.
     {
         let tc = fuzzer.state.corpus().get(id_depth1).unwrap().borrow();
         let meta = tc.metadata::<SchedulerTestcaseMetadata>().unwrap();
         assert_eq!(
             meta.depth(),
             1,
-            "first interesting entry should have depth 1"
+            "first interesting entry (from seed) should have depth 1"
         );
     }
 
