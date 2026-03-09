@@ -333,20 +333,14 @@ function registerFuzzTest(
       async function replayEntry(entry: Buffer, index: number): Promise<void> {
         detectorManager?.beforeIteration();
         let targetError: unknown;
+        let targetCompletedOk = true;
         try {
           await target(entry);
         } catch (e) {
           targetError = e;
+          targetCompletedOk = false;
         }
-        // afterIteration() closes the detector window and may throw a
-        // VulnerabilityError (e.g., prototype pollution detected via
-        // snapshot diff). Target exceptions take precedence.
-        let detectorError: unknown;
-        try {
-          detectorManager?.afterIteration();
-        } catch (e) {
-          detectorError = e;
-        }
+        const detectorError = detectorManager?.endIteration(targetCompletedOk);
         const failure = targetError ?? detectorError;
         if (failure !== undefined) {
           const err =

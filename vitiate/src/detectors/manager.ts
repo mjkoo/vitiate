@@ -6,6 +6,7 @@
  */
 import type { FuzzOptions } from "../config.js";
 import type { Detector } from "./types.js";
+import { VulnerabilityError } from "./vulnerability-error.js";
 import { setDetectorActive } from "./module-hook.js";
 import { PrototypePollutionDetector } from "./prototype-pollution.js";
 import { CommandInjectionDetector } from "./command-injection.js";
@@ -107,24 +108,48 @@ export class DetectorManager {
     }
   }
 
-  afterIteration(): void {
-    let firstError: unknown;
+  /**
+   * End the current iteration: run checks if target completed normally,
+   * always reset state and deactivate the detector window.
+   *
+   * Returns the first VulnerabilityError found, or undefined.
+   * Re-throws non-VulnerabilityError exceptions (detector bugs).
+   */
+  endIteration(targetCompletedOk: boolean): VulnerabilityError | undefined {
     try {
-      for (const detector of this.detectors) {
-        try {
-          detector.afterIteration();
-        } catch (e) {
-          if (firstError === undefined) {
-            firstError = e;
-          }
-        }
+      if (targetCompletedOk) {
+        return this.afterIteration();
       }
+      return undefined;
     } finally {
+      for (const detector of this.detectors) {
+        detector.resetIteration();
+      }
       setDetectorActive(false);
     }
-    if (firstError !== undefined) {
-      throw firstError;
+  }
+
+  private afterIteration(): VulnerabilityError | undefined {
+    let firstVulnerabilityError: VulnerabilityError | undefined;
+    let firstNonVulnerabilityError: unknown;
+
+    for (const detector of this.detectors) {
+      try {
+        detector.afterIteration();
+      } catch (e) {
+        if (e instanceof VulnerabilityError) {
+          firstVulnerabilityError ??= e;
+        } else {
+          firstNonVulnerabilityError ??= e;
+        }
+      }
     }
+
+    if (firstNonVulnerabilityError !== undefined) {
+      throw firstNonVulnerabilityError;
+    }
+
+    return firstVulnerabilityError;
   }
 
   teardown(): void {

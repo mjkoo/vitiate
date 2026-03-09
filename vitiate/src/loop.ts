@@ -26,7 +26,6 @@ import {
   getDetectorManager,
   resetDetectorHooks,
 } from "./detectors/index.js";
-import { setDetectorActive } from "./detectors/module-hook.js";
 import {
   loadSeedCorpus,
   loadCachedCorpus,
@@ -219,21 +218,11 @@ async function runCalibration(
     );
 
     let { exitKind } = calibrationResult;
-    let detectorError: VulnerabilityError | undefined;
-
-    if (exitKind === ExitKind.Ok) {
-      try {
-        detectorManager.afterIteration();
-      } catch (e) {
-        if (e instanceof VulnerabilityError) {
-          exitKind = ExitKind.Crash;
-          detectorError = e;
-        } else {
-          throw e;
-        }
-      }
-    } else {
-      setDetectorActive(false);
+    const detectorError = detectorManager.endIteration(
+      exitKind === ExitKind.Ok,
+    );
+    if (detectorError) {
+      exitKind = ExitKind.Crash;
     }
 
     if (exitKind !== ExitKind.Ok) {
@@ -293,19 +282,12 @@ async function runStage(
     let { exitKind: stageExitKind, error: stageCaughtError } =
       await executeTarget(target, stageInput, watchdog, timeoutMs);
 
-    if (stageExitKind === ExitKind.Ok) {
-      try {
-        detectorManager.afterIteration();
-      } catch (e) {
-        if (e instanceof VulnerabilityError) {
-          stageExitKind = ExitKind.Crash;
-          stageCaughtError = e;
-        } else {
-          throw e;
-        }
-      }
-    } else {
-      setDetectorActive(false);
+    const stageDetectorError = detectorManager.endIteration(
+      stageExitKind === ExitKind.Ok,
+    );
+    if (stageDetectorError) {
+      stageExitKind = ExitKind.Crash;
+      stageCaughtError = stageDetectorError;
     }
 
     if (stageExitKind !== ExitKind.Ok) {
@@ -653,21 +635,12 @@ export async function runFuzzLoop(
         timeoutMs,
       );
 
-      // Run afterIteration for Ok exits only; may upgrade to Crash
-      if (exitKind === ExitKind.Ok) {
-        try {
-          detectorManager.afterIteration();
-        } catch (e) {
-          if (e instanceof VulnerabilityError) {
-            exitKind = ExitKind.Crash;
-            caughtError = e;
-          } else {
-            throw e;
-          }
-        }
-      } else {
-        // Timeout or crash from executeTarget — deactivate detector window
-        setDetectorActive(false);
+      const detectorError = detectorManager.endIteration(
+        exitKind === ExitKind.Ok,
+      );
+      if (detectorError) {
+        exitKind = ExitKind.Crash;
+        caughtError = detectorError;
       }
 
       const execTimeNs = Number(process.hrtime.bigint() - startNs);
@@ -806,20 +779,16 @@ async function minimizeCrashInput(
     detectorManager.beforeIteration();
     const result = await executeTarget(target, candidate, watchdog, timeoutMs);
 
+    const detectorError = detectorManager.endIteration(
+      result.exitKind === ExitKind.Ok,
+    );
     if (result.exitKind === ExitKind.Ok) {
-      try {
-        detectorManager.afterIteration();
-      } catch (e) {
-        if (e instanceof VulnerabilityError) {
-          return wasDetectorFinding;
-        }
-        throw e;
+      if (detectorError) {
+        return wasDetectorFinding;
       }
       return false;
     }
 
-    // Timeout or crash from executeTarget — deactivate detector window
-    setDetectorActive(false);
     return result.exitKind === ExitKind.Crash && !wasDetectorFinding;
   };
 

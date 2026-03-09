@@ -14,6 +14,12 @@ export interface Detector {
   beforeIteration(): void;
   /** Called after target execution completes without throwing. Check for violations. */
   afterIteration(): void;
+  /**
+   * Called after every iteration regardless of exit kind.
+   * Restores any per-iteration state captured by beforeIteration().
+   * Must not throw.
+   */
+  resetIteration(): void;
   /** Called after fuzzing ends. Restore patched modules. */
   teardown(): void;
 }

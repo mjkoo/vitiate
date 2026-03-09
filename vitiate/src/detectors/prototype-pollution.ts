@@ -107,7 +107,6 @@ export class PrototypePollutionDetector implements Detector {
     for (const snapshot of this.snapshots) {
       const { name, proto, properties } = snapshot;
       const currentKeys = Object.getOwnPropertyNames(proto);
-      let polluted = false;
 
       // Check for added or modified properties
       for (const key of currentKeys) {
@@ -123,7 +122,6 @@ export class PrototypePollutionDetector implements Detector {
 
         const prev = properties.get(key);
         if (prev === undefined) {
-          polluted = true;
           firstFinding ??= new VulnerabilityError(
             this.name,
             "Prototype Pollution",
@@ -135,7 +133,6 @@ export class PrototypePollutionDetector implements Detector {
             },
           );
         } else if (descriptor && descriptor.value !== prev.value) {
-          polluted = true;
           firstFinding ??= new VulnerabilityError(
             this.name,
             "Prototype Pollution",
@@ -154,7 +151,6 @@ export class PrototypePollutionDetector implements Detector {
       for (const key of properties.keys()) {
         if (!Object.prototype.hasOwnProperty.call(proto, key)) {
           // Property was deleted entirely (not replaced by a function/polyfill)
-          polluted = true;
           firstFinding ??= new VulnerabilityError(
             this.name,
             "Prototype Pollution",
@@ -170,14 +166,16 @@ export class PrototypePollutionDetector implements Detector {
         // (polyfill scenario). If it exists and is non-function with a
         // different value, the "modified" check above already caught it.
       }
-
-      if (polluted) {
-        this.restorePrototype(snapshot);
-      }
     }
 
     if (firstFinding) {
       throw firstFinding;
+    }
+  }
+
+  resetIteration(): void {
+    for (const snapshot of this.snapshots) {
+      this.restorePrototype(snapshot);
     }
   }
 
@@ -189,10 +187,13 @@ export class PrototypePollutionDetector implements Detector {
   private restorePrototype(snapshot: PrototypeSnapshot): void {
     const { proto, properties } = snapshot;
 
-    // Remove added properties
+    // Remove added non-function data properties.
+    // Skip accessor properties (get/set) and function-valued data properties,
+    // matching the captureSnapshot filter — these were never snapshotted.
     for (const key of Object.getOwnPropertyNames(proto)) {
       const descriptor = Object.getOwnPropertyDescriptor(proto, key);
-      if (descriptor && typeof descriptor.value === "function") continue;
+      if (!descriptor || !("value" in descriptor)) continue;
+      if (typeof descriptor.value === "function") continue;
       if (!properties.has(key)) {
         delete (proto as Record<string, unknown>)[key];
       }

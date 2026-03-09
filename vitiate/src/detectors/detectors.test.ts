@@ -1,7 +1,11 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { VulnerabilityError } from "./vulnerability-error.js";
 import { DetectorManager } from "./manager.js";
-import { installHook, setDetectorActive } from "./module-hook.js";
+import {
+  installHook,
+  setDetectorActive,
+  isDetectorActive,
+} from "./module-hook.js";
 import {
   installDetectorModuleHooks,
   getDetectorManager,
@@ -116,6 +120,7 @@ describe("DetectorManager", () => {
       setup: () => calls.push(`${name}.setup`),
       beforeIteration: () => calls.push(`${name}.before`),
       afterIteration: () => calls.push(`${name}.after`),
+      resetIteration: () => calls.push(`${name}.reset`),
       teardown: () => calls.push(`${name}.teardown`),
     });
 
@@ -136,9 +141,17 @@ describe("DetectorManager", () => {
     manager.beforeIteration();
     expect(calls).toEqual(["a.before", "b.before"]);
 
+    // endIteration(true) calls afterIteration then resetIteration
     calls.length = 0;
-    manager.afterIteration();
-    expect(calls).toEqual(["a.after", "b.after"]);
+    manager.endIteration(true);
+    expect(calls).toEqual(["a.after", "b.after", "a.reset", "b.reset"]);
+
+    // endIteration(false) calls only resetIteration
+    calls.length = 0;
+    manager.beforeIteration();
+    calls.length = 0;
+    manager.endIteration(false);
+    expect(calls).toEqual(["a.reset", "b.reset"]);
 
     calls.length = 0;
     manager.teardown();
@@ -234,10 +247,8 @@ describe("PrototypePollutionDetector", () => {
   const detector = new PrototypePollutionDetector();
 
   afterEach(() => {
-    // Clean up any pollution from tests
-    const proto = Object.prototype as Record<string, unknown>;
-    delete proto["testProp"];
-    delete proto["isAdmin"];
+    // resetIteration restores prototype state; call before teardown clears snapshots.
+    detector.resetIteration();
     detector.teardown();
   });
 
@@ -261,9 +272,6 @@ describe("PrototypePollutionDetector", () => {
     detector.beforeIteration();
     (Object.prototype as Record<string, unknown>)["testProp"] = "modified";
     expect(() => detector.afterIteration()).toThrow(VulnerabilityError);
-
-    // Clean up
-    delete (Object.prototype as Record<string, unknown>)["testProp"];
   });
 
   it("ignores function-valued property additions", () => {
@@ -272,21 +280,27 @@ describe("PrototypePollutionDetector", () => {
     (Object.prototype as Record<string, unknown>)["testPolyfill"] =
       function () {};
     detector.afterIteration(); // should NOT throw
-    delete (Object.prototype as Record<string, unknown>)["testPolyfill"];
   });
 
-  it("restores prototype state after detection", () => {
+  it("restores prototype state via resetIteration", () => {
     detector.setup();
     detector.beforeIteration();
     (Object.prototype as Record<string, unknown>)["isAdmin"] = true;
 
+    // afterIteration detects but does NOT restore
     try {
       detector.afterIteration();
     } catch {
       // Expected
     }
 
-    // The property should be cleaned up
+    // Property still present after afterIteration (no restoration)
+    expect(
+      Object.prototype.hasOwnProperty.call(Object.prototype, "isAdmin"),
+    ).toBe(true);
+
+    // resetIteration restores
+    detector.resetIteration();
     expect(
       Object.prototype.hasOwnProperty.call(Object.prototype, "isAdmin"),
     ).toBe(false);
@@ -470,6 +484,232 @@ describe("PathTraversalDetector", () => {
     expect(tokenStrings).toContain("/var/www/uploads");
     // Depth-based traversal: /var/www/uploads has 3 components
     expect(tokenStrings).toContain("../../../etc/passwd");
+  });
+});
+
+// ── resetIteration tests ──────────────────────────────────────────────────
+
+describe("resetIteration", () => {
+  afterEach(() => {
+    // Safety net: ensure prototype pollution never leaks between tests.
+    const proto = Object.prototype as Record<string, unknown>;
+    delete proto["polluted1"];
+    delete proto["polluted2"];
+    delete proto["polluted"];
+  });
+
+  it("CommandInjectionDetector resetIteration is a no-op", () => {
+    const detector = new CommandInjectionDetector();
+    // Should not throw
+    detector.resetIteration();
+  });
+
+  it("PathTraversalDetector resetIteration is a no-op", () => {
+    const detector = new PathTraversalDetector();
+    // Should not throw
+    detector.resetIteration();
+  });
+
+  it("PrototypePollutionDetector resetIteration restores all prototypes", () => {
+    const detector = new PrototypePollutionDetector();
+    detector.setup();
+    detector.beforeIteration();
+
+    (Object.prototype as Record<string, unknown>)["polluted1"] = "a";
+    (Object.prototype as Record<string, unknown>)["polluted2"] = "b";
+
+    detector.resetIteration();
+
+    expect(
+      Object.prototype.hasOwnProperty.call(Object.prototype, "polluted1"),
+    ).toBe(false);
+    expect(
+      Object.prototype.hasOwnProperty.call(Object.prototype, "polluted2"),
+    ).toBe(false);
+  });
+
+  it("PrototypePollutionDetector resetIteration is idempotent", () => {
+    const detector = new PrototypePollutionDetector();
+    detector.setup();
+    detector.beforeIteration();
+
+    (Object.prototype as Record<string, unknown>)["polluted"] = "x";
+
+    detector.resetIteration();
+    // Second call is a no-op
+    detector.resetIteration();
+
+    expect(
+      Object.prototype.hasOwnProperty.call(Object.prototype, "polluted"),
+    ).toBe(false);
+  });
+});
+
+// ── endIteration tests ───────────────────────────────────────────────────
+
+describe("DetectorManager.endIteration", () => {
+  function createManagerWithMockDetectors(): {
+    manager: DetectorManager;
+    calls: string[];
+  } {
+    const calls: string[] = [];
+    const mockDetector = (name: string): Detector => ({
+      name,
+      tier: 1,
+      getTokens: () => [],
+      setup: () => {},
+      beforeIteration: () => calls.push(`${name}.before`),
+      afterIteration: () => calls.push(`${name}.after`),
+      resetIteration: () => calls.push(`${name}.reset`),
+      teardown: () => {},
+    });
+
+    const manager = new DetectorManager({
+      prototypePollution: false,
+      commandInjection: false,
+      pathTraversal: false,
+    });
+    const detectors = [mockDetector("a"), mockDetector("b")];
+    Object.defineProperty(manager, "detectors", { value: detectors });
+
+    return { manager, calls };
+  }
+
+  it("returns VulnerabilityError on Ok exit with finding", () => {
+    const manager = new DetectorManager({
+      prototypePollution: false,
+      commandInjection: false,
+      pathTraversal: false,
+    });
+    const throwingDetector: Detector = {
+      name: "thrower",
+      tier: 1,
+      getTokens: () => [],
+      setup: () => {},
+      beforeIteration: () => {},
+      afterIteration: () => {
+        throw new VulnerabilityError("thrower", "Test", {});
+      },
+      resetIteration: () => {},
+      teardown: () => {},
+    };
+    Object.defineProperty(manager, "detectors", {
+      value: [throwingDetector],
+    });
+
+    manager.beforeIteration();
+    const result = manager.endIteration(true);
+
+    expect(result).toBeInstanceOf(VulnerabilityError);
+    expect(isDetectorActive()).toBe(false);
+  });
+
+  it("returns undefined on Ok exit without finding", () => {
+    const { manager } = createManagerWithMockDetectors();
+    manager.beforeIteration();
+    const result = manager.endIteration(true);
+    expect(result).toBeUndefined();
+    expect(isDetectorActive()).toBe(false);
+  });
+
+  it("skips checks on non-Ok exit but runs reset", () => {
+    const { manager, calls } = createManagerWithMockDetectors();
+    manager.beforeIteration();
+    calls.length = 0;
+
+    const result = manager.endIteration(false);
+
+    expect(result).toBeUndefined();
+    expect(calls).toEqual(["a.reset", "b.reset"]);
+    expect(calls).not.toContain("a.after");
+    expect(calls).not.toContain("b.after");
+    expect(isDetectorActive()).toBe(false);
+  });
+
+  it("re-throws non-VulnerabilityError from afterIteration", () => {
+    const manager = new DetectorManager({
+      prototypePollution: false,
+      commandInjection: false,
+      pathTraversal: false,
+    });
+    const buggyDetector: Detector = {
+      name: "buggy",
+      tier: 1,
+      getTokens: () => [],
+      setup: () => {},
+      beforeIteration: () => {},
+      afterIteration: () => {
+        throw new TypeError("detector bug");
+      },
+      resetIteration: () => {},
+      teardown: () => {},
+    };
+    Object.defineProperty(manager, "detectors", {
+      value: [buggyDetector],
+    });
+
+    manager.beforeIteration();
+    expect(() => manager.endIteration(true)).toThrow(TypeError);
+    expect(isDetectorActive()).toBe(false);
+  });
+
+  it("runs resetIteration even when afterIteration throws VulnerabilityError", () => {
+    const calls: string[] = [];
+    const manager = new DetectorManager({
+      prototypePollution: false,
+      commandInjection: false,
+      pathTraversal: false,
+    });
+    const detector: Detector = {
+      name: "test",
+      tier: 1,
+      getTokens: () => [],
+      setup: () => {},
+      beforeIteration: () => {},
+      afterIteration: () => {
+        calls.push("after");
+        throw new VulnerabilityError("test", "Test", {});
+      },
+      resetIteration: () => calls.push("reset"),
+      teardown: () => {},
+    };
+    Object.defineProperty(manager, "detectors", { value: [detector] });
+
+    manager.beforeIteration();
+    manager.endIteration(true);
+
+    expect(calls).toEqual(["after", "reset"]);
+  });
+});
+
+// ── Prototype pollution restored when afterIteration is not called ───────
+
+describe("prototype pollution restored without afterIteration", () => {
+  afterEach(() => {
+    const proto = Object.prototype as Record<string, unknown>;
+    delete proto["pollutedProp"];
+  });
+
+  it("resetIteration restores prototypes even when afterIteration is skipped (the bug fix)", () => {
+    const manager = new DetectorManager({
+      commandInjection: false,
+      pathTraversal: false,
+    });
+    manager.setup();
+
+    manager.beforeIteration();
+    (Object.prototype as Record<string, unknown>)["pollutedProp"] = "malicious";
+
+    // Simulate a crash exit — endIteration(false) skips afterIteration but runs resetIteration
+    const result = manager.endIteration(false);
+    expect(result).toBeUndefined();
+
+    // Prototype should be restored
+    expect(
+      Object.prototype.hasOwnProperty.call(Object.prototype, "pollutedProp"),
+    ).toBe(false);
+
+    manager.teardown();
   });
 });
 

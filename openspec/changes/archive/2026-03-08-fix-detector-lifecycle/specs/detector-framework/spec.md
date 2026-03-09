@@ -1,8 +1,4 @@
-## Purpose
-
-Core framework for bug detectors: the `Detector` interface, `VulnerabilityError` type, `DetectorManager` orchestration, module hooking utility, and detector configuration schema.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Detector interface
 
@@ -49,31 +45,6 @@ The system SHALL define a `Detector` interface with the following lifecycle hook
 - **WHEN** `resetIteration()` encounters an error during state restoration
 - **THEN** it SHALL NOT throw
 - **AND** it SHALL make a best-effort attempt to restore state
-
-### Requirement: VulnerabilityError type
-
-The system SHALL define a `VulnerabilityError` class that extends `Error`. It SHALL include:
-
-- `detectorName` (string): The name of the detector that fired (matches `Detector.name`).
-- `vulnerabilityType` (string): Human-readable vulnerability category (e.g., `"Prototype Pollution"`, `"Command Injection"`).
-- `context` (Record<string, unknown>): Structured metadata about the finding (e.g., which function was called, what argument triggered it, which prototype was modified).
-
-The error message SHALL include the detector name, vulnerability type, and a human-readable summary of the finding.
-
-#### Scenario: VulnerabilityError is instanceof Error
-
-- **WHEN** a detector throws a `VulnerabilityError`
-- **THEN** the thrown value SHALL be an instance of `Error`
-- **AND** `error instanceof VulnerabilityError` SHALL return `true`
-- **AND** `error.detectorName` SHALL match the detector's `name` property
-- **AND** `error.stack` SHALL include the call site where the vulnerability was triggered
-
-#### Scenario: VulnerabilityError is treated as a crash by the fuzz engine
-
-- **WHEN** a `VulnerabilityError` is thrown during target execution or in `afterIteration()`
-- **THEN** the fuzz loop SHALL classify the iteration as `ExitKind.Crash`
-- **AND** the Rust engine SHALL receive `ExitKind.Crash` via `reportResult()`
-- **AND** the engine SHALL evaluate it against `CrashFeedback` like any other crash
 
 ### Requirement: DetectorManager orchestration
 
@@ -199,37 +170,3 @@ The system SHALL provide a utility for safely monkey-patching Node built-in modu
 
 - **WHEN** a hooked function is called outside the `beforeIteration()`/`endIteration()` window (e.g., during Vite module resolution or fuzzer setup)
 - **THEN** the hook SHALL pass through to the original function without running the detector check
-
-### Requirement: Detector configuration schema
-
-The system SHALL define per-detector configuration using Valibot schemas within the `FuzzOptions.detectors` key. Each detector field SHALL accept either a `boolean` or a detector-specific options object:
-
-- `boolean`: `true` enables with defaults, `false` disables.
-- Options object: Enables the detector with the provided configuration.
-- Absent field: Uses the tier default (Tier 1 = enabled, Tier 2 = disabled).
-
-The following detector fields SHALL be defined for Tier 1 detectors:
-
-- `prototypePollution?: boolean`
-- `commandInjection?: boolean`
-- `pathTraversal?: boolean | { sandboxRoot?: string }`
-
-Tier 2 detector fields (`redos`, `ssrf`, `unsafeEval`) are NOT included in this change. They SHALL be added to the schema when their respective detectors are implemented. The schema SHALL accept and silently ignore unknown keys within the `detectors` object to allow forward-compatible configuration files.
-
-#### Scenario: Valid boolean configuration
-
-- **WHEN** `detectors: { prototypePollution: false }` is provided in `FuzzOptions`
-- **THEN** the configuration SHALL validate successfully
-- **AND** the prototype pollution detector SHALL be disabled
-
-#### Scenario: Valid options object configuration
-
-- **WHEN** `detectors: { pathTraversal: { sandboxRoot: "./uploads" } }` is provided in `FuzzOptions`
-- **THEN** the configuration SHALL validate successfully
-- **AND** the path traversal detector SHALL be enabled with `sandboxRoot` resolved to `"./uploads"`
-
-#### Scenario: Empty detectors object uses defaults
-
-- **WHEN** `detectors: {}` is provided in `FuzzOptions`
-- **THEN** all Tier 1 detectors SHALL be enabled with default options
-- **AND** all Tier 2 detectors SHALL be disabled

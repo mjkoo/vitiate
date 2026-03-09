@@ -132,6 +132,10 @@ export class PathTraversalDetector implements Detector {
     // No-op: module-hook detector.
   }
 
+  resetIteration(): void {
+    // No-op: module-hook detector has no per-iteration state.
+  }
+
   teardown(): void {
     for (const hook of this.hooks) {
       hook.restore();
