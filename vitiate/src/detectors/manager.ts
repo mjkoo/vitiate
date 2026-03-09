@@ -7,7 +7,10 @@
 import type { FuzzOptions } from "../config.js";
 import type { Detector } from "./types.js";
 import { VulnerabilityError } from "./vulnerability-error.js";
-import { setDetectorActive } from "./module-hook.js";
+import {
+  setDetectorActive,
+  drainStashedVulnerabilityError,
+} from "./module-hook.js";
 import { PrototypePollutionDetector } from "./prototype-pollution.js";
 import { CommandInjectionDetector } from "./command-injection.js";
 import { PathTraversalDetector } from "./path-traversal.js";
@@ -102,6 +105,9 @@ export class DetectorManager {
   }
 
   beforeIteration(): void {
+    // Defensive: drain any stale stash from a prior iteration whose
+    // endIteration() was never called (e.g., unrelated exception in fuzz loop).
+    drainStashedVulnerabilityError();
     setDetectorActive(true);
     for (const detector of this.detectors) {
       detector.beforeIteration();
@@ -109,18 +115,30 @@ export class DetectorManager {
   }
 
   /**
-   * End the current iteration: run checks if target completed normally,
-   * always reset state and deactivate the detector window.
+   * End the current iteration: run afterIteration checks if the target
+   * completed normally, always reset state and deactivate the detector window.
+   *
+   * On the Ok path, afterIteration() findings take priority over stashed
+   * hook errors. On the non-Ok path, returns a stashed hook error if one
+   * exists (recovering findings swallowed by target try/catch).
    *
    * Returns the first VulnerabilityError found, or undefined.
-   * Re-throws non-VulnerabilityError exceptions (detector bugs).
+   * Re-throws non-VulnerabilityError exceptions (detector bugs), unless
+   * a stashed VulnerabilityError exists (real finding takes priority).
    */
   endIteration(targetCompletedOk: boolean): VulnerabilityError | undefined {
     try {
+      const stashed = drainStashedVulnerabilityError();
       if (targetCompletedOk) {
-        return this.afterIteration();
+        try {
+          const afterIterationResult = this.afterIteration();
+          return afterIterationResult ?? stashed;
+        } catch (e) {
+          if (stashed) return stashed;
+          throw e;
+        }
       }
-      return undefined;
+      return stashed;
     } finally {
       for (const detector of this.detectors) {
         detector.resetIteration();
@@ -153,6 +171,9 @@ export class DetectorManager {
   }
 
   teardown(): void {
+    // Defensive: drain stash before detector teardown in case endIteration()
+    // was never called (mid-iteration shutdown).
+    drainStashedVulnerabilityError();
     setDetectorActive(false);
     for (const detector of this.detectors) {
       detector.teardown();

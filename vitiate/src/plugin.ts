@@ -78,6 +78,12 @@ function extractImportClause(statement: string): string | null {
 /**
  * Parse an import clause (already whitespace-normalized) into its
  * constituent parts: default import, named imports, namespace import.
+ *
+ * Named-import patterns use `[^}]*` to match brace contents. This fails
+ * if a closing brace appears inside a comment within the import braces
+ * (e.g., `import { foo, / * } * / bar } from "fs"`). In practice this
+ * doesn't occur in real code, and the failure mode is graceful: the
+ * import isn't rewritten, but the CJS module hook still intercepts calls.
  */
 function parseImportClause(clause: string): ParsedClause | null {
   let defaultImport: string | null = null;

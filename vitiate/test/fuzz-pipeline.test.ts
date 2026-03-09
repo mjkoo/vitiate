@@ -76,8 +76,20 @@ afterAll(() => {
   rmSync(CORPUS_CACHE_DIR, { recursive: true, force: true });
 });
 
+interface SubprocessResult {
+  exitCode: number;
+  output: string;
+}
+
+/** Log subprocess output to stderr for diagnostic visibility. */
+function dumpOutput(label: string, output: string): void {
+  if (output.length > 0) {
+    process.stderr.write(`\n── ${label} subprocess output ──\n${output}\n`);
+  }
+}
+
 describe("fuzz pipeline: discovers planted bugs end-to-end", () => {
-  let exitCode = 0;
+  let result: SubprocessResult;
 
   // Each target runs for up to 60s. Three targets run sequentially, so the
   // fuzz run can take up to ~180s plus startup overhead.
@@ -100,14 +112,15 @@ describe("fuzz pipeline: discovers planted bugs end-to-end", () => {
       }
     }
 
-    exitCode = await new Promise<number>((resolve, reject) => {
+    result = await new Promise<SubprocessResult>((resolve, reject) => {
+      const chunks: Buffer[] = [];
       const child = spawn(
         "pnpm",
         ["exec", "vitest", "run", "--config", "vitest.fuzz-pipeline.config.ts"],
         {
           cwd: EXAMPLE_DIR,
           timeout: 300_000,
-          stdio: ["ignore", "inherit", "inherit"],
+          stdio: ["ignore", "pipe", "pipe"],
           // On Windows, spawn can't resolve .cmd shims (e.g. pnpm.cmd)
           // without a shell. Harmless on Unix.
           shell: true,
@@ -117,35 +130,48 @@ describe("fuzz pipeline: discovers planted bugs end-to-end", () => {
           },
         },
       );
-      child.on("close", (code) => resolve(code ?? 1));
+      child.stdout?.on("data", (chunk: Buffer) => chunks.push(chunk));
+      child.stderr?.on("data", (chunk: Buffer) => chunks.push(chunk));
+      child.on("close", (code) =>
+        resolve({
+          exitCode: code ?? 1,
+          output: Buffer.concat(chunks).toString(),
+        }),
+      );
       child.on("error", reject);
     });
   }, 300_000);
 
   it("finds the parse-url planted bug via instrumented fuzz run", () => {
     // The fuzz run should find at least one planted bug and exit non-zero
-    expect(exitCode).toBe(1);
+    if (result.exitCode !== 1) dumpOutput("fuzz-pipeline", result.output);
+    expect(result.exitCode).toBe(1);
 
     // A crash artifact should have been written
     const artifacts = findArtifacts(PARSE_URL_ARTIFACT_DIR);
+    if (artifacts.length < 1) dumpOutput("fuzz-pipeline", result.output);
     expect(artifacts.length).toBeGreaterThanOrEqual(1);
   });
 
   it("finds the parse-url-async planted bug via async fuzz target", () => {
     // The fuzz run should find at least one planted bug and exit non-zero
-    expect(exitCode).toBe(1);
+    if (result.exitCode !== 1) dumpOutput("fuzz-pipeline", result.output);
+    expect(result.exitCode).toBe(1);
 
     // A crash artifact should have been written
     const artifacts = findArtifacts(PARSE_URL_ASYNC_ARTIFACT_DIR);
+    if (artifacts.length < 1) dumpOutput("fuzz-pipeline", result.output);
     expect(artifacts.length).toBeGreaterThanOrEqual(1);
   });
 
   it("finds the validate-scheme planted bug via CmpLog token injection", () => {
     // The fuzz run should find at least one planted bug and exit non-zero
-    expect(exitCode).toBe(1);
+    if (result.exitCode !== 1) dumpOutput("fuzz-pipeline", result.output);
+    expect(result.exitCode).toBe(1);
 
     // A crash artifact should have been written
     const artifacts = findArtifacts(VALIDATE_SCHEME_ARTIFACT_DIR);
+    if (artifacts.length < 1) dumpOutput("fuzz-pipeline", result.output);
     expect(artifacts.length).toBeGreaterThanOrEqual(1);
   });
 });

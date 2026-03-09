@@ -6,11 +6,37 @@
  * this window pass through unconditionally.
  */
 import { createRequire } from "node:module";
+import { VulnerabilityError } from "./vulnerability-error.js";
 
 const require = createRequire(import.meta.url);
 
 /** Global flag controlling whether detector hooks are active. */
 let detectorActive = false;
+
+/**
+ * Module-level stash for VulnerabilityErrors thrown by hook check callbacks.
+ *
+ * First-write-wins: only the first VulnerabilityError per iteration is stashed.
+ * Subsequent hook fires within the same iteration see the slot is occupied and
+ * skip the write. This matches the existing first-error-wins convention.
+ */
+let stashedVulnerabilityError: VulnerabilityError | undefined;
+
+/**
+ * Drain and return the stashed VulnerabilityError, clearing the slot.
+ *
+ * Returns the stashed error, or undefined if none. The slot is always cleared
+ * after this call. DetectorManager is the only intended caller — it drains in
+ * endIteration(), beforeIteration() (defensive discard), and teardown()
+ * (defensive cleanup).
+ */
+export function drainStashedVulnerabilityError():
+  | VulnerabilityError
+  | undefined {
+  const error = stashedVulnerabilityError;
+  stashedVulnerabilityError = undefined;
+  return error;
+}
 
 export function setDetectorActive(active: boolean): void {
   detectorActive = active;
@@ -57,7 +83,15 @@ export function installHook(
 
   const wrapper = function (this: unknown, ...args: unknown[]): unknown {
     if (detectorActive) {
-      check(...args);
+      try {
+        check(...args);
+      } catch (e) {
+        if (e instanceof VulnerabilityError) {
+          // First-write-wins: only stash if slot is empty
+          stashedVulnerabilityError ??= e;
+        }
+        throw e;
+      }
     }
     return (original as (...args: unknown[]) => unknown).apply(this, args);
   };

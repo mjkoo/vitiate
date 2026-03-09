@@ -48,20 +48,33 @@ function findArtifacts(artifactDir: string): string[] {
     .map((f) => path.join(artifactDir, f));
 }
 
+interface SubprocessResult {
+  exitCode: number;
+  output: string;
+}
+
 function runVitest(
   config: string,
   env: Record<string, string>,
   timeoutMs: number,
-): Promise<number> {
-  return new Promise<number>((resolve, reject) => {
+): Promise<SubprocessResult> {
+  return new Promise<SubprocessResult>((resolve, reject) => {
+    const chunks: Buffer[] = [];
     const child = spawn("pnpm", ["exec", "vitest", "run", "--config", config], {
       cwd: EXAMPLE_DIR,
       timeout: timeoutMs,
-      stdio: ["ignore", "inherit", "inherit"],
+      stdio: ["ignore", "pipe", "pipe"],
       shell: true,
       env: { ...process.env, ...env },
     });
-    child.on("close", (code) => resolve(code ?? 1));
+    child.stdout?.on("data", (chunk: Buffer) => chunks.push(chunk));
+    child.stderr?.on("data", (chunk: Buffer) => chunks.push(chunk));
+    child.on("close", (code) =>
+      resolve({
+        exitCode: code ?? 1,
+        output: Buffer.concat(chunks).toString(),
+      }),
+    );
     child.on("error", reject);
   });
 }
@@ -73,23 +86,31 @@ afterAll(() => {
   rmSync(CORPUS_CACHE_DIR, { recursive: true, force: true });
 });
 
+/** Log subprocess output to stderr for diagnostic visibility. */
+function dumpOutput(label: string, output: string): void {
+  if (output.length > 0) {
+    process.stderr.write(`\n── ${label} subprocess output ──\n${output}\n`);
+  }
+}
+
 describe("detector pipeline: regression mode (deterministic)", () => {
-  let exitCode = 0;
+  let result: SubprocessResult;
 
   // Regression replays seeds with detector lifecycle active.
   // The seed files contain exact trigger inputs, so detectors fire
   // deterministically on every replay — no fuzzer discovery needed.
   beforeAll(async () => {
-    exitCode = await runVitest("vitest.config.ts", {}, 60_000);
+    result = await runVitest("vitest.config.ts", {}, 60_000);
   }, 60_000);
 
   it("regression replay catches detector-flagged inputs", () => {
-    expect(exitCode).toBe(1);
+    if (result.exitCode !== 1) dumpOutput("regression", result.output);
+    expect(result.exitCode).toBe(1);
   });
 });
 
 describe("detector pipeline: fuzz mode", () => {
-  let exitCode = 0;
+  let result: SubprocessResult;
 
   // The initial seed evaluation phase replays seeds verbatim, so the first
   // seed that triggers a detector produces a crash on the first iteration.
@@ -100,7 +121,7 @@ describe("detector pipeline: fuzz mode", () => {
       rmSync(artifact, { force: true });
     }
 
-    exitCode = await runVitest(
+    result = await runVitest(
       "vitest.fuzz-pipeline.config.ts",
       { VITIATE_FUZZ: "1" },
       60_000,
@@ -108,10 +129,13 @@ describe("detector pipeline: fuzz mode", () => {
   }, 60_000);
 
   it("exits non-zero when crashes are found", () => {
-    expect(exitCode).toBe(1);
+    if (result.exitCode !== 1) dumpOutput("fuzz", result.output);
+    expect(result.exitCode).toBe(1);
   });
 
   it("produces a crash artifact", () => {
+    if (findArtifacts(ARTIFACT_DIR).length !== 1)
+      dumpOutput("fuzz", result.output);
     const artifacts = findArtifacts(ARTIFACT_DIR);
     expect(artifacts.length).toBe(1);
   });

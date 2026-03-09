@@ -368,12 +368,28 @@ describe("fuzz loop", () => {
 
   it("minimizes crash artifact to smaller than the original mutated input", async () => {
     await setupFuzzingMode();
+    const covMap = globalThis.__vitiate_cov as Buffer;
 
     // Target crashes on any input containing the byte sequence [0xDE, 0xAD].
     // The fuzzer will find this with a larger input; minimization should
     // shrink it to exactly 2 bytes.
+    //
+    // Coverage guidance: each byte value lights a distinct edge so the fuzzer
+    // explores byte diversity. CmpLog tracing on a 2-byte window steers the
+    // I2S mutator toward the exact target sequence.
     const target = (data: Buffer): void => {
       simulateCoverage(data);
+      if (data.length > 0) {
+        covMap[data[0]!] = 1;
+      }
+      if (data.length >= 2) {
+        globalThis.__vitiate_trace_cmp(
+          data.subarray(0, 2).toString(),
+          "\xDE\xAD",
+          0,
+          "===",
+        );
+      }
       for (let i = 0; i < data.length - 1; i++) {
         if (data[i] === 0xde && data[i + 1] === 0xad) {
           throw new Error("found DEAD pattern");

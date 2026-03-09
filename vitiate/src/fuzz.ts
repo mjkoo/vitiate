@@ -341,7 +341,7 @@ function registerFuzzTest(
           targetCompletedOk = false;
         }
         const detectorError = detectorManager?.endIteration(targetCompletedOk);
-        const failure = targetError ?? detectorError;
+        const failure = detectorError ?? targetError;
         if (failure !== undefined) {
           const err =
             failure instanceof Error ? failure : new Error(String(failure));

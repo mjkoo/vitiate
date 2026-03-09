@@ -18,7 +18,7 @@ import { option, argument } from "@optique/core/primitives";
 import { integer, string } from "@optique/core/valueparser";
 import { optional, multiple, withDefault } from "@optique/core/modifiers";
 import { type InferValue, parseSync } from "@optique/core/parser";
-import { formatMessage, text } from "@optique/core/message";
+import { formatMessage, lineBreak, text } from "@optique/core/message";
 import { runSync, type RunOptions } from "@optique/run";
 import escapeStringRegexp from "escape-string-regexp";
 import { ShmemHandle } from "vitiate-napi";
@@ -50,28 +50,101 @@ export const cliParser = object({
     multiple(argument(string({ metavar: "CORPUS_DIR", pattern: /^[^-]/ }))),
     [],
   ),
-  maxLen: optional(option("-max_len", integer({ min: 1 }))),
-  timeout: optional(option("-timeout", integer({ min: 0 }))),
-  runs: optional(option("-runs", integer({ min: 0 }))),
-  seed: optional(option("-seed", integer())),
-  maxTotalTime: optional(option("-max_total_time", integer({ min: 0 }))),
-  // Test targeting
-  testName: optional(option("-test", string())),
-  // Minimization config
-  minimizeBudget: optional(option("-minimize_budget", integer({ min: 0 }))),
-  minimizeTimeLimit: optional(
-    option("-minimize_time_limit", integer({ min: 0 })),
+  maxLen: optional(
+    option("-max_len", integer({ min: 1 }), {
+      description: [text("Maximum input length in bytes")],
+    }),
   ),
-  // Artifact prefix
-  artifactPrefix: optional(option("-artifact_prefix", string())),
-  // Dictionary file
-  dict: optional(option("-dict", string())),
-  // Detector configuration
-  detectors: optional(option("-detectors", string())),
+  timeout: optional(
+    option("-timeout", integer({ min: 0 }), {
+      description: [text("Per-execution timeout in seconds (0 = disabled)")],
+    }),
+  ),
+  runs: optional(
+    option("-runs", integer({ min: 0 }), {
+      description: [text("Total number of fuzzing iterations (0 = unlimited)")],
+    }),
+  ),
+  seed: optional(
+    option("-seed", integer(), {
+      description: [text("Random seed for reproducibility")],
+    }),
+  ),
+  maxTotalTime: optional(
+    option("-max_total_time", integer({ min: 0 }), {
+      description: [text("Total fuzzing time limit in seconds")],
+    }),
+  ),
+  testName: optional(
+    option("-test", string(), {
+      description: [text("Run only the named fuzz test")],
+    }),
+  ),
+  minimizeBudget: optional(
+    option("-minimize_budget", integer({ min: 0 }), {
+      description: [text("Max iterations for input minimization")],
+    }),
+  ),
+  minimizeTimeLimit: optional(
+    option("-minimize_time_limit", integer({ min: 0 }), {
+      description: [text("Time limit for input minimization in seconds")],
+    }),
+  ),
+  artifactPrefix: optional(
+    option("-artifact_prefix", string(), {
+      description: [text("Path prefix for crash artifacts")],
+    }),
+  ),
+  dict: optional(
+    option("-dict", string(), {
+      description: [text("Path to a fuzzing dictionary file")],
+    }),
+  ),
+  detectors: optional(
+    option("-detectors", string(), {
+      description: [
+        text(
+          "Comma-separated list of bug detectors to enable. " +
+            "When specified, all defaults are disabled and only listed " +
+            "detectors are enabled. Pass an empty string to disable all.",
+        ),
+        lineBreak(),
+        text("Detectors: prototypePollution, commandInjection, pathTraversal"),
+        lineBreak(),
+        text("Syntax: name to enable, name.key=value to set options."),
+        lineBreak(),
+        text(
+          "pathTraversal accepts allowedPaths and deniedPaths options. " +
+            "Use the platform path separator (: on POSIX, ; on Windows) " +
+            "to specify multiple paths in a single value.",
+        ),
+        lineBreak(),
+        text("Examples: -detectors prototypePollution,pathTraversal"),
+        lineBreak(),
+        text(
+          "          -detectors pathTraversal.deniedPaths=/etc/passwd:/etc/shadow",
+        ),
+      ],
+    }),
+  ),
   // libFuzzer-compatible flags: accepted for OSS-Fuzz compatibility
-  fork: optional(option("-fork", integer({ min: 0 }))),
-  jobs: optional(option("-jobs", integer({ min: 0 }))),
-  merge: optional(option("-merge", integer({ min: 0 }))),
+  fork: optional(
+    option("-fork", integer({ min: 0 }), {
+      description: [text("Accepted for libFuzzer compatibility (always 1)")],
+    }),
+  ),
+  jobs: optional(
+    option("-jobs", integer({ min: 0 }), {
+      description: [text("Accepted for libFuzzer compatibility (always 1)")],
+    }),
+  ),
+  merge: optional(
+    option("-merge", integer({ min: 0 }), {
+      description: [
+        text("Corpus minimization via set cover (1 = enabled, 0 = disabled)"),
+      ],
+    }),
+  ),
 });
 
 function warnUnsupportedFlags(parsed: InferValue<typeof cliParser>): void {

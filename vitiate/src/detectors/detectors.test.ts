@@ -5,6 +5,7 @@ import {
   installHook,
   setDetectorActive,
   isDetectorActive,
+  drainStashedVulnerabilityError,
 } from "./module-hook.js";
 import {
   installDetectorModuleHooks,
@@ -1010,5 +1011,355 @@ describe("installDetectorModuleHooks", () => {
       }
     };
     expect(fn).not.toThrow();
+  });
+});
+
+// ── module-hook stash tests ─────────────────────────────────────────────
+
+describe("module-hook stash", () => {
+  afterEach(() => {
+    drainStashedVulnerabilityError();
+    setDetectorActive(false);
+  });
+
+  it("stashes VulnerabilityError on throw and re-throws it", () => {
+    const vuln = new VulnerabilityError("test", "Test", {});
+    const hook = installHook("path", "join", () => {
+      throw vuln;
+    });
+    setDetectorActive(true);
+
+    let thrown: unknown;
+    try {
+      path.join("a", "b");
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBe(vuln);
+    expect(drainStashedVulnerabilityError()).toBe(vuln);
+
+    hook.restore();
+  });
+
+  it("first-write-wins: second VulnerabilityError does not overwrite stash", () => {
+    const first = new VulnerabilityError("test", "First", {});
+    const second = new VulnerabilityError("test", "Second", {});
+
+    let callCount = 0;
+    const hook = installHook("path", "join", () => {
+      callCount++;
+      throw callCount === 1 ? first : second;
+    });
+    setDetectorActive(true);
+
+    // First call stashes `first`
+    expect(() => path.join("a", "b")).toThrow(VulnerabilityError);
+    // Second call throws `second` but stash retains `first`
+    expect(() => path.join("c", "d")).toThrow(VulnerabilityError);
+
+    expect(drainStashedVulnerabilityError()).toBe(first);
+
+    hook.restore();
+  });
+
+  it("non-VulnerabilityError is not stashed", () => {
+    const hook = installHook("path", "join", () => {
+      throw new TypeError("detector bug");
+    });
+    setDetectorActive(true);
+
+    expect(() => path.join("a", "b")).toThrow(TypeError);
+    expect(drainStashedVulnerabilityError()).toBeUndefined();
+
+    hook.restore();
+  });
+
+  it("drain returns and clears the stashed error", () => {
+    const vuln = new VulnerabilityError("test", "Test", {});
+    const hook = installHook("path", "join", () => {
+      throw vuln;
+    });
+    setDetectorActive(true);
+
+    expect(() => path.join("a", "b")).toThrow(VulnerabilityError);
+
+    // First drain returns the error
+    expect(drainStashedVulnerabilityError()).toBe(vuln);
+    // Second drain returns undefined (slot cleared)
+    expect(drainStashedVulnerabilityError()).toBeUndefined();
+
+    hook.restore();
+  });
+
+  it("drain returns undefined when empty", () => {
+    expect(drainStashedVulnerabilityError()).toBeUndefined();
+  });
+});
+
+// ── endIteration stash integration tests ────────────────────────────────
+
+describe("DetectorManager.endIteration stash integration", () => {
+  function createManagerWithDetector(detector: Detector): DetectorManager {
+    const manager = new DetectorManager({
+      prototypePollution: false,
+      commandInjection: false,
+      pathTraversal: false,
+    });
+    // Guard: fail explicitly if the private field is renamed
+    expect(manager).toHaveProperty("detectors");
+    Object.defineProperty(manager, "detectors", { value: [detector] });
+    return manager;
+  }
+
+  function noopDetector(overrides?: Partial<Detector>): Detector {
+    return {
+      name: "noop",
+      tier: 1,
+      getTokens: () => [],
+      setup: () => {},
+      beforeIteration: () => {},
+      afterIteration: () => {},
+      resetIteration: () => {},
+      teardown: () => {},
+      ...overrides,
+    };
+  }
+
+  afterEach(() => {
+    drainStashedVulnerabilityError();
+    setDetectorActive(false);
+  });
+
+  it("Ok path with swallowed hook error surfaces stashed finding", () => {
+    const stashed = new VulnerabilityError("hook", "Stashed", {});
+    const hook = installHook("path", "join", () => {
+      throw stashed;
+    });
+    setDetectorActive(true);
+
+    // Simulate target catching the error (swallowing it)
+    try {
+      path.join("a", "b");
+    } catch {
+      // Target swallows the error
+    }
+
+    const manager = createManagerWithDetector(noopDetector());
+    const result = manager.endIteration(true);
+
+    expect(result).toBe(stashed);
+    expect(isDetectorActive()).toBe(false);
+
+    hook.restore();
+  });
+
+  it("Ok path with afterIteration finding takes priority over stash", () => {
+    const stashed = new VulnerabilityError("hook", "Stashed", {});
+    const afterIterationError = new VulnerabilityError(
+      "detector",
+      "AfterIteration",
+      {},
+    );
+
+    const hook = installHook("path", "join", () => {
+      throw stashed;
+    });
+    setDetectorActive(true);
+
+    try {
+      path.join("a", "b");
+    } catch {
+      // Target swallows
+    }
+
+    const manager = createManagerWithDetector(
+      noopDetector({
+        afterIteration: () => {
+          throw afterIterationError;
+        },
+      }),
+    );
+    const result = manager.endIteration(true);
+
+    expect(result).toBe(afterIterationError);
+    expect(isDetectorActive()).toBe(false);
+
+    hook.restore();
+  });
+
+  it("non-Ok path surfaces stashed finding", () => {
+    const stashed = new VulnerabilityError("hook", "Stashed", {});
+    const hook = installHook("path", "join", () => {
+      throw stashed;
+    });
+    setDetectorActive(true);
+
+    try {
+      path.join("a", "b");
+    } catch {
+      // Target swallows
+    }
+
+    const manager = createManagerWithDetector(noopDetector());
+    const result = manager.endIteration(false);
+
+    expect(result).toBe(stashed);
+    expect(isDetectorActive()).toBe(false);
+
+    hook.restore();
+  });
+
+  it("non-Ok path without stash returns undefined", () => {
+    const manager = createManagerWithDetector(noopDetector());
+    manager.beforeIteration();
+    const result = manager.endIteration(false);
+
+    expect(result).toBeUndefined();
+    expect(isDetectorActive()).toBe(false);
+  });
+
+  it("afterIteration throws non-VulnerabilityError with stash returns stashed finding", () => {
+    const stashed = new VulnerabilityError("hook", "Stashed", {});
+    const hook = installHook("path", "join", () => {
+      throw stashed;
+    });
+    setDetectorActive(true);
+
+    try {
+      path.join("a", "b");
+    } catch {
+      // Target swallows
+    }
+
+    const resetCalled: boolean[] = [];
+    const manager = createManagerWithDetector(
+      noopDetector({
+        afterIteration: () => {
+          throw new TypeError("detector bug");
+        },
+        resetIteration: () => {
+          resetCalled.push(true);
+        },
+      }),
+    );
+    const result = manager.endIteration(true);
+
+    expect(result).toBe(stashed);
+    expect(resetCalled).toHaveLength(1);
+    expect(isDetectorActive()).toBe(false);
+
+    hook.restore();
+  });
+
+  it("afterIteration throws non-VulnerabilityError without stash re-throws", () => {
+    const resetCalled: boolean[] = [];
+    const manager = createManagerWithDetector(
+      noopDetector({
+        afterIteration: () => {
+          throw new TypeError("detector bug");
+        },
+        resetIteration: () => {
+          resetCalled.push(true);
+        },
+      }),
+    );
+    manager.beforeIteration();
+
+    expect(() => manager.endIteration(true)).toThrow(TypeError);
+    expect(resetCalled).toHaveLength(1);
+    expect(isDetectorActive()).toBe(false);
+  });
+});
+
+// ── beforeIteration stash drain tests ───────────────────────────────────
+
+describe("DetectorManager.beforeIteration stash drain", () => {
+  afterEach(() => {
+    drainStashedVulnerabilityError();
+    setDetectorActive(false);
+  });
+
+  it("drains stale stash before activating detectors", () => {
+    const stale = new VulnerabilityError("hook", "Stale", {});
+    const hook = installHook("path", "join", () => {
+      throw stale;
+    });
+    setDetectorActive(true);
+
+    try {
+      path.join("a", "b");
+    } catch {
+      // Simulate stale stash from prior iteration
+    }
+
+    hook.restore();
+
+    // beforeIteration should drain the stale stash
+    const manager = new DetectorManager({
+      prototypePollution: false,
+      commandInjection: false,
+      pathTraversal: false,
+    });
+    manager.beforeIteration();
+
+    // Stash should be empty now
+    expect(drainStashedVulnerabilityError()).toBeUndefined();
+    // Detectors should be active
+    expect(isDetectorActive()).toBe(true);
+
+    setDetectorActive(false);
+  });
+});
+
+// ── teardown stash drain tests ──────────────────────────────────────────
+
+describe("DetectorManager.teardown stash drain", () => {
+  afterEach(() => {
+    drainStashedVulnerabilityError();
+    setDetectorActive(false);
+  });
+
+  it("drains stash before detector teardown (mid-iteration shutdown)", () => {
+    const stashed = new VulnerabilityError("hook", "MidIteration", {});
+    const hook = installHook("path", "join", () => {
+      throw stashed;
+    });
+    setDetectorActive(true);
+
+    try {
+      path.join("a", "b");
+    } catch {
+      // Target swallows
+    }
+
+    hook.restore();
+
+    const teardownCalled: boolean[] = [];
+    const manager = new DetectorManager({
+      prototypePollution: false,
+      commandInjection: false,
+      pathTraversal: false,
+    });
+    const detector: Detector = {
+      name: "test",
+      tier: 1,
+      getTokens: () => [],
+      setup: () => {},
+      beforeIteration: () => {},
+      afterIteration: () => {},
+      resetIteration: () => {},
+      teardown: () => {
+        teardownCalled.push(true);
+      },
+    };
+    Object.defineProperty(manager, "detectors", { value: [detector] });
+
+    manager.teardown();
+
+    // Stash should have been drained by teardown
+    expect(drainStashedVulnerabilityError()).toBeUndefined();
+    // Detector teardown should have been called
+    expect(teardownCalled).toHaveLength(1);
+    expect(isDetectorActive()).toBe(false);
   });
 });
