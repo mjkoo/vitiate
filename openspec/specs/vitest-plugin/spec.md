@@ -2,7 +2,10 @@
 
 ### Requirement: Plugin factory function
 
-The system SHALL export a `vitiatePlugin(options?)` function that returns a Vite plugin object. The plugin SHALL have the name `"vitiate"` and set `enforce: "post"` so its transform hook runs after all other transforms (TypeScript, JSX, etc. are already compiled to JavaScript).
+The system SHALL export a `vitiatePlugin(options?)` function that returns an array of two Vite plugins (`Plugin[]`):
+
+- **`vitiate:hooks`** (`enforce: "pre"`): Rewrites ESM named imports of hooked built-in modules (`child_process`, `fs`) into default import + destructuring. This ensures imported values are read from the live module object at call time rather than from the frozen ESM namespace that Vitest externalizes at startup, enabling detector module hooks to intercept calls.
+- **`vitiate:instrument`** (`enforce: "post"`): Runs SWC instrumentation (edge coverage counters, comparison tracing) after all other transforms (TypeScript, JSX, etc. are already compiled to JavaScript).
 
 The `options` parameter SHALL accept:
 
@@ -24,8 +27,8 @@ The `options` parameter SHALL accept:
 #### Scenario: Default plugin creation
 
 - **WHEN** `vitiatePlugin()` is called with no arguments
-- **THEN** a Vite plugin is returned with `name: "vitiate"` and `enforce: "post"`
-- **AND** the plugin instruments all JS/TS files except those in `node_modules`
+- **THEN** an array of two Vite plugins is returned: `vitiate:hooks` (`enforce: "pre"`) and `vitiate:instrument` (`enforce: "post"`)
+- **AND** the instrument plugin instruments all JS/TS files except those in `node_modules`
 - **AND** no fuzz defaults are injected into the environment
 
 #### Scenario: Plugin with fuzz defaults

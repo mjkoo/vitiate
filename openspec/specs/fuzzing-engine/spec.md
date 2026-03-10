@@ -10,10 +10,13 @@ buffer for zero-copy access on each iteration.
 The config SHALL support the following fields, all optional with defaults:
 
 - `maxInputLen` (number, default 4096): Maximum byte length of generated inputs.
-- `seed` (bigint, optional): RNG seed for reproducible mutation sequences. If omitted,
-  a random seed is used.
+- `seed` (number, optional): RNG seed for reproducible mutation sequences. If omitted,
+  a random seed is used. Negative values are reinterpreted as unsigned 64-bit integers.
 - `dictionaryPath` (string, optional): Absolute path to an AFL/libfuzzer-format dictionary file. If provided, the file SHALL be parsed via `Tokens::from_file()` during construction and the resulting tokens SHALL be added as `Tokens` state metadata before any fuzz iterations execute. If the file does not exist or contains malformed content, construction SHALL fail with an error indicating the file path and nature of the failure.
 - `detectorTokens` (array of `Buffer`, optional): Pre-seeded dictionary tokens from active bug detectors. If provided, each buffer SHALL be inserted into the `Tokens` state metadata during construction, after any user-provided dictionary tokens. Detector tokens SHALL be exempt from the `MAX_DICTIONARY_SIZE` cap (treated identically to user-provided dictionary tokens). If CmpLog subsequently observes a comparison operand matching a pre-seeded detector token, the token SHALL NOT be promoted a second time into the dictionary.
+- `grimoire` (boolean, optional): Grimoire structure-aware fuzzing control. `true` = force enable, `false` = force disable, absent = auto-detect from corpus UTF-8 content.
+- `unicode` (boolean, optional): Unicode-aware mutation control. `true` = force enable, `false` = force disable, absent = auto-detect from corpus UTF-8 content.
+- `redqueen` (boolean, optional): REDQUEEN transform-aware mutation control. `true` = force enable, `false` = force disable, absent = auto-detect (inverted: enabled for binary corpus).
 
 On construction, the Fuzzer SHALL enable the CmpLog accumulator so that `traceCmp` calls
 record comparison operands. The Fuzzer SHALL also initialize `CmpValuesMetadata` on the
@@ -44,7 +47,7 @@ On construction, the Fuzzer SHALL additionally initialize:
 
 #### Scenario: Create with custom config
 
-- **WHEN** `new Fuzzer(createCoverageMap(32768), { maxInputLen: 1024, seed: 42n })` is called
+- **WHEN** `new Fuzzer(createCoverageMap(32768), { maxInputLen: 1024, seed: 42 })` is called
 - **THEN** a Fuzzer instance is created with the specified configuration
 - **AND** the CmpLog accumulator is enabled
 
@@ -151,7 +154,7 @@ The system SHALL provide `fuzzer.getNextInput()` which returns a `Buffer` contai
 mutated input derived from the corpus. The system uses LibAFL's havoc mutations (bit
 flips, byte flips, arithmetic, block insert/delete/copy, splicing) combined with token mutations (`TokenInsert`, `TokenReplace`) applied to a corpus
 entry selected by the scheduler, followed by `I2SSpliceReplace` which may replace byte
-patterns matching recorded comparison operands. For `CmpValues::Bytes` matches, `I2SSpliceReplace` randomly chooses between same-length overwrite and length-changing splice, enabling the fuzzer to construct operand substitutions where the replacement differs in length from the matched region.
+patterns matching recorded comparison operands. For `CmpValues::Bytes` matches, `I2SSpliceReplace` deterministically selects overwrite for equal-length operands or splice for different-length operands, enabling the fuzzer to construct operand substitutions where the replacement differs in length from the matched region.
 
 The token mutations operate on the `Tokens` metadata in the fuzzer state. `TokenInsert` selects a random token and inserts it at a random position in the input, growing the input buffer. `TokenReplace` selects a random token and overwrites bytes at a random position. If no `Tokens` metadata exists or the token list is empty, token mutations are skipped.
 
@@ -217,10 +220,13 @@ The `execTimeNs` parameter SHALL be the execution time of the target in nanoseco
 
 The `ExitKind` enum SHALL have values: `Ok` (0), `Crash` (1), `Timeout` (2).
 
-The `IterationResult` object SHALL contain:
+The `IterationResult` SHALL be a `const enum` with mutually exclusive values:
 
-- `interesting` (boolean): Whether the input was added to the corpus.
-- `solution` (boolean): Whether the input was a crash/timeout (added to solutions).
+- `None` (0): Input did not trigger new coverage or a crash/timeout.
+- `Interesting` (1): Input discovered new coverage; added to the corpus.
+- `Solution` (2): Input triggered a crash or timeout; added to the solutions corpus.
+
+These outcomes are mutually exclusive: LibAFL evaluates the objective (crash/timeout) first, and only evaluates coverage feedback if the objective did not fire.
 
 When `reportResult()` returns `Interesting`, the most recently added corpus ID SHALL be stored in `last_interesting_corpus_id` for use by `beginStage()`. This corpus ID identifies the entry that the I2S stage will mutate.
 
@@ -228,7 +234,7 @@ When `reportResult()` returns `Interesting`, the most recently added corpus ID S
 
 - **WHEN** the coverage map contains a byte pattern not seen in any previous iteration
   and `reportResult(ExitKind.Ok, execTimeNs)` is called
-- **THEN** the result has `interesting: true` and the corpus size increases by one
+- **THEN** the result is `IterationResult.Interesting` and the corpus size increases by one
 - **AND** the new entry has `SchedulerTestcaseMetadata` populated
 - **AND** calibration state is prepared for subsequent `calibrateRun()` calls
 - **AND** the corpus ID is stored in `last_interesting_corpus_id` for `beginStage()`
@@ -237,12 +243,12 @@ When `reportResult()` returns `Interesting`, the most recently added corpus ID S
 
 - **WHEN** the coverage map contains the same byte pattern as a previous iteration and
   `reportResult(ExitKind.Ok, execTimeNs)` is called
-- **THEN** the result has `interesting: false` and the corpus size does not change
+- **THEN** the result is `IterationResult.None` and the corpus size does not change
 
 #### Scenario: Crash detected
 
 - **WHEN** `reportResult(ExitKind.Crash, execTimeNs)` is called
-- **THEN** the result has `solution: true` and the solution count increases by one
+- **THEN** the result is `IterationResult.Solution` and the solution count increases by one
 
 #### Scenario: CmpLog metadata updated on reportResult
 
@@ -257,7 +263,7 @@ When `reportResult()` returns `Interesting`, the most recently added corpus ID S
 - **AND** the coverage map has a nonzero value only at index 42
 - **AND** `reportResult(ExitKind.Ok, execTimeNs)` is called
 - **THEN** index 42 SHALL be zeroed before the observer reads the map
-- **AND** the result SHALL have `interesting: false`
+- **AND** the result SHALL be `IterationResult.None`
 
 #### Scenario: No masking without unstable entries
 
@@ -342,11 +348,11 @@ It SHALL be an error to call `calibrateFinish()` without a pending calibration (
 
 ### Requirement: Begin stage NAPI method
 
-The `Fuzzer` class SHALL expose a `beginStage()` method via NAPI that returns `Buffer | null`. This method initiates an I2S mutational stage for the most recently calibrated corpus entry.
+The `Fuzzer` class SHALL expose a `beginStage()` method via NAPI that returns `Buffer | null`. This method initiates a mutational stage for the most recently calibrated corpus entry. The stage type is determined by dispatch logic: Colorization (when enabled), then REDQUEEN (when enabled), then I2S (when CmpLog data is available), then Generalization, then Grimoire (when enabled), then Unicode (when enabled).
 
 The full behavioral specification is defined in the stage-execution capability spec (see Requirement: Begin stage after calibration). The NAPI method SHALL:
 1. Accept no parameters.
-2. Return `Buffer` containing the first I2S-mutated input if preconditions are met (`StageState::None`, pending `last_interesting_corpus_id`, non-empty `CmpValuesMetadata`).
+2. Return `Buffer` containing the first stage-mutated input if preconditions are met (`StageState::None`, pending `last_interesting_corpus_id`, applicable stage exists).
 3. Return `null` if any precondition is not met.
 
 #### Scenario: beginStage returns first I2S candidate
@@ -390,13 +396,16 @@ The full behavioral specification is defined in the stage-execution capability s
 1. Accept `exitKind` (`ExitKind`).
 2. If no active stage, be a no-op (no error, no counter increments).
 3. Drain and discard CmpLog, zero coverage map, increment `total_execs` and `state.executions`, reset `StageState` to `None`.
+4. If `exitKind` is `Crash` or `Timeout`: record the current stage input as a solution (add to solutions corpus, increment `solution_count`). This ensures `FuzzerStats.solutionCount` reflects stage-found crashes.
 
-#### Scenario: abortStage cleans up stage state
+#### Scenario: abortStage cleans up stage state and records crash
 
 - **WHEN** `abortStage(ExitKind.Crash)` is called during an active I2S stage
 - **THEN** the CmpLog accumulator SHALL be drained
 - **AND** the coverage map SHALL be zeroed
 - **AND** `total_execs` and `state.executions` SHALL each increment by 1
+- **AND** the current stage input SHALL be added to the solutions corpus
+- **AND** `solution_count` SHALL increment by 1
 - **AND** `StageState` SHALL be `None`
 
 #### Scenario: abortStage is no-op without active stage
@@ -430,7 +439,7 @@ The helper SHALL:
 6. Zero the coverage map.
 7. Return a result indicating: whether the input was interesting (new coverage), whether it was a solution (crash/timeout objective triggered), and the `CorpusId` if a corpus entry was added.
 
-`report_result()` SHALL call this helper (passing the current input, `exec_time_ns`, `exit_kind`, and the scheduled corpus entry as parent) and additionally: check the helper's `is_solution` flag to populate the `IterationResult.solution` field, drain CmpLog, store `CmpValuesMetadata`, promote tokens, prepare calibration state if interesting, store corpus ID in `last_interesting_corpus_id` if interesting, increment `total_execs` and `state.executions`.
+`report_result()` SHALL call this helper (passing the current input, `exec_time_ns`, `exit_kind`, and the scheduled corpus entry as parent) and additionally: use the helper's `is_solution` and `is_interesting` flags to determine the `IterationResult` variant (`Solution` if is_solution, `Interesting` if is_interesting, `None` otherwise), drain CmpLog, store `CmpValuesMetadata`, promote tokens, prepare calibration state if interesting, store corpus ID in `last_interesting_corpus_id` if interesting, increment `total_execs` and `state.executions`.
 
 `advance_stage()` SHALL call this helper (passing the internally-stashed stage input, `exec_time_ns`, `exit_kind`, and `StageState::I2S.corpus_id` as parent) and additionally: drain and discard CmpLog, increment `total_execs` and `state.executions`, generate the next stage candidate. The `is_solution` flag from the helper is ignored during stage execution (since `exit_kind` is always `Ok`, it will always be `false`).
 
@@ -459,9 +468,12 @@ The helper SHALL:
 The `Fuzzer` struct SHALL include a `stage_state` field of type `StageState`. The enum SHALL have:
 
 - `None`: No stage active (initial and terminal state).
-- `I2S { corpus_id: CorpusId, iteration: usize, max_iterations: usize }`: I2S mutational stage in progress.
-
-The enum SHALL be non-exhaustive or designed to accommodate future variants (Generalization, Grimoire) without breaking changes.
+- `Colorization { corpus_id, original_hash, original_input, changed_input, pending_ranges, taint_ranges, executions, max_executions, awaiting_dual_trace, testing_range }`: Colorization stage identifying free byte ranges via binary search.
+- `Redqueen { corpus_id, candidates, index }`: REDQUEEN transform-aware targeted replacement stage.
+- `I2S { corpus_id, iteration, max_iterations }`: I2S mutational stage in progress.
+- `Generalization { corpus_id, novelties, payload, phase, candidate_range }`: Generalization stage identifying structural vs gap bytes.
+- `Grimoire { corpus_id, iteration, max_iterations }`: Grimoire structure-aware mutation stage.
+- `Unicode { corpus_id, iteration, max_iterations, metadata }`: Unicode category-aware character replacement stage.
 
 #### Scenario: StageState initialized to None
 
@@ -472,9 +484,9 @@ The enum SHALL be non-exhaustive or designed to accommodate future variants (Gen
 
 The system SHALL provide `fuzzer.stats` (getter) returning a `FuzzerStats` object with:
 
-- `totalExecs` (bigint): Total number of target invocations, including main-loop executions (via `reportResult()`), stage executions (via `advanceStage()`), and aborted stage executions (via `abortStage()`).
+- `totalExecs` (number): Total number of target invocations, including main-loop executions (via `reportResult()`), stage executions (via `advanceStage()`), and aborted stage executions (via `abortStage()`).
 - `corpusSize` (number): Number of entries in the working corpus.
-- `solutionCount` (number): Number of crash/timeout inputs found via `reportResult()`. Stage-discovered crashes (handled by `abortStage()`) are NOT included in `solutionCount` — they are written as artifacts by the JS fuzz loop but not tracked in the Rust solutions corpus.
+- `solutionCount` (number): Number of crash/timeout inputs found. Includes both main-loop crashes (via `reportResult()`) and stage-discovered crashes (via `abortStage()` with `ExitKind.Crash` or `ExitKind.Timeout`).
 - `coverageEdges` (number): Number of distinct coverage map positions that have been
   observed nonzero across all iterations.
 - `execsPerSec` (number): Executions per second since Fuzzer creation.
@@ -482,13 +494,13 @@ The system SHALL provide `fuzzer.stats` (getter) returning a `FuzzerStats` objec
 #### Scenario: Stats at creation
 
 - **WHEN** `stats` is read immediately after Fuzzer creation
-- **THEN** `totalExecs` is 0n, `corpusSize` is 0, `solutionCount` is 0,
+- **THEN** `totalExecs` is 0, `corpusSize` is 0, `solutionCount` is 0,
   `coverageEdges` is 0, and `execsPerSec` is 0
 
 #### Scenario: Stats after fuzzing with stages
 
 - **WHEN** 1000 main-loop iterations and 200 stage executions have been performed
-- **THEN** `stats.totalExecs` equals 1200n
+- **THEN** `stats.totalExecs` equals 1200
 - **AND** `stats.execsPerSec` reflects the combined throughput
 
 ### Requirement: End-to-end fuzzing loop

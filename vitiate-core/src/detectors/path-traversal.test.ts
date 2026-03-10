@@ -1,3 +1,4 @@
+import nodePath from "node:path";
 import { describe, it, expect, afterEach } from "vitest";
 import { VulnerabilityError } from "./types.js";
 import { installHook, setDetectorActive } from "./module-hook.js";
@@ -313,7 +314,14 @@ describe("PathTraversalDetector", () => {
     expect(tokenStrings).toContain("..\\");
     expect(tokenStrings).toContain("\x00");
     expect(tokenStrings).toContain("%2e%2e%2f");
-    expect(tokenStrings).toContain("/etc/passwd");
+    // Default deniedPaths is platform-dependent
+    if (process.platform === "win32") {
+      expect(tokenStrings).toContain(
+        nodePath.resolve("C:\\Windows\\System32\\drivers\\etc\\hosts"),
+      );
+    } else {
+      expect(tokenStrings).toContain("/etc/passwd");
+    }
   });
 
   it("does not include sandbox-path-derived tokens", () => {
@@ -332,8 +340,9 @@ describe("PathTraversalDetector", () => {
     ]);
     const tokens = detector.getTokens();
     const tokenStrings = tokens.map((t) => new TextDecoder().decode(t));
-    expect(tokenStrings).toContain("/etc/passwd");
-    expect(tokenStrings).toContain("/proc/self/environ");
+    // Tokens contain the resolved paths (platform-dependent)
+    expect(tokenStrings).toContain(nodePath.resolve("/etc/passwd"));
+    expect(tokenStrings).toContain(nodePath.resolve("/proc/self/environ"));
   });
 
   it("resetIteration is a no-op", () => {

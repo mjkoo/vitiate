@@ -31,7 +31,7 @@ const StringOrStringArray = v.pipe(
 const PathTraversalOptionsSchema = v.object({
   /** Paths (and subtrees) that are permitted. Defaults to ["/"]. */
   allowedPaths: v.optional(StringOrStringArray),
-  /** Paths (and subtrees) that are denied. Denied takes priority over allowed. Defaults to ["/etc/passwd"]. */
+  /** Paths (and subtrees) that are denied. Denied takes priority over allowed. Defaults to ["/etc/passwd"] on POSIX, ["C:\\Windows\\System32\\drivers\\etc\\hosts"] on Windows. */
   deniedPaths: v.optional(StringOrStringArray),
 });
 

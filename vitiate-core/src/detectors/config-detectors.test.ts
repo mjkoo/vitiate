@@ -1,3 +1,4 @@
+import path from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { getCliOptions } from "../config.js";
 import { parseDetectorsFlag } from "../cli.js";
@@ -90,8 +91,13 @@ describe("Config schema: Tier 2 detectors", () => {
   });
 
   it("accepts path-delimited blockedHosts string", () => {
+    const delimiter = path.delimiter; // ":" on POSIX, ";" on Windows
     process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
-      detectors: { ssrf: { blockedHosts: "meta.internal:10.200.0.0/24" } },
+      detectors: {
+        ssrf: {
+          blockedHosts: `meta.internal${delimiter}10.200.0.0/24`,
+        },
+      },
     });
     const opts = getCliOptions();
     const ssrf = opts.detectors?.ssrf;

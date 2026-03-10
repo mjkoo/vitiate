@@ -83,10 +83,14 @@ export class PathTraversalDetector implements Detector {
       typeof allowedPaths === "string"
         ? [allowedPaths]
         : (allowedPaths ?? ["/"]);
+    const defaultDenied =
+      process.platform === "win32"
+        ? ["C:\\Windows\\System32\\drivers\\etc\\hosts"]
+        : ["/etc/passwd"];
     const normalizedDenied =
       typeof deniedPaths === "string"
         ? [deniedPaths]
-        : (deniedPaths ?? ["/etc/passwd"]);
+        : (deniedPaths ?? defaultDenied);
     this.resolvedAllowedPaths = normalizedAllowed.map((p) =>
       nodePath.resolve(p),
     );

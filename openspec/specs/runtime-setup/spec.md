@@ -4,20 +4,20 @@
 
 The runtime setup module SHALL initialize `globalThis.__vitiate_cov` before any test code executes. The buffer identity SHALL remain stable for the entire process lifetime - instrumented modules cache a module-level reference and the identity MUST NOT change.
 
-In regression mode (default): `__vitiate_cov` SHALL be a plain `Uint8Array(65536)` that absorbs counter writes without any consumer reading the data.
+In regression mode (default): `__vitiate_cov` SHALL be a plain `Uint8Array` of the configured coverage map size (default 65536, configurable via `coverageMapSize` plugin option) that absorbs counter writes without any consumer reading the data.
 
-In fuzzing mode (`VITIATE_FUZZ` env var is set): `__vitiate_cov` SHALL be the `Buffer` returned from `createCoverageMap(65536)` backed by Rust memory for zero-copy feedback to the fuzzing engine.
+In fuzzing mode (`VITIATE_FUZZ` env var is set): `__vitiate_cov` SHALL be the `Buffer` returned from `createCoverageMap(getCoverageMapSize())` backed by Rust memory for zero-copy feedback to the fuzzing engine.
 
 #### Scenario: Regression mode initialization
 
 - **WHEN** Vitest starts without `VITIATE_FUZZ` set
-- **THEN** `globalThis.__vitiate_cov` is a `Uint8Array` of length 65536
+- **THEN** `globalThis.__vitiate_cov` is a `Uint8Array` of the configured coverage map size
 - **AND** instrumented code can write to it without errors
 
 #### Scenario: Fuzzing mode initialization
 
 - **WHEN** Vitest starts with `VITIATE_FUZZ=1`
-- **THEN** `globalThis.__vitiate_cov` is the `Buffer` from `createCoverageMap(65536)`
+- **THEN** `globalThis.__vitiate_cov` is the `Buffer` from `createCoverageMap(getCoverageMapSize())`
 - **AND** the buffer is backed by Rust memory for zero-copy engine access
 
 #### Scenario: Buffer identity is stable
@@ -60,7 +60,7 @@ The runtime setup SHALL detect fuzzing mode by checking for the `VITIATE_FUZZ` e
 - **WHEN** `VITIATE_FUZZ=1` is set
 - **THEN** fuzzing mode is activated
 
-#### Scenario: VITIATE_FUZZ set to a pattern
+#### Scenario: VITIATE_FUZZ set to a non-boolean truthy value
 
 - **WHEN** `VITIATE_FUZZ=parser` is set
-- **THEN** fuzzing mode is activated and the value is available as a filter pattern for fuzz target selection
+- **THEN** fuzzing mode is activated (any truthy value activates fuzzing mode; the value itself is not used as a filter)
