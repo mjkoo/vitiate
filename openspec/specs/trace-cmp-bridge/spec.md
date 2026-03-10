@@ -2,7 +2,7 @@
 
 ### Requirement: Export traceCmp napi function
 
-The `vitiate-napi` package SHALL export a `traceCmp` function callable from JavaScript with
+The `@vitiate/engine` package SHALL export a `traceCmp` function callable from JavaScript with
 the signature:
 
 ```ts
@@ -16,7 +16,7 @@ function traceCmp(
 
 #### Scenario: Function is exported and callable
 
-- **WHEN** `traceCmp` is imported from `vitiate-napi`
+- **WHEN** `traceCmp` is imported from `@vitiate/engine`
 - **THEN** it is a function that accepts four arguments and returns a boolean
 
 ### Requirement: Correct comparison evaluation for all operators

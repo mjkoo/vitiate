@@ -104,9 +104,9 @@ This value is consumed by the corpus management module to anchor the cache direc
 
 ### Requirement: Transform hook instruments code via SWC
 
-The plugin's `transform(code, id)` hook SHALL call `@swc/core.transform()` with the `vitiate-instrument` WASM plugin for every module that passes the include/exclude filter. The SWC transform SHALL insert edge coverage counters and comparison tracing calls into the JavaScript AST.
+The plugin's `transform(code, id)` hook SHALL call `@swc/core.transform()` with the `@vitiate/swc-plugin` WASM plugin for every module that passes the include/exclude filter. The SWC transform SHALL insert edge coverage counters and comparison tracing calls into the JavaScript AST.
 
-The WASM plugin path SHALL be resolved from the `vitiate-instrument` package's `main` field (the `.wasm` artifact).
+The WASM plugin path SHALL be resolved from the `@vitiate/swc-plugin` package's `main` field (the `.wasm` artifact).
 
 #### Scenario: TypeScript file is instrumented
 

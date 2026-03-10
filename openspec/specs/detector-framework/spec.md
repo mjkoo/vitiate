@@ -96,7 +96,7 @@ The `endIteration(targetCompletedOk: boolean)` method SHALL:
 5. Regardless of `targetCompletedOk`: set the detector active flag to `false` in a `finally` block.
 6. If `afterIteration()` throws a non-`VulnerabilityError` exception and a stashed `VulnerabilityError` exists, return the stashed finding (the real vulnerability takes priority over a detector bug). Only re-throw the non-`VulnerabilityError` when no stashed finding exists.
 
-The parameter type SHALL be `boolean` (not `ExitKind`) to avoid coupling the detector framework to `vitiate-napi`. The only branching is "target completed normally" vs "target did not complete normally."
+The parameter type SHALL be `boolean` (not `ExitKind`) to avoid coupling the detector framework to `@vitiate/engine`. The only branching is "target completed normally" vs "target did not complete normally."
 
 The `setDetectorActive()` function SHALL be an internal implementation detail of `DetectorManager`. External callers (e.g., `loop.ts`) SHALL NOT import or call `setDetectorActive()` directly. Only `DetectorManager.beforeIteration()` and `DetectorManager.endIteration()` SHALL control the detector active flag.
 
