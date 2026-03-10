@@ -1,5 +1,6 @@
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import http from "node:http";
 
 // Safety: The fuzzer generates arbitrary data, so we gate each dangerous
 // operation on exactly the patterns the detectors look for. This ensures
@@ -11,6 +12,13 @@ import { readFileSync } from "node:fs";
 // Method calls like .includes() and .test() are NOT instrumented by the
 // SWC plugin, so the fuzzer would get no guidance from those.
 const CMD_INJECT_SENTINEL = "vitiate_cmd_inject";
+const EVAL_INJECT_SENTINEL = "vitiate_eval_inject";
+const SSRF_SENTINEL = "http://169.254.169.254";
+
+// Vulnerable regex: catastrophic backtracking on input like "aaaaaaaaa!"
+// The nested quantifier (a+)+ causes exponential backtracking when the
+// trailing character doesn't match.
+const VULNERABLE_REGEX = /^(a+)+$/;
 
 export function processInput(input: string): void {
   const spaceIndex = input.indexOf(" ");
@@ -51,6 +59,29 @@ export function processInput(input: string): void {
       // even if detectors are disabled.
       if (arg === "/etc/passwd") {
         readFileSync(arg);
+      }
+      break;
+    case "regex":
+      // Test the vulnerable regex against the argument. The ReDoS detector
+      // measures wall-clock time per regex operation and fires when a single
+      // call exceeds the threshold (default 100ms). The input
+      // "aaaaaaaaaaaaaaaaaaaaaaaaaaaa!" causes catastrophic backtracking.
+      VULNERABLE_REGEX.test(arg);
+      break;
+    case "fetch":
+      // Make an HTTP request to the argument URL. The SSRF detector hooks
+      // http.request and checks the hostname against its blocklist.
+      // The sentinel URL targets a metadata endpoint (169.254.169.254)
+      // which is blocked by default.
+      if (arg === SSRF_SENTINEL) {
+        http.request(arg);
+      }
+      break;
+    case "eval":
+      // Pass the argument to eval(). The unsafe eval detector checks for
+      // the goal string in the evaluated code and fires if found.
+      if (arg === EVAL_INJECT_SENTINEL) {
+        eval(arg);
       }
       break;
   }

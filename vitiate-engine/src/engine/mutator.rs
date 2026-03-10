@@ -21,6 +21,9 @@ use libafl_bolts::{AsSlice, HasLen, Named};
 /// - Always uses splice when source and replacement have different lengths, since
 ///   overwriting a prefix of the replacement is incorrect for equality comparisons
 ///   (produces a truncated constant that won't satisfy the comparison).
+/// - Handles empty operands: an empty source with a non-empty replacement triggers
+///   insertion at the random offset; a non-empty source with an empty replacement
+///   triggers deletion when the source is found in the input.
 ///
 /// Non-`Bytes` variants delegate to the inner `I2SRandReplace`.
 pub(super) struct I2SSpliceReplace {
@@ -117,6 +120,14 @@ impl I2SSpliceReplace {
     /// When source and replacement have different lengths, always uses splice
     /// (length-changing mutation) since overwriting a prefix is incorrect for
     /// equality comparisons.
+    ///
+    /// Special cases for empty operands:
+    /// - Non-empty source + empty replacement: scans for the source and deletes it
+    ///   (splice with zero-length replacement).
+    /// - Empty source + non-empty replacement: handled as an insertion fallback
+    ///   after the scan loop — inserts the replacement at `off` when no scan match
+    ///   was found. This ensures deletion/replacement of bytes already in the input
+    ///   is preferred over blind insertion.
     fn mutate_bytes_splice<I>(
         &self,
         input: &mut I,
@@ -136,10 +147,12 @@ impl I2SSpliceReplace {
         let input_len = input.len();
 
         // Wrap-around scan: check all positions starting from `off`.
+        // Pairs with empty source are skipped here — they're handled by the
+        // insertion fallback below.
         for k in 0..input_len {
             let i = (off + k) % input_len;
             for &(source, replacement) in &source_replacement_pairs {
-                if source.is_empty() || replacement.is_empty() {
+                if source.is_empty() {
                     continue;
                 }
                 let max_match = core::cmp::min(source.len(), input_len - i);
@@ -168,6 +181,19 @@ impl I2SSpliceReplace {
             }
         }
 
+        // Insertion fallback: if no scan match was found, try inserting a
+        // non-empty replacement at the random offset when its source is empty.
+        // This handles the case where the comparison target isn't present in the
+        // input yet (e.g., CmpLog entry ("", "javascript") from an empty scheme).
+        for &(source, replacement) in &source_replacement_pairs {
+            if source.is_empty() && !replacement.is_empty() {
+                let new_len = input_len + replacement.len();
+                if new_len <= max_size {
+                    return Ok(self.apply_mutation(input, replacement, off, 0, max_size));
+                }
+            }
+        }
+
         Ok(MutationResult::Skipped)
     }
 
@@ -192,6 +218,13 @@ impl I2SSpliceReplace {
     {
         let replacement_len = replacement.len();
         let current_len = input.len();
+
+        // Invariant: at least one of these must be non-zero, otherwise the
+        // mutation is a no-op that would falsely report Mutated.
+        debug_assert!(
+            matched_prefix_len > 0 || replacement_len > 0,
+            "apply_mutation called with both matched_prefix_len=0 and empty replacement"
+        );
 
         if matched_prefix_len == replacement_len {
             // Equal length: overwrite in-place (splice is identical).

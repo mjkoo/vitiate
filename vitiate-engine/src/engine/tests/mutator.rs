@@ -315,3 +315,121 @@ fn test_i2s_empty_metadata_or_input_returns_skipped() {
     let result = mutator.mutate(&mut state, &mut input).unwrap();
     assert_eq!(result, MutationResult::Skipped, "empty input should skip");
 }
+
+#[test]
+fn test_i2s_insertion_from_empty_source() {
+    // CmpValues::Bytes(("", "javascript")) with input "://a" and offset 0.
+    // Empty source means the comparison target isn't in the input yet;
+    // the mutator should insert "javascript" at position 0.
+    let seed = find_i2s_seed(1, 4, 0, 0);
+    let entries = vec![CmpValues::Bytes((
+        make_cmplog_bytes(b""),
+        make_cmplog_bytes(b"javascript"),
+    ))];
+    let mut state = make_i2s_state(seed, entries, 4096);
+    let mut input = BytesInput::new(b"://a".to_vec());
+    let mut mutator = I2SSpliceReplace::new();
+
+    let result = mutator.mutate(&mut state, &mut input).unwrap();
+    assert_eq!(result, MutationResult::Mutated);
+    assert_eq!(
+        input.mutator_bytes(),
+        b"javascript://a",
+        "empty source should insert replacement at offset 0"
+    );
+    assert_eq!(input.mutator_bytes().len(), 14);
+}
+
+#[test]
+fn test_i2s_deletion_from_empty_replacement() {
+    // CmpValues::Bytes(("javascript", "")) with input "javascript://x" and offset 0.
+    // Non-empty source with empty replacement should find and delete the source.
+    // The scan loop finds "javascript" in the input and splices it with the empty
+    // replacement, effectively deleting those bytes. The reverse pair ("", "javascript")
+    // is an insertion candidate, but the scan match takes priority.
+    let seed = find_i2s_seed(1, 14, 0, 0);
+    let entries = vec![CmpValues::Bytes((
+        make_cmplog_bytes(b"javascript"),
+        make_cmplog_bytes(b""),
+    ))];
+    let mut state = make_i2s_state(seed, entries, 4096);
+    let mut input = BytesInput::new(b"javascript://x".to_vec());
+    let mut mutator = I2SSpliceReplace::new();
+
+    let result = mutator.mutate(&mut state, &mut input).unwrap();
+    assert_eq!(result, MutationResult::Mutated);
+    assert_eq!(
+        input.mutator_bytes(),
+        b"://x",
+        "non-empty source with empty replacement should delete the source"
+    );
+    assert_eq!(input.mutator_bytes().len(), 4);
+}
+
+#[test]
+fn test_i2s_insertion_at_nonzero_offset() {
+    // CmpValues::Bytes(("", "XYZ")) with input "ab:cd" and offset 2.
+    // Empty source inserts the replacement at the random offset, splicing
+    // between existing bytes: "ab" + "XYZ" + ":cd" = "abXYZ:cd".
+    let seed = find_i2s_seed(1, 5, 0, 2);
+    let entries = vec![CmpValues::Bytes((
+        make_cmplog_bytes(b""),
+        make_cmplog_bytes(b"XYZ"),
+    ))];
+    let mut state = make_i2s_state(seed, entries, 4096);
+    let mut input = BytesInput::new(b"ab:cd".to_vec());
+    let mut mutator = I2SSpliceReplace::new();
+
+    let result = mutator.mutate(&mut state, &mut input).unwrap();
+    assert_eq!(result, MutationResult::Mutated);
+    assert_eq!(
+        input.mutator_bytes(),
+        b"abXYZ:cd",
+        "insertion at offset 2 should splice between existing bytes"
+    );
+    assert_eq!(input.mutator_bytes().len(), 8);
+}
+
+#[test]
+fn test_i2s_both_empty_operands_skipped() {
+    // CmpValues::Bytes(("", "")) should be skipped — no useful mutation possible.
+    let seed = find_i2s_seed(1, 4, 0, 0);
+    let entries = vec![CmpValues::Bytes((
+        make_cmplog_bytes(b""),
+        make_cmplog_bytes(b""),
+    ))];
+    let mut state = make_i2s_state(seed, entries, 4096);
+    let mut input = BytesInput::new(b"test".to_vec());
+    let mut mutator = I2SSpliceReplace::new();
+
+    let result = mutator.mutate(&mut state, &mut input).unwrap();
+    assert_eq!(
+        result,
+        MutationResult::Skipped,
+        "both empty operands should skip"
+    );
+}
+
+#[test]
+fn test_i2s_insertion_exceeding_max_size_skipped() {
+    // CmpValues::Bytes(("", "very-long-replacement")) with input near max_size.
+    // Insertion would exceed max_size, and there's no scan match for empty source,
+    // so the mutation should be skipped.
+    let input_bytes = vec![0x41u8; 120];
+    let seed = find_i2s_seed(1, 120, 0, 0);
+    let entries = vec![CmpValues::Bytes((
+        make_cmplog_bytes(b""),
+        make_cmplog_bytes(b"this-is-a-long-replacement"),
+    ))];
+    // max_size = 128, input is 120, insertion would make it 146 > 128.
+    let mut state = make_i2s_state(seed, entries, 128);
+    let mut input = BytesInput::new(input_bytes);
+    let mut mutator = I2SSpliceReplace::new();
+
+    let result = mutator.mutate(&mut state, &mut input).unwrap();
+    assert_eq!(
+        result,
+        MutationResult::Skipped,
+        "insertion exceeding max_size should skip"
+    );
+}

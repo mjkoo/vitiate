@@ -5,6 +5,8 @@ export default defineConfig({
   plugins: [
     vitiatePlugin({
       fuzz: {
+        fuzzTimeMs: 10_000,
+        stopOnCrash: true,
         detectors: {
           redos: true,
           ssrf: true,
@@ -14,6 +16,7 @@ export default defineConfig({
     }),
   ],
   test: {
-    include: ["test/**/*.fuzz.ts"],
+    include: ["test/detectors.fuzz.ts"],
+    testNamePattern: "^detect-vulnerabilities$",
   },
 });
