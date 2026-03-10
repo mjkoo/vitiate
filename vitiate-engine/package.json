@@ -26,13 +26,11 @@
     "packageName": "@vitiate/engine",
     "targets": [
       "x86_64-pc-windows-msvc",
-      "aarch64-pc-windows-msvc",
       "x86_64-unknown-linux-gnu",
       "x86_64-unknown-linux-musl",
       "aarch64-unknown-linux-gnu",
       "aarch64-unknown-linux-musl",
       "armv7-unknown-linux-gnueabihf",
-      "x86_64-apple-darwin",
       "aarch64-apple-darwin"
     ]
   },
@@ -56,13 +54,11 @@
   },
   "optionalDependencies": {
     "@vitiate/engine-win32-x64-msvc": "workspace:*",
-    "@vitiate/engine-win32-arm64-msvc": "workspace:*",
     "@vitiate/engine-linux-x64-gnu": "workspace:*",
     "@vitiate/engine-linux-x64-musl": "workspace:*",
     "@vitiate/engine-linux-arm64-gnu": "workspace:*",
     "@vitiate/engine-linux-arm64-musl": "workspace:*",
     "@vitiate/engine-linux-arm-gnueabihf": "workspace:*",
-    "@vitiate/engine-darwin-x64": "workspace:*",
     "@vitiate/engine-darwin-arm64": "workspace:*"
   }
 }

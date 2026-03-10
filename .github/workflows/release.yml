@@ -38,6 +38,7 @@ jobs:
             runner: ubuntu-latest
           - target: x86_64-unknown-linux-musl
             runner: ubuntu-latest
+            use_zig: true
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-latest
           - target: aarch64-unknown-linux-musl
@@ -46,16 +47,10 @@ jobs:
           - target: armv7-unknown-linux-gnueabihf
             runner: ubuntu-latest
             use_zig: true
-          - target: x86_64-apple-darwin
-            runner: macos-latest
           - target: aarch64-apple-darwin
             runner: macos-latest
           - target: x86_64-pc-windows-msvc
             runner: windows-latest
-          - target: aarch64-pc-windows-msvc
-            runner: windows-latest
-            # Disable LTO and increase codegen-units to avoid LLVM OOM on GitHub Actions
-            disable_lto: true
     steps:
       - uses: actions/checkout@v4
 
@@ -64,10 +59,6 @@ jobs:
           targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
-
-      - name: Install musl tools
-        if: matrix.target == 'x86_64-unknown-linux-musl'
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - name: Install aarch64 cross-compilation tools
         if: matrix.target == 'aarch64-unknown-linux-gnu'
@@ -79,6 +70,10 @@ jobs:
         with:
           version: 0.15.2
 
+      - name: Install cargo-zigbuild
+        if: matrix.use_zig
+        uses: taiki-e/install-action@cargo-zigbuild
+
       - uses: pnpm/action-setup@v4
 
       - uses: actions/setup-node@v4
@@ -88,17 +83,10 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Disable LTO
-        if: matrix.disable_lto
-        shell: bash
-        run: |
-          echo "CARGO_PROFILE_RELEASE_LTO=false" >> "$GITHUB_ENV"
-          echo "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=256" >> "$GITHUB_ENV"
-
       - name: Build native addon
-        run: cd vitiate-engine && pnpm exec napi build --platform --release --target ${{ matrix.target }} ${{ matrix.use_zig && '--use-zig' || '' }}
+        run: cd vitiate-engine && pnpm exec napi build --platform --release --target ${{ matrix.target }} ${{ matrix.use_zig && '--cross-compile' || '' }}
         env:
-          CC: ${{ matrix.target == 'x86_64-unknown-linux-musl' && 'musl-gcc' || (matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-gcc' || '') }}
+          CC: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-gcc' || '' }}
           CXX: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-g++' || '' }}
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-gcc' || '' }}
 
@@ -221,13 +209,11 @@ jobs:
           set -e
           for f in \
             vitiate-engine/npm/darwin-arm64/vitiate-engine.darwin-arm64.node \
-            vitiate-engine/npm/darwin-x64/vitiate-engine.darwin-x64.node \
             vitiate-engine/npm/linux-arm64-gnu/vitiate-engine.linux-arm64-gnu.node \
             vitiate-engine/npm/linux-arm64-musl/vitiate-engine.linux-arm64-musl.node \
             vitiate-engine/npm/linux-arm-gnueabihf/vitiate-engine.linux-arm-gnueabihf.node \
             vitiate-engine/npm/linux-x64-gnu/vitiate-engine.linux-x64-gnu.node \
             vitiate-engine/npm/linux-x64-musl/vitiate-engine.linux-x64-musl.node \
-            vitiate-engine/npm/win32-arm64-msvc/vitiate-engine.win32-arm64-msvc.node \
             vitiate-engine/npm/win32-x64-msvc/vitiate-engine.win32-x64-msvc.node \
             vitiate-swc-plugin/vitiate_swc_plugin.wasm \
             vitiate-core/dist/index.js \
@@ -250,13 +236,11 @@ jobs:
           fi
           packages=(
             vitiate-engine/npm/darwin-arm64
-            vitiate-engine/npm/darwin-x64
             vitiate-engine/npm/linux-arm64-gnu
             vitiate-engine/npm/linux-arm64-musl
             vitiate-engine/npm/linux-arm-gnueabihf
             vitiate-engine/npm/linux-x64-gnu
             vitiate-engine/npm/linux-x64-musl
-            vitiate-engine/npm/win32-arm64-msvc
             vitiate-engine/npm/win32-x64-msvc
             vitiate-engine
             vitiate-swc-plugin

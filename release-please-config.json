@@ -53,14 +53,6 @@
       "release-type": "node",
       "component": "@vitiate/engine-win32-x64-msvc"
     },
-    "vitiate-engine/npm/darwin-x64": {
-      "release-type": "node",
-      "component": "@vitiate/engine-darwin-x64"
-    },
-    "vitiate-engine/npm/win32-arm64-msvc": {
-      "release-type": "node",
-      "component": "@vitiate/engine-win32-arm64-msvc"
-    },
     "vitiate-engine/npm/linux-arm64-musl": {
       "release-type": "node",
       "component": "@vitiate/engine-linux-arm64-musl"
@@ -90,8 +82,6 @@
         "@vitiate/engine-linux-x64-gnu",
         "@vitiate/engine-linux-x64-musl",
         "@vitiate/engine-win32-x64-msvc",
-        "@vitiate/engine-darwin-x64",
-        "@vitiate/engine-win32-arm64-msvc",
         "@vitiate/engine-linux-arm64-musl",
         "@vitiate/engine-linux-arm-gnueabihf",
         "@vitiate/swc-plugin",
