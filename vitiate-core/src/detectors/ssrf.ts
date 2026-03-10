@@ -211,10 +211,27 @@ export class SsrfDetector implements Detector {
     );
     this.hooks.push(installHook("https", "get", checkArgs("https.get")));
 
+    // Hook http2.connect — the authority/hostname is the first argument.
+    this.hooks.push(
+      installHook("http2", "connect", (...args: unknown[]) => {
+        const authority = args[0];
+        if (typeof authority !== "string") return;
+        try {
+          const parsed = new URL(authority);
+          this.checkHost(parsed.hostname, "http2.connect", authority);
+        } catch {
+          // Malformed URL — pass through
+        }
+      }),
+    );
+
     // Hook globalThis.fetch via direct replacement
     this.originalFetch = globalThis.fetch;
     const checkHost = this.checkHost.bind(this);
     const origFetch = this.originalFetch;
+    // Explicit parameter types match the fetch() signature. The wrapper
+    // delegates to origFetch unchanged; the narrower type annotation
+    // avoids exposing internal unknown[] args to the type checker.
     globalThis.fetch = function (
       input: RequestInfo | URL,
       init?: RequestInit,

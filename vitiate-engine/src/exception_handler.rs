@@ -178,7 +178,7 @@ mod seh {
     }
 
     /// Returns true if the exception code represents a crash we should capture.
-    fn is_crash_exception(code: NTSTATUS) -> bool {
+    pub(super) fn is_crash_exception(code: NTSTATUS) -> bool {
         matches!(
             code,
             EXCEPTION_ACCESS_VIOLATION
@@ -186,6 +186,41 @@ mod seh {
                 | EXCEPTION_STACK_OVERFLOW
                 | EXCEPTION_INT_DIVIDE_BY_ZERO
         )
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn access_violation_is_crash() {
+            assert!(is_crash_exception(EXCEPTION_ACCESS_VIOLATION));
+        }
+
+        #[test]
+        fn illegal_instruction_is_crash() {
+            assert!(is_crash_exception(EXCEPTION_ILLEGAL_INSTRUCTION));
+        }
+
+        #[test]
+        fn stack_overflow_is_crash() {
+            assert!(is_crash_exception(EXCEPTION_STACK_OVERFLOW));
+        }
+
+        #[test]
+        fn int_divide_by_zero_is_crash() {
+            assert!(is_crash_exception(EXCEPTION_INT_DIVIDE_BY_ZERO));
+        }
+
+        #[test]
+        fn other_exceptions_are_not_crash() {
+            // STATUS_BREAKPOINT (0x80000003) should not be treated as a crash
+            assert!(!is_crash_exception(0x80000003_u32 as i32));
+            // STATUS_SINGLE_STEP (0x80000004) should not be treated as a crash
+            assert!(!is_crash_exception(0x80000004_u32 as i32));
+            // Zero should not be treated as a crash
+            assert!(!is_crash_exception(0));
+        }
     }
 }
 

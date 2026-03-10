@@ -289,14 +289,17 @@ impl Fuzzer {
         // Drain and discard CmpLog (stage data is noise, except for dual trace).
         let _ = crate::cmplog::drain();
 
-        // SAFETY: map_ptr is a valid pointer to map_len bytes of shared
-        // coverage memory, initialized during Fuzzer construction.
-        let map = unsafe { std::slice::from_raw_parts(self.map_ptr, self.map_len) };
-
         if executions == 1 {
             // First advance: this was the baseline execution.
             // Compute original_hash from the coverage map.
-            original_hash = coverage_hash(map);
+            // SAFETY: map_ptr is a valid pointer to map_len bytes of shared
+            // coverage memory, initialized during Fuzzer construction. The
+            // slice is scoped to the hash call to avoid aliasing the
+            // subsequent write_bytes.
+            original_hash = {
+                let map = unsafe { std::slice::from_raw_parts(self.map_ptr, self.map_len) };
+                coverage_hash(map)
+            };
 
             // SAFETY: map_ptr is a valid pointer to map_len bytes of shared
             // coverage memory, initialized during Fuzzer construction.
@@ -344,7 +347,14 @@ impl Fuzzer {
         }
 
         // Subsequent advances: process the binary search result.
-        let current_hash = coverage_hash(map);
+        // SAFETY: map_ptr is a valid pointer to map_len bytes of shared
+        // coverage memory, initialized during Fuzzer construction. The
+        // slice is scoped to the hash call to avoid aliasing the
+        // subsequent write_bytes.
+        let current_hash = {
+            let map = unsafe { std::slice::from_raw_parts(self.map_ptr, self.map_len) };
+            coverage_hash(map)
+        };
 
         // SAFETY: map_ptr is a valid pointer to map_len bytes of shared
         // coverage memory, initialized during Fuzzer construction.
@@ -495,6 +505,9 @@ impl Fuzzer {
 
     /// Advance the REDQUEEN stage: evaluate coverage for the previous candidate,
     /// yield the next one. Transitions to subsequent stages when exhausted.
+    ///
+    /// `_exit_kind` exists for API consistency with other `advance_*` methods but
+    /// is currently unused — Redqueen candidates always evaluate coverage as `Ok`.
     pub(crate) fn advance_redqueen(
         &mut self,
         _exit_kind: super::ExitKind,

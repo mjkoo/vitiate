@@ -142,30 +142,36 @@ describe("minimize", () => {
     });
 
     it("stops when wall-clock time limit is reached and returns best so far", async () => {
-      // Use a very tight time limit
-      const input = Buffer.alloc(100);
-      input[0] = 0xaa;
-      let execCount = 0;
-      const testCandidate = async (candidate: Buffer): Promise<boolean> => {
-        execCount++;
-        // Simulate slow execution
-        const start = Date.now();
-        while (Date.now() - start < 10) {
-          /* busy wait */
-        }
-        return candidate.includes(0xaa);
+      // Mock Date.now to advance 10ms per call for deterministic testing
+      let mockTime = 1000;
+      const originalDateNow = Date.now;
+      Date.now = () => {
+        mockTime += 10;
+        return mockTime;
       };
 
-      const opts: MinimizeOptions = {
-        maxIterations: 100_000,
-        timeLimitMs: 25, // Very tight time limit
-      };
-      const result = await minimize(input, testCandidate, opts);
+      try {
+        const input = Buffer.alloc(100);
+        input[0] = 0xaa;
+        let execCount = 0;
+        const testCandidate = async (candidate: Buffer): Promise<boolean> => {
+          execCount++;
+          return candidate.includes(0xaa);
+        };
 
-      // Should have stopped well before iteration cap
-      expect(execCount).toBeLessThan(100_000);
-      // Result should still be valid (at least contains the crash byte)
-      expect(result.includes(0xaa)).toBe(true);
+        const opts: MinimizeOptions = {
+          maxIterations: 100_000,
+          timeLimitMs: 25, // 25ms limit / 10ms per Date.now call = ~2-3 execs before budget
+        };
+        const result = await minimize(input, testCandidate, opts);
+
+        // Should have stopped after a few executions (each Date.now call advances 10ms)
+        expect(execCount).toBeLessThanOrEqual(5);
+        // Result should still be valid (at least contains the crash byte)
+        expect(result.includes(0xaa)).toBe(true);
+      } finally {
+        Date.now = originalDateNow;
+      }
     });
 
     it("completes within both limits for small inputs", async () => {

@@ -6,12 +6,24 @@
  */
 import { createRequire } from "node:module";
 import nodePath from "node:path";
+import { fileURLToPath } from "node:url";
 import { type Detector, VulnerabilityError } from "./types.js";
 import { installHook, type ModuleHook } from "./module-hook.js";
 
 const require = createRequire(import.meta.url);
 
 const ENCODER = new TextEncoder();
+
+const IS_WINDOWS = process.platform === "win32";
+
+/**
+ * Normalize a resolved path for comparison. On Windows, lowercases the
+ * path because the filesystem is case-insensitive but path.resolve()
+ * preserves the original casing.
+ */
+function normalizePath(resolved: string): string {
+  return IS_WINDOWS ? resolved.toLowerCase() : resolved;
+}
 
 /** Functions where the first argument is a path. */
 const SINGLE_PATH_FUNCTIONS = [
@@ -41,6 +53,14 @@ const SINGLE_PATH_FUNCTIONS = [
   "chmodSync",
   "chown",
   "chownSync",
+  "rm",
+  "rmSync",
+  "createReadStream",
+  "createWriteStream",
+  "opendirSync",
+  "opendir",
+  "watch",
+  "watchFile",
 ];
 
 /** Functions where the first two arguments are paths. */
@@ -92,9 +112,11 @@ export class PathTraversalDetector implements Detector {
         ? [deniedPaths]
         : (deniedPaths ?? defaultDenied);
     this.resolvedAllowedPaths = normalizedAllowed.map((p) =>
-      nodePath.resolve(p),
+      normalizePath(nodePath.resolve(p)),
     );
-    this.resolvedDeniedPaths = normalizedDenied.map((p) => nodePath.resolve(p));
+    this.resolvedDeniedPaths = normalizedDenied.map((p) =>
+      normalizePath(nodePath.resolve(p)),
+    );
   }
 
   getTokens(): Uint8Array[] {
@@ -165,11 +187,23 @@ export class PathTraversalDetector implements Detector {
     functionName: string,
     argumentName: string,
   ): void {
-    if (typeof pathArg !== "string" && !Buffer.isBuffer(pathArg)) {
+    if (
+      typeof pathArg !== "string" &&
+      !Buffer.isBuffer(pathArg) &&
+      !(pathArg instanceof URL)
+    ) {
       return;
     }
 
-    const pathStr = typeof pathArg === "string" ? pathArg : pathArg.toString();
+    let pathStr: string;
+    if (pathArg instanceof URL) {
+      // Node.js fs functions accept file: URLs — extract the pathname.
+      pathStr = fileURLToPath(pathArg);
+    } else if (typeof pathArg === "string") {
+      pathStr = pathArg;
+    } else {
+      pathStr = pathArg.toString();
+    }
 
     // Null byte detection — always deny before policy evaluation.
     if (pathStr.includes("\x00")) {
@@ -181,7 +215,7 @@ export class PathTraversalDetector implements Detector {
       });
     }
 
-    const resolved = nodePath.resolve(pathStr);
+    const resolved = normalizePath(nodePath.resolve(pathStr));
 
     // Policy evaluation: denied > allowed > deny.
     for (const denied of this.resolvedDeniedPaths) {

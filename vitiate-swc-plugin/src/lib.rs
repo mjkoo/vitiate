@@ -331,10 +331,7 @@ impl VisitMut for TransformVisitor {
         }
 
         if let Some(ref mut alt) = n.alt {
-            // Don't wrap else-if in a block - it stays as IfStmt
-            if !matches!(**alt, Stmt::If(_)) {
-                Self::ensure_block(alt);
-            }
+            Self::ensure_block(alt);
             let alt_span = alt.span();
             if let Stmt::Block(ref mut block) = **alt {
                 self.prepend_counter_to_block(block, alt_span);
@@ -420,6 +417,33 @@ impl VisitMut for TransformVisitor {
     fn visit_mut_catch_clause(&mut self, n: &mut CatchClause) {
         n.visit_mut_children_with(self);
         self.prepend_counter_to_block(&mut n.body, n.span);
+    }
+
+    // Short-circuit assignment operators (&&=, ||=, ??=) — the RHS is
+    // conditionally evaluated (like logical binary ops), but these are
+    // AssignExpr nodes, not BinExpr. Wrap the RHS in a comma expression
+    // with an edge counter so the fuzzer sees the branch.
+    fn visit_mut_assign_expr(&mut self, n: &mut AssignExpr) {
+        n.visit_mut_children_with(self);
+
+        if matches!(
+            n.op,
+            AssignOp::AndAssign | AssignOp::OrAssign | AssignOp::NullishAssign
+        ) {
+            let right_span = n.right.span();
+            let right = std::mem::replace(
+                &mut n.right,
+                Box::new(Expr::Invalid(Invalid { span: DUMMY_SP })),
+            );
+            n.right = self.wrap_with_counter(right_span, right);
+        }
+    }
+
+    // Static class blocks: insert an entry counter at the top of the block.
+    fn visit_mut_static_block(&mut self, n: &mut StaticBlock) {
+        n.visit_mut_children_with(self);
+        let span = n.body.span;
+        self.prepend_counter_to_block(&mut n.body, span);
     }
 
     // Task 5.7: Function entry (function declarations, function expressions, methods)
@@ -940,15 +964,76 @@ var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;"#
         );
     }
 
-    // Else-if chain - each branch gets a counter
+    // Else-if chain - each branch gets a counter, including the else-if edge itself
     #[test]
     fn else_if_chain() {
         let out = transform_no_trace_cmp(r#"if (a) { x(); } else if (b) { y(); } else { z(); }"#);
         let counter_count = out.matches("__vitiate_cov[").count();
-        // if consequent + else-if consequent + else = at least 3
+        // if consequent + else-if edge + else-if consequent + else = at least 4
         assert!(
-            counter_count >= 3,
-            "expected >=3 counters for else-if chain, got {counter_count}: {out}"
+            counter_count >= 4,
+            "expected >=4 counters for else-if chain, got {counter_count}: {out}"
+        );
+    }
+
+    // Short-circuit assignment operators get edge counters on RHS
+    #[test]
+    fn short_circuit_assign_and() {
+        let out = transform_no_trace_cmp(r#"x &&= expr;"#);
+        assert!(
+            out.contains("__vitiate_cov["),
+            "missing counter for &&= RHS: {out}"
+        );
+        assert!(
+            out.contains(", expr"),
+            "expected comma expression wrapping: {out}"
+        );
+    }
+
+    #[test]
+    fn short_circuit_assign_or() {
+        let out = transform_no_trace_cmp(r#"x ||= expr;"#);
+        assert!(
+            out.contains("__vitiate_cov["),
+            "missing counter for ||= RHS: {out}"
+        );
+    }
+
+    #[test]
+    fn short_circuit_assign_nullish() {
+        let out = transform_no_trace_cmp(r#"x ??= expr;"#);
+        assert!(
+            out.contains("__vitiate_cov["),
+            "missing counter for ??= RHS: {out}"
+        );
+    }
+
+    #[test]
+    fn regular_assign_no_counter() {
+        let out = transform_no_trace_cmp(r#"x = expr;"#);
+        assert_eq!(
+            out.matches("__vitiate_cov[").count(),
+            0,
+            "regular assignment should not get counter: {out}"
+        );
+    }
+
+    // Static class blocks get entry counter
+    #[test]
+    fn static_block_counter() {
+        let out = transform_no_trace_cmp(r#"class Foo { static { a(); } }"#);
+        assert!(
+            out.contains("__vitiate_cov["),
+            "missing counter in static block: {out}"
+        );
+    }
+
+    #[test]
+    fn empty_static_block_counter() {
+        let out = transform_no_trace_cmp(r#"class Foo { static { } }"#);
+        assert!(
+            out.contains("__vitiate_cov["),
+            "missing counter in empty static block: {out}"
         );
     }
 

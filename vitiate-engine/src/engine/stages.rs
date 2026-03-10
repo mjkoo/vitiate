@@ -197,6 +197,10 @@ impl Fuzzer {
     }
 
     /// Implementation of `advance_stage` — processes stage result, returns next input.
+    ///
+    /// `exit_kind` is only used by the Redqueen stage (to decide whether to
+    /// record a solution). All other stages evaluate coverage as `Ok` — stage
+    /// crashes are handled via `abort_stage`, not `advance_stage`.
     pub(super) fn advance_stage_impl(
         &mut self,
         exit_kind: ExitKind,
@@ -233,7 +237,11 @@ impl Fuzzer {
                 iteration,
                 max_iterations,
             } => (corpus_id, iteration, max_iterations),
-            _ => unreachable!(),
+            _ => {
+                return Err(Error::from_reason(
+                    "advance_i2s called with non-I2S stage state",
+                ));
+            }
         };
 
         // Drain and discard CmpLog accumulator (do not update CmpValuesMetadata

@@ -475,12 +475,10 @@ impl Fuzzer {
         // Enforce max_input_len.
         let mut bytes: Vec<u8> = input.into();
         bytes.truncate(self.max_input_len as usize);
-        let input = BytesInput::new(bytes.clone());
+        let buffer = Buffer::from(bytes.as_slice());
+        self.last_input = Some(BytesInput::new(bytes));
 
-        // Store for use in report_result.
-        self.last_input = Some(input);
-
-        Ok(Buffer::from(bytes))
+        Ok(buffer)
     }
 
     #[napi]

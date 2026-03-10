@@ -92,5 +92,12 @@ export function computeDedupKey(
   const normalized = normalizeStackForDedup(error.stack);
   if (normalized === undefined) return undefined;
 
-  return createHash("sha256").update(normalized).digest("hex");
+  // Include error.name (constructor name like "TypeError", "RangeError")
+  // in the hash to distinguish crashes from different error categories in
+  // the same code path. We use error.name instead of error.message because
+  // messages often contain input-dependent content (e.g., "unexpected token
+  // 'x' at position 42") which defeats deduplication — the same logical bug
+  // produces different keys for each input.
+  const hashInput = normalized + "\n" + error.name;
+  return createHash("sha256").update(hashInput).digest("hex");
 }

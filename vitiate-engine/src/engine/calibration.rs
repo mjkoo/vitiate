@@ -108,6 +108,11 @@ impl Fuzzer {
 
     /// Finalize calibration for the most recently added corpus entry.
     /// Updates per-testcase and global metadata with calibrated values.
+    ///
+    /// Safe to call after incomplete calibration (e.g., target crashed during
+    /// calibration runs). In that case: `first_map` may be `None` (falls back
+    /// to the preliminary `bitmap_size` from `report_result`), and the coverage
+    /// map is zeroed regardless to prevent stale data.
     pub(super) fn calibrate_finish_impl(&mut self) -> Result<()> {
         let corpus_id = self.calibration.corpus_id.take().ok_or_else(|| {
             Error::from_reason("calibrateFinish called without pending calibration")

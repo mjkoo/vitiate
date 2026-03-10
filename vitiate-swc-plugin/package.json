@@ -3,8 +3,19 @@
   "version": "0.1.0",
   "description": "SWC WASM plugin for vitiate instrumentation",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mjkoo/vitiate.git",
+    "directory": "vitiate-swc-plugin"
+  },
+  "engines": {
+    "node": ">= 18"
+  },
   "keywords": [
-    "swc-plugin"
+    "swc-plugin",
+    "fuzzing",
+    "coverage",
+    "instrumentation"
   ],
   "main": "vitiate_swc_plugin.wasm",
   "scripts": {

@@ -1589,16 +1589,41 @@ describe("config", () => {
       expect(options.detectors).toBeUndefined();
     });
 
-    it("silently ignores unknown detector keys", () => {
+    it("warns about unknown detector keys and strips them", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+          detectors: { futureDetector: true, prototypePollution: true },
+        });
+        const options = getCliOptions();
+        expect(options.detectors?.prototypePollution).toBe(true);
+        // futureDetector should be stripped (unknown key)
+        expect(
+          (options.detectors as Record<string, unknown>)?.["futureDetector"],
+        ).toBeUndefined();
+        // Should warn about the unknown key
+        expect(
+          chunks.some((c) => c.includes('unknown detector "futureDetector"')),
+        ).toBe(true);
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+
+    it("strips nested null values from detectors config", () => {
       process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
-        detectors: { futureDetector: true, prototypePollution: true },
+        detectors: { redos: null, prototypePollution: true },
       });
       const options = getCliOptions();
       expect(options.detectors?.prototypePollution).toBe(true);
-      // futureDetector should be stripped (unknown key)
-      expect(
-        (options.detectors as Record<string, unknown>)?.["futureDetector"],
-      ).toBeUndefined();
+      // redos: null should be stripped by recursive stripNulls
+      expect(options.detectors?.redos).toBeUndefined();
     });
   });
 });

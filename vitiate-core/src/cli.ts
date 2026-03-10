@@ -9,6 +9,7 @@
  *   in fuzzing mode, and runs the fuzz loop.
  */
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync, realpathSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -23,7 +24,7 @@ import { runSync, type RunOptions } from "@optique/run";
 import escapeStringRegexp from "escape-string-regexp";
 import { ShmemHandle } from "@vitiate/engine";
 import { vitiatePlugin } from "./plugin.js";
-import { runSupervisor } from "./supervisor.js";
+import { MAX_RESPAWNS, runSupervisor } from "./supervisor.js";
 import {
   DEFAULT_MAX_INPUT_LEN,
   isSupervisorChild,
@@ -372,7 +373,7 @@ async function runMergeParentMode(
   const shmem = ShmemHandle.allocate(maxInputLen);
   const controlFilePath = path.join(
     tmpdir(),
-    `vitiate-merge-${process.pid}-${Date.now()}.jsonl`,
+    `vitiate-merge-${randomUUID()}.jsonl`,
   );
 
   const result = await runSupervisor({
@@ -391,8 +392,7 @@ async function runMergeParentMode(
         },
         stdio: ["ignore", "inherit", "inherit"],
       }),
-    // No explicit respawn limit for merge — bounded by corpus size
-    maxRespawns: Number.MAX_SAFE_INTEGER,
+    maxRespawns: MAX_RESPAWNS,
   });
 
   // Clean up control file
@@ -411,8 +411,12 @@ async function runMergeParentMode(
 async function runMergeChildMode(
   testFile: string,
   corpusDirs: readonly string[],
+  fuzzOptions: FuzzOptions,
   testName?: string,
 ): Promise<void> {
+  // Forward CLI options (including detectors) to fuzz targets via env var
+  process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify(fuzzOptions);
+
   // Merge into existing IPC blob (parent already set merge+mergeControlFile)
   if (corpusDirs.length > 0) {
     const existing = getCliIpc();
@@ -532,7 +536,7 @@ async function main(): Promise<void> {
   if (merge) {
     // Merge mode: corpus minimization via set cover
     if (isSupervisorChild()) {
-      await runMergeChildMode(testFile, corpusDirs, testName);
+      await runMergeChildMode(testFile, corpusDirs, fuzzOptions, testName);
     } else {
       const maxInputLen = fuzzOptions.maxLen ?? DEFAULT_MAX_INPUT_LEN;
       await runMergeParentMode(testFile, corpusDirs, maxInputLen, testName);

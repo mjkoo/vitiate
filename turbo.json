@@ -23,6 +23,10 @@
     "test:instrumentation": {
       "dependsOn": ["build"],
       "cache": false
+    },
+    "publish": {
+      "dependsOn": ["build"],
+      "cache": false
     }
   }
 }

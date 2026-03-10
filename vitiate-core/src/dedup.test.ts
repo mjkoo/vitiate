@@ -141,6 +141,31 @@ describe("normalizeStackForDedup", () => {
     );
   });
 
+  it("handles Windows-style backslash paths", () => {
+    const stack = [
+      "Error: crash",
+      "    at foo (C:\\Users\\foo\\file.js:10:5)",
+      "    at bar (C:\\Users\\foo\\other.js:20:3)",
+    ].join("\n");
+
+    expect(normalizeStackForDedup(stack)).toBe(
+      "foo@C:\\Users\\foo\\file.js\nbar@C:\\Users\\foo\\other.js",
+    );
+  });
+
+  it("same Windows path at different lines produces identical dedup output", () => {
+    const stack1 = [
+      "Error: crash",
+      "    at foo (C:\\Users\\foo\\file.js:10:5)",
+    ].join("\n");
+    const stack2 = [
+      "Error: crash",
+      "    at foo (C:\\Users\\foo\\file.js:99:15)",
+    ].join("\n");
+
+    expect(normalizeStackForDedup(stack1)).toBe(normalizeStackForDedup(stack2));
+  });
+
   it("handles mixed frame types", () => {
     const stack = [
       "RangeError: Maximum call stack size exceeded",
@@ -171,9 +196,10 @@ describe("computeDedupKey", () => {
     expect(key).toBeDefined();
     expect(key).toMatch(/^[0-9a-f]{64}$/);
 
-    // Verify it's the hash of the normalized stack
+    // Verify it's the hash of the normalized stack + error.name
     const normalized = normalizeStackForDedup(error.stack!);
-    const expected = createHash("sha256").update(normalized!).digest("hex");
+    const hashInput = normalized! + "\n" + error.name;
+    const expected = createHash("sha256").update(hashInput).digest("hex");
     expect(key).toBe(expected);
   });
 
@@ -208,6 +234,39 @@ describe("computeDedupKey", () => {
 
   it("returns undefined when error is undefined", () => {
     expect(computeDedupKey(ExitKind.Crash, undefined)).toBeUndefined();
+  });
+
+  it("different error types produce different keys for same stack", () => {
+    const error1 = new TypeError("crash");
+    const error2 = new RangeError("crash");
+    // Force identical stacks so only the error type differs
+    const sharedStack =
+      "Error: placeholder\n    at /path/to/file.js:10:5\n    at /path/to/other.js:20:3";
+    error1.stack = sharedStack;
+    error2.stack = sharedStack;
+
+    const key1 = computeDedupKey(ExitKind.Crash, error1);
+    const key2 = computeDedupKey(ExitKind.Crash, error2);
+    expect(key1).toBeDefined();
+    expect(key2).toBeDefined();
+    expect(key1).not.toBe(key2);
+  });
+
+  it("same error type with different messages produces same key", () => {
+    const error1 = new Error("unexpected token 'x' at position 42");
+    const error2 = new Error("unexpected token 'y' at position 99");
+    // Force identical stacks
+    const sharedStack =
+      "Error: placeholder\n    at /path/to/file.js:10:5\n    at /path/to/other.js:20:3";
+    error1.stack = sharedStack;
+    error2.stack = sharedStack;
+
+    const key1 = computeDedupKey(ExitKind.Crash, error1);
+    const key2 = computeDedupKey(ExitKind.Crash, error2);
+    expect(key1).toBeDefined();
+    expect(key2).toBeDefined();
+    // Same error.name ("Error"), same stack → same key despite different messages
+    expect(key1).toBe(key2);
   });
 
   it("returns same key for same bug at different lines", () => {

@@ -34,6 +34,25 @@ const PRINTABLE_LOOKUP = new Uint8Array(256);
 
 const MAX_FLOAT = 3.4028235e38;
 
+/** Cached TextDecoder instances keyed by encoding name. */
+const decoderCache = new Map<string, TextDecoder>();
+
+function getDecoder(encoding: string): TextDecoder {
+  // Normalize to lowercase so "UTF-8", "utf-8", and "utf8" share one entry.
+  // TextDecoder itself normalizes internally, but the cache key must match.
+  const key = encoding.toLowerCase();
+  let decoder = decoderCache.get(key);
+  if (decoder === undefined) {
+    try {
+      decoder = new TextDecoder(encoding);
+    } catch {
+      throw new RangeError(`Unsupported encoding: ${encoding}`);
+    }
+    decoderCache.set(key, decoder);
+  }
+  return decoder;
+}
+
 export interface StringOptions {
   encoding?: string;
   printable?: boolean;
@@ -179,11 +198,14 @@ export class FuzzedDataProvider {
       if (fromEnd) {
         this.endPointer--;
         nextByte = this.data[this.endPointer]!;
+        // LE accumulation from end (consistent with consumeIntegral's LE read)
+        result |= BigInt(nextByte) << offset;
       } else {
         nextByte = this.data[this.frontPointer]!;
         this.frontPointer++;
+        // BE accumulation from front (consistent with consumeIntegrals' BE read)
+        result = (result << 8n) | BigInt(nextByte);
       }
-      result = (result << 8n) | BigInt(nextByte);
       offset += 8n;
     }
 
@@ -248,7 +270,7 @@ export class FuzzedDataProvider {
   consumeProbabilityDouble(): number {
     const n = this.consumeBigIntegral(8, false);
     const d = 0xffffffffffffffffn;
-    return Number(n) / Number(d);
+    return Math.min(1.0, Number(n) / Number(d));
   }
 
   consumeNumber(): number {
@@ -281,6 +303,8 @@ export class FuzzedDataProvider {
     if (min === max) return min;
     if (min > max)
       throw new RangeError("min must be less than or equal to max");
+    if (!Number.isFinite(min) || !Number.isFinite(max))
+      throw new RangeError("min and max must be finite");
 
     let range: number;
     let result = min;
@@ -294,7 +318,9 @@ export class FuzzedDataProvider {
       range = max - min;
     }
 
-    return result + range * this.consumeProbabilityFloat();
+    // Clamp to max to guard against floating-point arithmetic overshoot
+    // when probability is very close to 1.0 and range is large.
+    return Math.min(max, result + range * this.consumeProbabilityFloat());
   }
 
   consumeDouble(): number {
@@ -305,6 +331,8 @@ export class FuzzedDataProvider {
     if (min === max) return min;
     if (min > max)
       throw new RangeError("min must be less than or equal to max");
+    if (!Number.isFinite(min) || !Number.isFinite(max))
+      throw new RangeError("min and max must be finite");
 
     let range: number;
     let result = min;
@@ -318,7 +346,9 @@ export class FuzzedDataProvider {
       range = max - min;
     }
 
-    return result + range * this.consumeProbabilityDouble();
+    // Clamp to max to guard against floating-point arithmetic overshoot
+    // when probability is very close to 1.0 and range is large.
+    return Math.min(max, result + range * this.consumeProbabilityDouble());
   }
 
   consumeNumberInRange(min: number, max: number): number {
@@ -455,13 +485,7 @@ export class FuzzedDataProvider {
 
     const arrayLength = Math.min(maxLength, this.remainingBytes);
 
-    // Validate encoding by attempting to create a TextDecoder
-    let decoder: TextDecoder;
-    try {
-      decoder = new TextDecoder(encoding);
-    } catch {
-      throw new RangeError(`Unsupported encoding: ${encoding}`);
-    }
+    const decoder = getDecoder(encoding);
 
     let bytes: Uint8Array;
     if (printable) {

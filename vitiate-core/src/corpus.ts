@@ -78,6 +78,7 @@ export function loadCachedCorpus(
   testName: string,
 ): Buffer[] {
   const dir = path.join(cacheDir, testFilePath, sanitizeTestName(testName));
+  validateCacheSubpath(cacheDir, dir);
   return readCorpusDir(dir);
 }
 
@@ -98,6 +99,7 @@ export function loadCachedCorpusWithPaths(
   testName: string,
 ): CorpusEntryWithPath[] {
   const dir = path.join(cacheDir, testFilePath, sanitizeTestName(testName));
+  validateCacheSubpath(cacheDir, dir);
   return readCorpusDirWithPaths(dir);
 }
 
@@ -119,6 +121,23 @@ export function deleteCorpusEntry(filePath: string): void {
   }
 }
 
+/**
+ * Validate that a resolved directory stays within the cache directory.
+ * Prevents path traversal via `../` in testFilePath.
+ */
+function validateCacheSubpath(cacheDir: string, dir: string): void {
+  const resolvedDir = path.resolve(dir);
+  const resolvedCacheDir = path.resolve(cacheDir);
+  if (
+    !resolvedDir.startsWith(resolvedCacheDir + path.sep) &&
+    resolvedDir !== resolvedCacheDir
+  ) {
+    throw new Error(
+      `Cache path escapes cache directory: ${resolvedDir} is not within ${resolvedCacheDir}`,
+    );
+  }
+}
+
 export function writeCorpusEntry(
   cacheDir: string,
   testFilePath: string,
@@ -126,6 +145,7 @@ export function writeCorpusEntry(
   data: Buffer,
 ): string {
   const dir = path.join(cacheDir, testFilePath, sanitizeTestName(testName));
+  validateCacheSubpath(cacheDir, dir);
   mkdirSync(dir, { recursive: true });
   const hash = contentHash(data);
   const filePath = path.join(dir, hash);
@@ -192,8 +212,20 @@ export function replaceArtifact(
   const tmpPath = path.join(dir, `.tmp-${newFileName}-${randomUUID()}`);
   writeFileSync(tmpPath, newData);
 
-  // Atomic rename into place
-  renameSync(tmpPath, newPath);
+  // Atomic rename into place. Clean up temp file on failure to avoid
+  // orphaned files from rename errors (e.g., cross-device, permissions).
+  try {
+    renameSync(tmpPath, newPath);
+  } catch (e) {
+    try {
+      unlinkSync(tmpPath);
+    } catch {
+      // Best-effort cleanup — temp file may already be gone
+    }
+    throw new Error(`Failed to replace artifact ${tmpPath} → ${newPath}`, {
+      cause: e,
+    });
+  }
 
   // Delete old file if path differs
   if (newPath !== oldPath) {

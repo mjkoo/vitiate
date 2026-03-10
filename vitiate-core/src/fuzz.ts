@@ -188,6 +188,7 @@ function registerFuzzTest(
           seedEntries,
           cachedEntries,
           coverageMap,
+          detectorConfig: options?.detectors,
         });
       },
       VITEST_NO_TIMEOUT,
@@ -197,6 +198,7 @@ function registerFuzzTest(
     register(
       name,
       async () => {
+        const mergedOptions = { ...options, ...getCachedCliOptions() };
         const corpusDirs = getCorpusDirs();
         const controlFilePath = getMergeControlFile();
         if (!controlFilePath) {
@@ -211,6 +213,7 @@ function registerFuzzTest(
           corpusDirs: corpusDirs ?? [],
           controlFilePath,
           coverageMap,
+          detectorConfig: mergedOptions.detectors,
         });
       },
       VITEST_NO_TIMEOUT,

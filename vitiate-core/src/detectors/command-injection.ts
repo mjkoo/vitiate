@@ -27,6 +27,9 @@ function containsGoalString(value: unknown): boolean {
   if (typeof value === "string") {
     return value.includes(GOAL_STRING);
   }
+  if (Buffer.isBuffer(value)) {
+    return value.toString().includes(GOAL_STRING);
+  }
   return false;
 }
 

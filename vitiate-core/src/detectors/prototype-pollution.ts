@@ -45,39 +45,45 @@ const TOKENS = [
   "__lookupSetter__",
 ];
 
-interface PropertySnapshot {
-  value: unknown;
-  writable: boolean;
-  enumerable: boolean;
-  configurable: boolean;
-}
-
 interface PrototypeSnapshot {
   name: string;
   proto: object;
-  properties: Map<string, PropertySnapshot>;
+  properties: Map<string | symbol, PropertyDescriptor>;
 }
 
 function captureSnapshot(name: string, proto: object): PrototypeSnapshot {
-  const properties = new Map<string, PropertySnapshot>();
-  for (const key of Object.getOwnPropertyNames(proto)) {
+  const properties = new Map<string | symbol, PropertyDescriptor>();
+  for (const key of Reflect.ownKeys(proto)) {
     const descriptor = Object.getOwnPropertyDescriptor(proto, key);
-    // Skip accessor properties (get/set) — they have no value field.
-    // Skip function-valued data properties (polyfills).
-    if (
-      descriptor &&
-      "value" in descriptor &&
-      typeof descriptor.value !== "function"
-    ) {
-      properties.set(key, {
-        value: descriptor.value,
-        writable: descriptor.writable ?? false,
-        enumerable: descriptor.enumerable ?? false,
-        configurable: descriptor.configurable ?? false,
-      });
+    if (!descriptor) continue;
+    // Skip function-valued data properties (polyfills) — these are not
+    // pollution targets and should not trigger false positives.
+    if ("value" in descriptor && typeof descriptor.value === "function") {
+      continue;
     }
+    properties.set(key, { ...descriptor });
   }
   return { name, proto, properties };
+}
+
+/** Compare two property descriptors by all six possible fields. */
+function descriptorChanged(
+  a: PropertyDescriptor,
+  b: PropertyDescriptor,
+): boolean {
+  return (
+    a.value !== b.value ||
+    a.writable !== b.writable ||
+    a.enumerable !== b.enumerable ||
+    a.configurable !== b.configurable ||
+    a.get !== b.get ||
+    a.set !== b.set
+  );
+}
+
+/** Format a property key for display in error messages. */
+function formatKey(key: string | symbol): string {
+  return typeof key === "symbol" ? key.toString() : key;
 }
 
 export class PrototypePollutionDetector implements Detector {
@@ -85,6 +91,7 @@ export class PrototypePollutionDetector implements Detector {
   readonly tier = 1 as const;
 
   private snapshots: PrototypeSnapshot[] = [];
+  private dirty = true;
 
   getTokens(): Uint8Array[] {
     return TOKENS.map((t) => ENCODER.encode(t));
@@ -95,6 +102,7 @@ export class PrototypePollutionDetector implements Detector {
   }
 
   beforeIteration(): void {
+    this.dirty = true;
     this.snapshots = MONITORED_PROTOTYPES.map(({ name, proto }) =>
       captureSnapshot(name, proto),
     );
@@ -105,17 +113,15 @@ export class PrototypePollutionDetector implements Detector {
 
     for (const snapshot of this.snapshots) {
       const { name, proto, properties } = snapshot;
-      const currentKeys = Object.getOwnPropertyNames(proto);
+      const currentKeys = Reflect.ownKeys(proto);
 
       // Check for added or modified properties
       for (const key of currentKeys) {
         const descriptor = Object.getOwnPropertyDescriptor(proto, key);
-        // Skip accessor properties (get/set) and function-valued data
-        // properties (polyfills) — matching the captureSnapshot filter.
-        if (
-          descriptor &&
-          (!("value" in descriptor) || typeof descriptor.value === "function")
-        ) {
+        if (!descriptor) continue;
+        // Skip function-valued data properties (polyfills) — matching
+        // the captureSnapshot filter.
+        if ("value" in descriptor && typeof descriptor.value === "function") {
           continue;
         }
 
@@ -126,53 +132,49 @@ export class PrototypePollutionDetector implements Detector {
             "Prototype Pollution",
             {
               prototype: name,
-              property: key,
+              property: formatKey(key),
               changeType: "added",
-              newValue: descriptor?.value,
+              isAccessor: "get" in descriptor || "set" in descriptor,
             },
           );
-        } else if (descriptor && descriptor.value !== prev.value) {
+        } else if (descriptorChanged(descriptor, prev)) {
           firstFinding ??= new VulnerabilityError(
             this.name,
             "Prototype Pollution",
             {
               prototype: name,
-              property: key,
+              property: formatKey(key),
               changeType: "modified",
-              originalValue: prev.value,
-              newValue: descriptor.value,
             },
           );
         }
       }
 
-      // Check for deleted properties
+      // Check for deleted properties. getOwnPropertyDescriptor works for
+      // both string and symbol keys, unlike hasOwnProperty.
       for (const key of properties.keys()) {
-        if (!Object.prototype.hasOwnProperty.call(proto, key)) {
-          // Property was deleted entirely (not replaced by a function/polyfill)
+        if (Object.getOwnPropertyDescriptor(proto, key) === undefined) {
           firstFinding ??= new VulnerabilityError(
             this.name,
             "Prototype Pollution",
             {
               prototype: name,
-              property: key,
+              property: formatKey(key),
               changeType: "deleted",
-              originalValue: properties.get(key)?.value,
             },
           );
         }
-        // If the property exists but is now a function, we ignore it
-        // (polyfill scenario). If it exists and is non-function with a
-        // different value, the "modified" check above already caught it.
       }
     }
 
     if (firstFinding) {
       throw firstFinding;
     }
+    this.dirty = false;
   }
 
   resetIteration(): void {
+    if (!this.dirty) return;
     for (const snapshot of this.snapshots) {
       this.restorePrototype(snapshot);
     }
@@ -186,29 +188,23 @@ export class PrototypePollutionDetector implements Detector {
   private restorePrototype(snapshot: PrototypeSnapshot): void {
     const { proto, properties } = snapshot;
 
-    // Remove added non-function data properties.
-    // Skip accessor properties (get/set) and function-valued data properties,
-    // matching the captureSnapshot filter — these were never snapshotted.
-    for (const key of Object.getOwnPropertyNames(proto)) {
+    // Remove added non-function properties.
+    for (const key of Reflect.ownKeys(proto)) {
       const descriptor = Object.getOwnPropertyDescriptor(proto, key);
-      if (!descriptor || !("value" in descriptor)) continue;
-      if (typeof descriptor.value === "function") continue;
+      if (!descriptor) continue;
+      if ("value" in descriptor && typeof descriptor.value === "function") {
+        continue;
+      }
       if (!properties.has(key)) {
-        delete (proto as Record<string, unknown>)[key];
+        Reflect.deleteProperty(proto, key);
       }
     }
 
-    // Restore modified/deleted properties
-    for (const [key, snap] of properties) {
-      const current = Object.getOwnPropertyDescriptor(proto, key);
-      if (!current || current.value !== snap.value) {
-        Object.defineProperty(proto, key, {
-          value: snap.value,
-          writable: snap.writable,
-          enumerable: snap.enumerable,
-          configurable: snap.configurable,
-        });
-      }
+    // Restore all snapshotted properties unconditionally.
+    // defineProperty with the original descriptor is idempotent for
+    // unchanged properties.
+    for (const [key, descriptor] of properties) {
+      Object.defineProperty(proto, key, descriptor);
     }
   }
 }

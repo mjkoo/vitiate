@@ -608,7 +608,7 @@ export async function runFuzzLoop(
     }
     interrupted = true;
     process.stderr.write(
-      "\nvitiate: interrupted, finishing current iteration...\n",
+      "\nvitiate: interrupted, finishing current iteration (may include calibration and stages)...\n",
     );
   };
   process.on("SIGINT", sigintHandler);
@@ -662,7 +662,9 @@ export async function runFuzzLoop(
             shmemHandle,
             options,
             detectorManager,
-            caughtError instanceof VulnerabilityError,
+            caughtError instanceof VulnerabilityError
+              ? caughtError.vulnerabilityType
+              : undefined,
           );
         }
 
@@ -673,10 +675,16 @@ export async function runFuzzLoop(
       }
 
       if (iterResult === IterationResult.Interesting) {
-        if (corpusOutputDir !== undefined) {
-          writeCorpusEntryToDir(corpusOutputDir, input);
-        } else if (!libfuzzerCompat) {
-          writeCorpusEntry(cacheDir, testFilePath, testName, input);
+        try {
+          if (corpusOutputDir !== undefined) {
+            writeCorpusEntryToDir(corpusOutputDir, input);
+          } else if (!libfuzzerCompat) {
+            writeCorpusEntry(cacheDir, testFilePath, testName, input);
+          }
+        } catch (writeError) {
+          process.stderr.write(
+            `vitiate: warning: failed to write corpus entry: ${writeError instanceof Error ? writeError.message : writeError}\n`,
+          );
         }
         // libfuzzerCompat without corpusOutputDir: in-memory only, skip write
 
@@ -760,9 +768,9 @@ export async function runFuzzLoop(
  * Minimize a crashing input using the fuzz loop's execution infrastructure.
  *
  * Creates a testCandidate wrapper around executeTarget() and delegates to
- * the minimization engine. The `wasDetectorFinding` flag ensures the minimizer
- * only accepts the same crash kind as the original: VulnerabilityError for
- * detector findings, regular ExitKind.Crash for ordinary exceptions.
+ * the minimization engine. The `originalVulnerabilityType` ensures the minimizer
+ * only accepts the same crash kind as the original: matching VulnerabilityError
+ * type for detector findings, regular ExitKind.Crash for ordinary exceptions.
  */
 async function minimizeCrashInput(
   input: Buffer,
@@ -772,7 +780,7 @@ async function minimizeCrashInput(
   shmemHandle: ShmemHandle | null,
   options: FuzzOptions,
   detectorManager: DetectorManager,
-  wasDetectorFinding: boolean,
+  originalVulnerabilityType: string | undefined,
 ): Promise<Buffer> {
   const testCandidate = async (candidate: Buffer): Promise<boolean> => {
     shmemHandle?.stashInput(candidate);
@@ -782,14 +790,22 @@ async function minimizeCrashInput(
     const detectorError = detectorManager.endIteration(
       result.exitKind === ExitKind.Ok,
     );
+    // If a detector fires, accept iff original was same detector type.
+    if (detectorError) {
+      return (
+        originalVulnerabilityType !== undefined &&
+        detectorError.vulnerabilityType === originalVulnerabilityType
+      );
+    }
     if (result.exitKind === ExitKind.Ok) {
-      if (detectorError) {
-        return wasDetectorFinding;
-      }
       return false;
     }
 
-    return result.exitKind === ExitKind.Crash && !wasDetectorFinding;
+    // Target threw (Crash) — accept iff original was also a non-detector crash.
+    return (
+      result.exitKind === ExitKind.Crash &&
+      originalVulnerabilityType === undefined
+    );
   };
 
   return minimize(input, testCandidate, {

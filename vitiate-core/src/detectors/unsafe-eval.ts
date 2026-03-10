@@ -17,6 +17,9 @@ export class UnsafeEvalDetector implements Detector {
 
   private originalEval: typeof globalThis.eval | undefined;
   private originalFunction: typeof globalThis.Function | undefined;
+  private originalFunctionConstructor: FunctionConstructor | undefined;
+  private originalSetTimeout: typeof globalThis.setTimeout | undefined;
+  private originalSetInterval: typeof globalThis.setInterval | undefined;
 
   getTokens(): Uint8Array[] {
     return TOKENS.map((t) => ENCODER.encode(t));
@@ -51,6 +54,8 @@ export class UnsafeEvalDetector implements Detector {
         });
         stashAndRethrow(error);
       }
+      // Safe cast: origEval accepts string|undefined. The typeof check above
+      // handles the string case; for non-string x, eval returns it unchanged.
       return origEval(x as string);
     } as typeof eval;
 
@@ -81,7 +86,53 @@ export class UnsafeEvalDetector implements Detector {
     });
     Object.setPrototypeOf(FunctionWrapper, origFunction);
 
+    // Patch .constructor on the prototype so (function(){}).constructor("...")
+    // goes through the wrapper, not the original Function. Safe cast:
+    // origFunction.prototype.constructor is always the Function constructor.
+    this.originalFunctionConstructor = origFunction.prototype
+      .constructor as FunctionConstructor;
+    origFunction.prototype.constructor = FunctionWrapper;
+
     globalThis.Function = FunctionWrapper;
+
+    // Hook setTimeout and setInterval — both accept string first arguments
+    // that are eval'd. Use installHook-style wrapping via the global object
+    // to avoid complex Node.js timer type overloads.
+    this.originalSetTimeout = globalThis.setTimeout;
+    this.originalSetInterval = globalThis.setInterval;
+
+    const wrapTimer = (
+      original: (...args: unknown[]) => unknown,
+      name: string,
+    ): ((...args: unknown[]) => unknown) => {
+      return function (this: unknown, ...args: unknown[]): unknown {
+        const callback = args[0];
+        if (
+          isDetectorActive() &&
+          typeof callback === "string" &&
+          callback.includes(GOAL_STRING)
+        ) {
+          const error = new VulnerabilityError("unsafe-eval", "Unsafe Eval", {
+            function: name,
+            code: callback,
+            goalString: GOAL_STRING,
+          });
+          stashAndRethrow(error);
+        }
+        return Reflect.apply(original, this, args);
+      };
+    };
+
+    // Safe cast: the wrapper preserves calling convention. The complex overloaded
+    // timer types don't affect the runtime behavior — we just intercept string args.
+    (globalThis as Record<string, unknown>)["setTimeout"] = wrapTimer(
+      this.originalSetTimeout as unknown as (...args: unknown[]) => unknown,
+      "setTimeout",
+    );
+    (globalThis as Record<string, unknown>)["setInterval"] = wrapTimer(
+      this.originalSetInterval as unknown as (...args: unknown[]) => unknown,
+      "setInterval",
+    );
   }
 
   beforeIteration(): void {
@@ -102,8 +153,22 @@ export class UnsafeEvalDetector implements Detector {
       this.originalEval = undefined;
     }
     if (this.originalFunction !== undefined) {
+      // Restore .constructor before restoring Function itself
+      if (this.originalFunctionConstructor !== undefined) {
+        this.originalFunction.prototype.constructor =
+          this.originalFunctionConstructor;
+        this.originalFunctionConstructor = undefined;
+      }
       globalThis.Function = this.originalFunction;
       this.originalFunction = undefined;
+    }
+    if (this.originalSetTimeout !== undefined) {
+      globalThis.setTimeout = this.originalSetTimeout;
+      this.originalSetTimeout = undefined;
+    }
+    if (this.originalSetInterval !== undefined) {
+      globalThis.setInterval = this.originalSetInterval;
+      this.originalSetInterval = undefined;
     }
   }
 }

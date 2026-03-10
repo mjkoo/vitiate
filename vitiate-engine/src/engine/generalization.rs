@@ -488,53 +488,83 @@ impl Fuzzer {
         }
     }
 
-    /// Outer loop of bracket-based gap-finding: scan forward from `index` for
-    /// an opening bracket, then set up the inner backward scan for closers.
+    /// Bracket-based gap-finding: scan forward for opening brackets, then
+    /// backward for closing brackets. Yields a candidate when a bracket pair
+    /// is found, or advances to the next pair/finalizes when exhausted.
     ///
-    /// Note: recursion depth is bounded by `MAX_GENERALIZED_LEN` (8192 bytes) and the number
-    /// of bracket types (6). The worst-case depth is safe for the default 8 MB stack.
+    /// Combines the former `find_next_bracket_opener` and
+    /// `continue_bracket_inner_scan` into a single iterative function,
+    /// eliminating mutual tail-call recursion.
     pub(super) fn find_next_bracket_opener(
         &mut self,
         corpus_id: CorpusId,
         novelties: Vec<usize>,
-        payload: Vec<Option<u8>>,
-        pair_index: u8,
+        mut payload: Vec<Option<u8>>,
+        mut pair_index: u8,
         mut index: usize,
     ) -> Result<Option<Buffer>> {
-        if pair_index as usize >= GENERALIZATION_BRACKETS.len() {
-            return self.finalize_generalization(corpus_id, &payload);
+        'outer: loop {
+            if pair_index as usize >= GENERALIZATION_BRACKETS.len() {
+                return self.finalize_generalization(corpus_id, &payload);
+            }
+
+            let (open_char, close_char) = GENERALIZATION_BRACKETS[pair_index as usize];
+
+            // Scan forward for the next opener.
+            while index < payload.len() && payload[index] != Some(open_char) {
+                index += 1;
+            }
+            if index >= payload.len() {
+                // No more openers for this pair — advance to next pair.
+                trim_payload(&mut payload);
+                pair_index += 1;
+                index = 0;
+                continue 'outer;
+            }
+
+            // Found an opener at `index`. Set up inner backward scan.
+            let start = index;
+            let mut end = payload.len() - 1;
+            let mut endings: usize = 0;
+
+            // Inner loop: scan backward from `end` looking for a closer.
+            while end > start {
+                if payload[end] == Some(close_char) {
+                    endings += 1;
+                    // Found a closer — yield candidate from start..end (exclusive of endpoints
+                    // to match LibAFL behavior: the opener and closer themselves are kept).
+                    let candidate = build_generalization_candidate(&payload, start + 1, end);
+                    self.last_stage_input = Some(candidate.clone());
+
+                    self.stage_state = StageState::Generalization {
+                        corpus_id,
+                        novelties,
+                        payload,
+                        phase: GeneralizationPhase::Bracket {
+                            pair_index,
+                            index,
+                            start,
+                            end,
+                            endings,
+                        },
+                        candidate_range: Some((start + 1, end)),
+                    };
+
+                    return Ok(Some(Buffer::from(candidate)));
+                }
+                end -= 1;
+            }
+
+            // No closer found for this opener — advance to next bracket pair.
+            trim_payload(&mut payload);
+            pair_index += 1;
+            index = 0;
         }
-
-        let (open_char, _close_char) = GENERALIZATION_BRACKETS[pair_index as usize];
-
-        // Scan forward for the next opener.
-        while index < payload.len() && payload[index] != Some(open_char) {
-            index += 1;
-        }
-        if index >= payload.len() {
-            // No more openers for this pair — advance to next pair.
-            return self.advance_to_next_bracket_pair(corpus_id, novelties, payload, pair_index);
-        }
-
-        // Found an opener at `index`. Set up inner backward scan.
-        // LibAFL: start = index, end = payload.len() - 1 (or start if empty).
-        // SAFETY of payload.len() - 1: index < payload.len() was verified above,
-        // so payload is guaranteed non-empty.
-        debug_assert!(
-            !payload.is_empty(),
-            "payload must be non-empty when an opener was found"
-        );
-        let start = index;
-        let end = payload.len() - 1;
-
-        self.continue_bracket_inner_scan(
-            corpus_id, novelties, payload, pair_index, index, start, end, 0,
-        )
     }
 
-    /// Inner loop of bracket-based gap-finding: scan backward from `end` for
-    /// a closing bracket. Yields a candidate when found, or advances to the
-    /// next opener/pair when exhausted.
+    /// Resume the bracket inner scan after a candidate was yielded and evaluated.
+    /// This is the re-entry point from `advance_generalization` when returning
+    /// from a yielded bracket candidate.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn continue_bracket_inner_scan(
         &mut self,
@@ -548,17 +578,16 @@ impl Fuzzer {
         mut endings: usize,
     ) -> Result<Option<Buffer>> {
         if payload.is_empty() {
-            return self.advance_to_next_bracket_pair(corpus_id, novelties, payload, pair_index);
+            trim_payload(&mut payload);
+            return self.find_next_bracket_opener(corpus_id, novelties, payload, pair_index + 1, 0);
         }
 
         let (_open_char, close_char) = GENERALIZATION_BRACKETS[pair_index as usize];
 
-        // Scan backward from `end` looking for a closer.
+        // Continue scanning backward from `end` looking for a closer.
         while end > start {
             if payload[end] == Some(close_char) {
                 endings += 1;
-                // Found a closer — yield candidate from start..end (exclusive of endpoints
-                // to match LibAFL behavior: the opener and closer themselves are kept).
                 let candidate = build_generalization_candidate(&payload, start + 1, end);
                 self.last_stage_input = Some(candidate.clone());
 
@@ -583,39 +612,12 @@ impl Fuzzer {
 
         // Inner scan exhausted for this opener.
         if endings > 0 {
-            // We found at least one closer — the outer loop advances past this opener.
-            // The outer loop advances `index` by 1 per opener (not per backward-scan step
-            // as in the spec). This may revisit positions but does not affect correctness.
             trim_payload(&mut payload);
             self.find_next_bracket_opener(corpus_id, novelties, payload, pair_index, index + 1)
         } else {
-            // No closer found at all for this opener — advance to next pair.
-            self.advance_to_next_bracket_pair(corpus_id, novelties, payload, pair_index)
+            trim_payload(&mut payload);
+            self.find_next_bracket_opener(corpus_id, novelties, payload, pair_index + 1, 0)
         }
-    }
-
-    /// Trim the payload and advance to the next bracket pair, or finalize
-    /// if all bracket pairs have been processed.
-    pub(super) fn advance_to_next_bracket_pair(
-        &mut self,
-        corpus_id: CorpusId,
-        novelties: Vec<usize>,
-        mut payload: Vec<Option<u8>>,
-        pair_index: u8,
-    ) -> Result<Option<Buffer>> {
-        trim_payload(&mut payload);
-        self.generate_next_candidate(
-            corpus_id,
-            novelties,
-            payload,
-            GeneralizationPhase::Bracket {
-                pair_index: pair_index + 1,
-                index: 0,
-                start: 0,
-                end: 0,
-                endings: 0,
-            },
-        )
     }
 
     /// Finalize the generalization stage: convert payload to `GeneralizedInputMetadata`

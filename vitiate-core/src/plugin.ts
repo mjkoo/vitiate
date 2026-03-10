@@ -36,7 +36,7 @@ const JS_TS_EXTENSIONS = /\.(?:[cm]?[jt]sx?|[jt]s)(?:\?.*)?$/;
  * import + destructuring so the values are read from the live CJS module
  * object at evaluation time (after setup.ts installs hooks).
  */
-const HOOKED_MODULES = new Set(["child_process", "fs", "fs/promises"]);
+const HOOKED_MODULES = new Set(["child_process", "fs", "fs/promises", "http2"]);
 
 /**
  * Check if a module specifier refers to a hooked built-in module.
@@ -70,8 +70,7 @@ function extractImportClause(statement: string): string | null {
   const fromIdx = normalized.lastIndexOf(" from ");
   if (fromIdx === -1) return null;
 
-  // "import ".length === 7
-  const clause = normalized.slice(7, fromIdx).trim();
+  const clause = normalized.slice("import ".length, fromIdx).trim();
   return clause.length > 0 ? clause : null;
 }
 
@@ -91,14 +90,14 @@ function parseImportClause(clause: string): ParsedClause | null {
   let namespaceImport: string | null = null;
 
   // Case 1: "* as ns"
-  const nsMatch = clause.match(/^\*\s+as\s+(\w+)$/);
+  const nsMatch = clause.match(/^\*\s+as\s+([\w$]+)$/);
   if (nsMatch) {
     namespaceImport = nsMatch[1]!;
     return { defaultImport, namedImports, namespaceImport };
   }
 
   // Case 2: "def, * as ns"
-  const defNsMatch = clause.match(/^(\w+)\s*,\s*\*\s+as\s+(\w+)$/);
+  const defNsMatch = clause.match(/^([\w$]+)\s*,\s*\*\s+as\s+([\w$]+)$/);
   if (defNsMatch) {
     defaultImport = defNsMatch[1]!;
     namespaceImport = defNsMatch[2]!;
@@ -106,7 +105,7 @@ function parseImportClause(clause: string): ParsedClause | null {
   }
 
   // Case 3: "def, { ... }"
-  const defNamedMatch = clause.match(/^(\w+)\s*,\s*(\{[^}]*\})$/);
+  const defNamedMatch = clause.match(/^([\w$]+)\s*,\s*(\{[^}]*\})$/);
   if (defNamedMatch) {
     defaultImport = defNamedMatch[1]!;
     namedImports = defNamedMatch[2]!;
@@ -121,7 +120,7 @@ function parseImportClause(clause: string): ParsedClause | null {
   }
 
   // Case 5: "def" (default only)
-  const defMatch = clause.match(/^(\w+)$/);
+  const defMatch = clause.match(/^([\w$]+)$/);
   if (defMatch) {
     defaultImport = defMatch[1]!;
     return { defaultImport, namedImports, namespaceImport };
@@ -156,7 +155,7 @@ function namedImportsToDestructuring(namedImports: string): string | null {
     // Skip type-only specifiers: "type Foo" or "type Foo as Bar"
     if (/^type\s/.test(spec)) continue;
     // Convert import alias syntax to destructuring syntax: "a as b" → "a: b"
-    const converted = spec.replace(/^(\w+)\s+as\s+(\w+)$/, "$1: $2");
+    const converted = spec.replace(/^([\w$]+)\s+as\s+([\w$]+)$/, "$1: $2");
     valueSpecifiers.push(converted);
   }
 
@@ -367,7 +366,12 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin[] {
     transform(code, id) {
       // Only transform files that could contain user imports.
       // Skip node_modules, virtual modules, and non-JS/TS files.
-      if (id.includes("/node_modules/") || id.startsWith("\0")) return null;
+      if (
+        id.includes("/node_modules/") ||
+        id.includes("\\node_modules\\") ||
+        id.startsWith("\0")
+      )
+        return null;
       if (!JS_TS_EXTENSIONS.test(id)) return null;
       return rewriteHookedImports(code);
     },

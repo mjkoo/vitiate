@@ -10,6 +10,15 @@
   ],
   "description": "Native Node.js addon for vitiate",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mjkoo/vitiate.git",
+    "directory": "vitiate-engine"
+  },
+  "keywords": [
+    "fuzzing",
+    "native-addon"
+  ],
   "engines": {
     "node": ">= 18"
   },

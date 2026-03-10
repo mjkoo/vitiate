@@ -1,10 +1,14 @@
 [advisories]
+# All suppressed advisories are for unmaintained transitive dependencies
+# inherited from swc_core and libafl. These are not direct dependencies and
+# cannot be resolved without upstream changes. Re-evaluate when bumping
+# swc_core or libafl versions.
 ignore = [
   # Unmaintained transitive dependencies from swc_ecma_transforms_testing
-  "RUSTSEC-2021-0139", # ansi_term
-  "RUSTSEC-2020-0095", # difference
+  "RUSTSEC-2021-0139", # ansi_term — unmaintained, no replacement in swc dep tree
+  "RUSTSEC-2020-0095", # difference — unmaintained, used by swc testing internals
   # Unmaintained transitive dependency from libafl
-  "RUSTSEC-2025-0141", # bincode
+  "RUSTSEC-2025-0141", # bincode — transitive via libafl serialization
 ]
 
 [licenses]

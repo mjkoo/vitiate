@@ -132,6 +132,29 @@ describe("RedosDetector", () => {
     }
   });
 
+  it("detects genuinely vulnerable regex pattern", () => {
+    detector = new RedosDetector(5); // 5ms threshold
+    detector.setup();
+    setDetectorActive(true);
+
+    // (a+)+b is a classic exponential backtracking pattern.
+    // "a".repeat(22) + "!" causes backtracking well beyond 5ms but completes
+    // within vitest's default timeout.
+    expect(() => {
+      /(a+)+b/.exec("a".repeat(22) + "!");
+    }).toThrow(VulnerabilityError);
+  });
+
+  it("does not fire false positive for non-vulnerable regex at same threshold", () => {
+    detector = new RedosDetector(5); // Same 5ms threshold
+    detector.setup();
+    setDetectorActive(true);
+
+    // Simple linear-time regex should not trigger
+    const result = /^[a-z]+$/.exec("a".repeat(1000));
+    expect(result).not.toBeNull();
+  });
+
   it("no-op lifecycle hooks do not throw", () => {
     detector = new RedosDetector();
     detector.beforeIteration();

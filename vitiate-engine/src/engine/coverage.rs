@@ -91,6 +91,13 @@ impl Fuzzer {
             }
         }
 
+        // Compute novel indices BEFORE constructing the observer. The observer
+        // holds `&mut [u8]` to the coverage map, while compute_novel_indices()
+        // creates a `&[u8]` to the same memory. Having both alive simultaneously
+        // is UB under Rust's aliasing model. Must also precede is_interesting()
+        // which updates the feedback's internal history.
+        let novel_indices = self.compute_novel_indices();
+
         let result = {
             // Reconstruct observer from the stashed pointer.
             // SAFETY: `self.map_ptr` is valid for `self.map_len` bytes. The backing
@@ -141,10 +148,6 @@ impl Fuzzer {
                     corpus_id: None,
                 }
             } else {
-                // Compute novel indices BEFORE calling is_interesting(), which
-                // updates the feedback's internal history. Novel = map[i] > history[i].
-                let novel_indices = self.compute_novel_indices();
-
                 let is_interesting = self
                     .feedback
                     .is_interesting(

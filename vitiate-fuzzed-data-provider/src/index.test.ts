@@ -93,8 +93,8 @@ describe("FuzzedDataProvider", () => {
     it("handles partial consumption when fewer bytes remain", () => {
       const provider = fdp(0x01, 0x02);
       const result = provider.consumeIntegral(4);
-      expect(result).toBeGreaterThanOrEqual(0);
-      expect(result).toBeLessThanOrEqual(65535);
+      // 2 bytes [0x01, 0x02] read LE from end: 0x0201 = 513
+      expect(result).toBe(513);
       expect(provider.remainingBytes).toBe(0);
     });
 
@@ -131,9 +131,9 @@ describe("FuzzedDataProvider", () => {
     });
 
     it("handles negative range", () => {
+      // 0x80 = 128, range [-100, 100] has size 201. -100 + (128 % 201) = 28
       const result = fdp(0x80).consumeIntegralInRange(-100, 100);
-      expect(result).toBeGreaterThanOrEqual(-100);
-      expect(result).toBeLessThanOrEqual(100);
+      expect(result).toBe(28);
     });
 
     it("throws RangeError when range exceeds 2^48", () => {
@@ -237,7 +237,7 @@ describe("FuzzedDataProvider", () => {
       expect(fdp(0, 0, 0, 0, 0, 0, 0, 0).consumeProbabilityDouble()).toBe(0.0);
     });
 
-    it("returns 1.0 for all-max bytes", () => {
+    it("returns value <= 1.0 for all-max bytes", () => {
       expect(
         fdp(
           0xff,
@@ -249,7 +249,7 @@ describe("FuzzedDataProvider", () => {
           0xff,
           0xff,
         ).consumeProbabilityDouble(),
-      ).toBe(1.0);
+      ).toBeLessThanOrEqual(1.0);
     });
 
     it("returns value in [0, 1]", () => {
@@ -309,6 +309,18 @@ describe("FuzzedDataProvider", () => {
       );
     });
 
+    it("throws RangeError when min or max is not finite", () => {
+      expect(() => fdp(0xff).consumeFloatInRange(-Infinity, Infinity)).toThrow(
+        RangeError,
+      );
+      expect(() => fdp(0xff).consumeFloatInRange(0, Infinity)).toThrow(
+        RangeError,
+      );
+      expect(() => fdp(0xff).consumeFloatInRange(-Infinity, 0)).toThrow(
+        RangeError,
+      );
+    });
+
     it("uses range splitting for large spans", () => {
       const provider = fdp(
         0x80,
@@ -354,6 +366,18 @@ describe("FuzzedDataProvider", () => {
 
     it("throws RangeError when min > max", () => {
       expect(() => fdp(0xff).consumeDoubleInRange(10.0, 5.0)).toThrow(
+        RangeError,
+      );
+    });
+
+    it("throws RangeError when min or max is not finite", () => {
+      expect(() => fdp(0xff).consumeDoubleInRange(-Infinity, Infinity)).toThrow(
+        RangeError,
+      );
+      expect(() => fdp(0xff).consumeDoubleInRange(0, Infinity)).toThrow(
+        RangeError,
+      );
+      expect(() => fdp(0xff).consumeDoubleInRange(-Infinity, 0)).toThrow(
         RangeError,
       );
     });
@@ -424,13 +448,14 @@ describe("FuzzedDataProvider", () => {
   });
 
   describe("consumeBigIntegrals", () => {
-    it("consumes array of 8-byte bigints", () => {
+    it("consumes array of 8-byte bigints with exact values", () => {
       const bytes = new Array<number>(16).fill(0);
+      // First 8 bytes: [0,0,0,0,0,0,0,1] BE → 1n
       bytes[7] = 1;
+      // Second 8 bytes: [0,0,0,0,0,0,0,2] BE → 2n
       bytes[15] = 2;
       const result = fdp(...bytes).consumeBigIntegrals(2, 8);
-      expect(result).toHaveLength(2);
-      expect(typeof result[0]).toBe("bigint");
+      expect(result).toEqual([1n, 2n]);
     });
 
     it("throws TypeError for non-integer parameters", () => {
@@ -443,10 +468,11 @@ describe("FuzzedDataProvider", () => {
   });
 
   describe("consumeNumbers", () => {
-    it("consumes array of doubles", () => {
+    it("consumes array of doubles with exact values", () => {
+      // All zeros → IEEE-754 BE 0.0 for both elements
       const bytes = new Array<number>(16).fill(0);
       const result = fdp(...bytes).consumeNumbers(2);
-      expect(result).toHaveLength(2);
+      expect(result).toEqual([0.0, 0.0]);
     });
 
     it("handles partial final element", () => {

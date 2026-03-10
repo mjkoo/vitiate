@@ -4,6 +4,7 @@
  * Resolves which detectors are active based on config (Tier 1 default-on,
  * Tier 2 default-off), instantiates them, and delegates lifecycle calls.
  */
+import { isDeepStrictEqual } from "node:util";
 import type { FuzzOptions } from "../config.js";
 import { type Detector, VulnerabilityError } from "./types.js";
 import {
@@ -236,7 +237,7 @@ export class DetectorManager {
 
 let _manager: DetectorManager | null = null;
 let _installed = false;
-let _installedConfigJson: string | undefined;
+let _installedConfig: DetectorConfig | undefined;
 
 /**
  * Create the DetectorManager and install module hooks.
@@ -249,15 +250,14 @@ let _installedConfigJson: string | undefined;
  * config, then fuzz() overrides with user-specified config).
  */
 export function installDetectorModuleHooks(config: DetectorConfig): void {
-  const configJson = JSON.stringify(config) ?? "undefined";
-  if (_installed && configJson === _installedConfigJson) return;
+  if (_installed && isDeepStrictEqual(config, _installedConfig)) return;
 
   if (_manager) {
     _manager.teardown();
   }
 
   _installed = true;
-  _installedConfigJson = configJson;
+  _installedConfig = structuredClone(config);
   _manager = new DetectorManager(config);
   _manager.setup();
 }
@@ -283,5 +283,5 @@ export function resetDetectorHooks(): void {
   }
   _manager = null;
   _installed = false;
-  _installedConfigJson = undefined;
+  _installedConfig = undefined;
 }

@@ -50,7 +50,14 @@ const SsrfOptionsSchema = v.object({
 const DetectorsSchema = v.pipe(
   v.record(v.string(), v.unknown()),
   v.transform((input) => {
-    // Extract known keys, silently ignore unknown keys for forward compatibility
+    // Warn about unknown keys and extract only known keys
+    for (const key of Object.keys(input)) {
+      if (!KNOWN_DETECTOR_KEYS.has(key)) {
+        process.stderr.write(
+          `vitiate: warning: unknown detector "${key}" (ignoring)\n`,
+        );
+      }
+    }
     const result: Record<string, unknown> = {};
     for (const key of KNOWN_DETECTOR_KEYS) {
       if (key in input) {
@@ -398,7 +405,14 @@ export function warnUnknownVitiateEnvVars(): void {
  */
 function stripNulls(obj: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(
-    Object.entries(obj).filter(([, val]) => val !== null),
+    Object.entries(obj)
+      .filter(([, val]) => val !== null)
+      .map(([key, val]) => [
+        key,
+        typeof val === "object" && val !== null && !Array.isArray(val)
+          ? stripNulls(val as Record<string, unknown>)
+          : val,
+      ]),
   );
 }
 

@@ -5,17 +5,24 @@
 import {
   appendFileSync,
   existsSync,
+  mkdtempSync,
   readFileSync,
-  readdirSync,
+  renameSync,
   rmSync,
 } from "node:fs";
 import path from "node:path";
+import type { FuzzOptions } from "./config.js";
 import {
   deleteCorpusEntry,
   loadCorpusDirsWithPaths,
   writeCorpusEntryToDir,
   type CorpusEntryWithPath,
 } from "./corpus.js";
+import {
+  installDetectorModuleHooks,
+  getDetectorManager,
+  resetDetectorHooks,
+} from "./detectors/manager.js";
 
 export interface SetCoverEntry {
   path: string;
@@ -171,6 +178,7 @@ export interface MergeModeOptions {
   corpusDirs: string[];
   controlFilePath: string;
   coverageMap: Uint8Array;
+  detectorConfig?: FuzzOptions["detectors"];
 }
 
 /**
@@ -178,7 +186,8 @@ export interface MergeModeOptions {
  * run set cover, write survivors to the output directory (first corpus dir).
  */
 export async function runMergeMode(options: MergeModeOptions): Promise<void> {
-  const { target, corpusDirs, controlFilePath, coverageMap } = options;
+  const { target, corpusDirs, controlFilePath, coverageMap, detectorConfig } =
+    options;
   const outputDir = corpusDirs[0]!;
 
   // Load all entries from all corpus directories
@@ -206,29 +215,61 @@ export async function runMergeMode(options: MergeModeOptions): Promise<void> {
       continue;
     }
     const entry = allEntries.find((e) => e.path === r.path);
+    if (!entry) {
+      process.stderr.write(
+        `vitiate: merge: warning: control record for ${r.path} not found in corpus (skipping)\n`,
+      );
+      continue;
+    }
     setCoverEntries.push({
       path: r.path,
-      data: entry!.data,
+      data: entry.data,
       edges: r.edges,
     });
   }
 
+  // Install detectors if configured
+  if (detectorConfig !== undefined) {
+    installDetectorModuleHooks(detectorConfig);
+  }
+  const detectorManager =
+    detectorConfig !== undefined ? getDetectorManager() : null;
+
   // Replay remaining entries
   const remaining = allEntries.filter((e) => !processedPaths.has(e.path));
-  for (const entry of remaining) {
-    try {
-      await target(entry.data);
-    } catch {
-      process.stderr.write(
-        `vitiate: merge: warning: skipping ${entry.path} (JS exception)\n`,
-      );
-      coverageMap.fill(0);
-      continue;
-    }
+  try {
+    for (const entry of remaining) {
+      detectorManager?.beforeIteration();
+      let targetCompletedOk = true;
+      try {
+        await target(entry.data);
+      } catch {
+        targetCompletedOk = false;
+        process.stderr.write(
+          `vitiate: merge: warning: skipping ${entry.path} (JS exception)\n`,
+        );
+        coverageMap.fill(0);
+      }
 
-    const edges = collectEdges(coverageMap);
-    appendControlRecord(controlFilePath, entry.path, edges);
-    setCoverEntries.push({ path: entry.path, data: entry.data, edges });
+      const detectorError = detectorManager?.endIteration(targetCompletedOk);
+      if (detectorError) {
+        process.stderr.write(
+          `vitiate: merge: warning: detector finding in ${entry.path}: ${detectorError.message}\n`,
+        );
+      }
+
+      if (!targetCompletedOk) {
+        continue;
+      }
+
+      const edges = collectEdges(coverageMap);
+      appendControlRecord(controlFilePath, entry.path, edges);
+      setCoverEntries.push({ path: entry.path, data: entry.data, edges });
+    }
+  } finally {
+    if (detectorConfig !== undefined) {
+      resetDetectorHooks();
+    }
   }
 
   // Collect unique edges
@@ -249,26 +290,29 @@ export async function runMergeMode(options: MergeModeOptions): Promise<void> {
     `vitiate: merge: set cover selected ${survivors.length} entries (removed ${removed})\n`,
   );
 
-  // Clean output directory and write survivors
-  cleanDirectory(outputDir);
+  // Write survivors to a temp directory, then atomically swap it into place.
+  // Uses rename-swap instead of clean-then-rename to avoid a window where the
+  // output directory is empty if the process crashes mid-operation.
+  const parentDir = path.dirname(path.resolve(outputDir));
+  const tmpDir = mkdtempSync(path.join(parentDir, ".vitiate-merge-"));
   for (const survivor of survivors) {
-    writeCorpusEntryToDir(outputDir, survivor.data);
+    writeCorpusEntryToDir(tmpDir, survivor.data);
   }
+  const oldDir = mkdtempSync(path.join(parentDir, ".vitiate-merge-old-"));
+  rmSync(oldDir, { recursive: true }); // Remove empty placeholder; renameSync needs a non-existent target
+  renameSync(outputDir, oldDir);
+  try {
+    renameSync(tmpDir, outputDir);
+  } catch (swapErr) {
+    // Restore the original directory if the swap fails
+    renameSync(oldDir, outputDir);
+    rmSync(tmpDir, { recursive: true, force: true });
+    throw swapErr;
+  }
+  rmSync(oldDir, { recursive: true, force: true });
   process.stderr.write(
     `vitiate: merge: wrote ${survivors.length} entries to ${outputDir}\n`,
   );
-}
-
-/**
- * Remove all files from a directory (but not subdirectories).
- */
-function cleanDirectory(dir: string): void {
-  if (!existsSync(dir)) return;
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (entry.isFile() && !entry.name.startsWith(".")) {
-      rmSync(path.join(dir, entry.name));
-    }
-  }
 }
 
 // -- Optimize mode orchestration --
@@ -279,6 +323,7 @@ export interface OptimizeModeOptions {
   seedEntries: CorpusEntryWithPath[];
   cachedEntries: CorpusEntryWithPath[];
   coverageMap: Uint8Array;
+  detectorConfig?: FuzzOptions["detectors"];
 }
 
 /**
@@ -288,7 +333,14 @@ export interface OptimizeModeOptions {
 export async function runOptimizeMode(
   options: OptimizeModeOptions,
 ): Promise<void> {
-  const { target, testName, seedEntries, cachedEntries, coverageMap } = options;
+  const {
+    target,
+    testName,
+    seedEntries,
+    cachedEntries,
+    coverageMap,
+    detectorConfig,
+  } = options;
 
   if (cachedEntries.length === 0) {
     process.stderr.write(
@@ -297,65 +349,100 @@ export async function runOptimizeMode(
     return;
   }
 
+  // Install detectors if configured
+  if (detectorConfig !== undefined) {
+    installDetectorModuleHooks(detectorConfig);
+  }
+  const detectorManager =
+    detectorConfig !== undefined ? getDetectorManager() : null;
+
   // Replay seed entries to collect pre-covered edges
   const preCovered = new Set<number>();
   let replayedSeeds = 0;
-  for (const entry of seedEntries) {
-    try {
-      await target(entry.data);
-    } catch {
-      // Seed entries might throw; clear partial coverage and skip
-      coverageMap.fill(0);
-      continue;
+  try {
+    for (const entry of seedEntries) {
+      detectorManager?.beforeIteration();
+      let targetCompletedOk = true;
+      try {
+        await target(entry.data);
+      } catch {
+        targetCompletedOk = false;
+        // Seed entries might throw; clear partial coverage and skip
+        coverageMap.fill(0);
+      }
+      const detectorError = detectorManager?.endIteration(targetCompletedOk);
+      if (detectorError) {
+        process.stderr.write(
+          `vitiate: optimize: warning: detector finding in seed ${entry.path}: ${detectorError.message}\n`,
+        );
+      }
+      if (!targetCompletedOk) {
+        continue;
+      }
+      const edges = collectEdges(coverageMap);
+      for (const edge of edges) {
+        preCovered.add(edge);
+      }
+      replayedSeeds++;
     }
-    const edges = collectEdges(coverageMap);
-    for (const edge of edges) {
-      preCovered.add(edge);
+
+    // Replay cached entries to collect their edges
+    const cachedSetCoverEntries: SetCoverEntry[] = [];
+    for (const entry of cachedEntries) {
+      detectorManager?.beforeIteration();
+      let targetCompletedOk = true;
+      try {
+        await target(entry.data);
+      } catch {
+        targetCompletedOk = false;
+        // Skip entries that throw
+        coverageMap.fill(0);
+      }
+      const detectorError = detectorManager?.endIteration(targetCompletedOk);
+      if (detectorError) {
+        process.stderr.write(
+          `vitiate: optimize: warning: detector finding in ${entry.path}: ${detectorError.message}\n`,
+        );
+      }
+      if (!targetCompletedOk) {
+        continue;
+      }
+      const edges = collectEdges(coverageMap);
+      cachedSetCoverEntries.push({ path: entry.path, data: entry.data, edges });
     }
-    replayedSeeds++;
+
+    // Count all unique edges (seeds + cached)
+    const allEdges = new Set(preCovered);
+    for (const entry of cachedSetCoverEntries) {
+      for (const edge of entry.edges) {
+        allEdges.add(edge);
+      }
+    }
+
+    const totalReplayed = replayedSeeds + cachedSetCoverEntries.length;
+    process.stderr.write(
+      `vitiate: optimize: test "${testName}" - ${totalReplayed} entries, ${allEdges.size} edges\n`,
+    );
+
+    // Run set cover over cached entries only, with seed edges pre-covered
+    const survivors = setCover(cachedSetCoverEntries, preCovered);
+    const survivorPaths = new Set(survivors.map((s) => s.path));
+
+    // Delete non-survivors
+    let removed = 0;
+    for (const entry of cachedEntries) {
+      if (!survivorPaths.has(entry.path)) {
+        deleteCorpusEntry(entry.path);
+        removed++;
+      }
+    }
+
+    process.stderr.write(
+      `vitiate: optimize: test "${testName}" - kept ${survivors.length}, removed ${removed}\n`,
+    );
+  } finally {
+    if (detectorConfig !== undefined) {
+      resetDetectorHooks();
+    }
   }
-
-  // Replay cached entries to collect their edges
-  const cachedSetCoverEntries: SetCoverEntry[] = [];
-  for (const entry of cachedEntries) {
-    try {
-      await target(entry.data);
-    } catch {
-      // Skip entries that throw
-      coverageMap.fill(0);
-      continue;
-    }
-    const edges = collectEdges(coverageMap);
-    cachedSetCoverEntries.push({ path: entry.path, data: entry.data, edges });
-  }
-
-  // Count all unique edges (seeds + cached)
-  const allEdges = new Set(preCovered);
-  for (const entry of cachedSetCoverEntries) {
-    for (const edge of entry.edges) {
-      allEdges.add(edge);
-    }
-  }
-
-  const totalReplayed = replayedSeeds + cachedSetCoverEntries.length;
-  process.stderr.write(
-    `vitiate: optimize: test "${testName}" - ${totalReplayed} entries, ${allEdges.size} edges\n`,
-  );
-
-  // Run set cover over cached entries only, with seed edges pre-covered
-  const survivors = setCover(cachedSetCoverEntries, preCovered);
-  const survivorPaths = new Set(survivors.map((s) => s.path));
-
-  // Delete non-survivors
-  let removed = 0;
-  for (const entry of cachedEntries) {
-    if (!survivorPaths.has(entry.path)) {
-      deleteCorpusEntry(entry.path);
-      removed++;
-    }
-  }
-
-  process.stderr.write(
-    `vitiate: optimize: test "${testName}" - kept ${survivors.length}, removed ${removed}\n`,
-  );
 }

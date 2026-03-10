@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 use libafl::HasMetadata;
 use libafl::corpus::{Corpus, CorpusId, SchedulerTestcaseMetadata};

@@ -25,6 +25,15 @@ export const WATCHDOG_EXIT_CODE = watchdogExitCode();
  */
 export const MAX_RESPAWNS = 100;
 
+/** Signals that indicate a native crash (not user-initiated shutdown). */
+const CRASH_SIGNALS = new Set(["SIGSEGV", "SIGBUS", "SIGABRT", "SIGFPE"]);
+
+/** Exit codes that indicate crashes delivered as exit codes rather than signals. */
+const CRASH_EXIT_CODES = new Set([
+  134, // SIGABRT (128 + 6)
+  137, // SIGKILL / OOM killer (128 + 9)
+]);
+
 export interface SupervisorOptions {
   shmem: ShmemHandle;
   testDir: string;
@@ -55,14 +64,19 @@ export function waitForChild(
   child: ChildProcess,
 ): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
   return new Promise((resolve, reject) => {
-    child.once("error", (err) => {
-      child.removeAllListeners("exit");
+    const onError = (err: Error): void => {
+      child.removeListener("exit", onExit);
       reject(err);
-    });
-    child.once("exit", (code, signal) => {
-      child.removeAllListeners("error");
+    };
+    const onExit = (
+      code: number | null,
+      signal: NodeJS.Signals | null,
+    ): void => {
+      child.removeListener("error", onError);
       resolve({ code, signal });
-    });
+    };
+    child.once("error", onError);
+    child.once("exit", onExit);
   });
 }
 
@@ -87,27 +101,65 @@ export async function runSupervisor(
   // process group, so the child already receives it. We only need the flag
   // to avoid interpreting the child's SIGINT-caused exit as a crash.
   let sigintReceived = false;
+  let sigtermReceived = false;
+  let currentChild: ChildProcess | null = null;
 
   const sigintHandler = (): void => {
     sigintReceived = true;
   };
+  const sigtermHandler = (): void => {
+    sigtermReceived = true;
+    // Forward SIGTERM to the child so it can shut down gracefully.
+    currentChild?.kill("SIGTERM");
+  };
   process.on("SIGINT", sigintHandler);
+  process.on("SIGTERM", sigtermHandler);
 
   let respawnCount = 0;
 
   try {
     while (true) {
       const child = spawnChild();
+      currentChild = child;
 
       const { code, signal } = await waitForChild(child);
-
-      if (sigintReceived) {
-        // Parent received SIGINT — exit cleanly (130 = conventional SIGINT exit)
-        return { crashed: false, exitCode: code ?? 130 };
-      }
+      currentChild = null;
 
       if (signal !== null) {
-        // Child was killed by a signal — native crash
+        // Check for crash signals BEFORE checking user-initiated shutdown.
+        // This prevents a concurrent SIGINT from swallowing a real crash.
+        if (CRASH_SIGNALS.has(signal)) {
+          process.stderr.write(`vitiate: child killed by signal ${signal}\n`);
+
+          const result = recoverAndRespawn(
+            shmem,
+            testDir,
+            testName,
+            "crash",
+            respawnCount,
+            maxRespawns,
+            artifactPrefix,
+          );
+          if (result.limitReached) {
+            return {
+              crashed: true,
+              crashArtifactPath: result.crashArtifactPath,
+              signal,
+            };
+          }
+          respawnCount++;
+          continue;
+        }
+
+        // User-initiated shutdown signals
+        if (sigintReceived) {
+          return { crashed: false, exitCode: code ?? 130 };
+        }
+        if (sigtermReceived) {
+          return { crashed: false, exitCode: code ?? 143 };
+        }
+
+        // Other signal — treat as crash
         process.stderr.write(`vitiate: child killed by signal ${signal}\n`);
 
         const result = recoverAndRespawn(
@@ -128,6 +180,14 @@ export async function runSupervisor(
         }
         respawnCount++;
         continue;
+      }
+
+      // No signal — check shutdown flags for exit-code paths too
+      if (sigintReceived) {
+        return { crashed: false, exitCode: code ?? 130 };
+      }
+      if (sigtermReceived) {
+        return { crashed: false, exitCode: code ?? 143 };
       }
 
       // Child exited with a code
@@ -165,11 +225,38 @@ export async function runSupervisor(
         continue;
       }
 
+      // Exit codes that indicate crashes (e.g., OOM kill, SIGABRT as exit code)
+      if (code !== null && CRASH_EXIT_CODES.has(code)) {
+        process.stderr.write(
+          `vitiate: child exited with crash exit code ${code}\n`,
+        );
+
+        const result = recoverAndRespawn(
+          shmem,
+          testDir,
+          testName,
+          "crash",
+          respawnCount,
+          maxRespawns,
+          artifactPrefix,
+        );
+        if (result.limitReached) {
+          return {
+            crashed: true,
+            crashArtifactPath: result.crashArtifactPath,
+            exitCode: code,
+          };
+        }
+        respawnCount++;
+        continue;
+      }
+
       // Unknown exit code — forward as-is
       return { crashed: false, exitCode: code ?? 1 };
     }
   } finally {
     process.removeListener("SIGINT", sigintHandler);
+    process.removeListener("SIGTERM", sigtermHandler);
   }
 }
 
