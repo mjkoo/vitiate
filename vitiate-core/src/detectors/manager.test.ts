@@ -17,6 +17,10 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 
+const IS_WINDOWS = process.platform === "win32";
+// path-traversal is Tier 2 on Windows (default-off), Tier 1 elsewhere.
+const DEFAULT_TIER1_COUNT = IS_WINDOWS ? 2 : 3;
+
 // ── DetectorManager ─────────────────────────────────────────────────────
 
 describe("DetectorManager", () => {
@@ -24,15 +28,23 @@ describe("DetectorManager", () => {
     const manager = new DetectorManager(undefined);
     expect(manager.activeDetectorNames).toContain("prototype-pollution");
     expect(manager.activeDetectorNames).toContain("command-injection");
-    expect(manager.activeDetectorNames).toContain("path-traversal");
+    if (IS_WINDOWS) {
+      expect(manager.activeDetectorNames).not.toContain("path-traversal");
+    } else {
+      expect(manager.activeDetectorNames).toContain("path-traversal");
+    }
   });
 
   it("enables all Tier 1 detectors with empty config (no Tier 2)", () => {
     const manager = new DetectorManager({});
-    expect(manager.activeDetectorNames).toHaveLength(3);
+    expect(manager.activeDetectorNames).toHaveLength(DEFAULT_TIER1_COUNT);
     expect(manager.activeDetectorNames).toContain("prototype-pollution");
     expect(manager.activeDetectorNames).toContain("command-injection");
-    expect(manager.activeDetectorNames).toContain("path-traversal");
+    if (IS_WINDOWS) {
+      expect(manager.activeDetectorNames).not.toContain("path-traversal");
+    } else {
+      expect(manager.activeDetectorNames).toContain("path-traversal");
+    }
   });
 
   it("disables a detector when set to false", () => {
@@ -41,7 +53,11 @@ describe("DetectorManager", () => {
     });
     expect(manager.activeDetectorNames).not.toContain("prototype-pollution");
     expect(manager.activeDetectorNames).toContain("command-injection");
-    expect(manager.activeDetectorNames).toContain("path-traversal");
+    if (IS_WINDOWS) {
+      expect(manager.activeDetectorNames).not.toContain("path-traversal");
+    } else {
+      expect(manager.activeDetectorNames).toContain("path-traversal");
+    }
   });
 
   it("enables a detector when set to true", () => {
@@ -63,7 +79,7 @@ describe("DetectorManager", () => {
     // which strips unknown keys. But the manager itself also only
     // processes known registry entries.
     const manager = new DetectorManager({} as Record<string, unknown>);
-    expect(manager.activeDetectorNames).toHaveLength(3);
+    expect(manager.activeDetectorNames).toHaveLength(DEFAULT_TIER1_COUNT);
   });
 
   it("delegates lifecycle calls in registration order", () => {
@@ -129,7 +145,10 @@ describe("DetectorManager", () => {
     const tokenStrings = tokens.map((t) => t.toString("utf8"));
     expect(tokenStrings).toContain("__proto__"); // from prototype pollution
     expect(tokenStrings).toContain("vitiate_cmd_inject"); // from command injection
-    expect(tokenStrings).toContain("../"); // from path traversal
+    // Path traversal is tier 2 on Windows (not enabled by default config)
+    if (process.platform !== "win32") {
+      expect(tokenStrings).toContain("../"); // from path traversal
+    }
   });
 });
 
@@ -647,7 +666,11 @@ describe("installDetectorModuleHooks", () => {
     const manager = getDetectorManager();
     expect(manager).toBeInstanceOf(DetectorManager);
     expect(manager!.activeDetectorNames).toContain("command-injection");
-    expect(manager!.activeDetectorNames).toContain("path-traversal");
+    if (IS_WINDOWS) {
+      expect(manager!.activeDetectorNames).not.toContain("path-traversal");
+    } else {
+      expect(manager!.activeDetectorNames).toContain("path-traversal");
+    }
     expect(manager!.activeDetectorNames).toContain("prototype-pollution");
   });
 

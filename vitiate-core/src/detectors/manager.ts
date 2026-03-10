@@ -49,7 +49,10 @@ const DETECTOR_REGISTRY: DetectorRegistration[] = [
           : undefined;
       return new PathTraversalDetector(opts?.allowedPaths, opts?.deniedPaths);
     },
-    tier: 1,
+    // Tier 2 on Windows: the default allowed-path policy (resolve("/") → current
+    // drive root) cannot cover cross-drive access, UNC paths, or junctions,
+    // making false positives likely without explicit user configuration.
+    tier: process.platform === "win32" ? 2 : 1,
   },
   {
     key: "redos",
