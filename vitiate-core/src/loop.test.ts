@@ -454,7 +454,7 @@ describe("fuzz loop", () => {
   // stages that run extra iterations beyond the `fuzzExecs` limit.
   // Grimoire/REDQUEEN integration is tested at the engine level (Rust unit tests).
   // A full TypeScript pipeline test for these features would be
-  // non-deterministic and belongs in fuzz-pipeline.test.ts if needed.
+  // non-deterministic and belongs in e2e-fuzz.test.ts if needed.
 
   it("runs calibration loop after interesting inputs", async () => {
     await setupFuzzingMode();

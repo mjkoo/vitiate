@@ -313,4 +313,4 @@ fn test_begin_redqueen_sets_corpus_id() {
 // begin_redqueen → advance_redqueen) is intentionally absent here.
 // The setup requires a fully wired Fuzzer with coverage map, CmpLog
 // observer, and multi-step async iteration — complexity that belongs
-// in the end-to-end fuzz-pipeline.test.ts rather than unit tests.
+// in the end-to-end e2e-fuzz.test.ts rather than unit tests.

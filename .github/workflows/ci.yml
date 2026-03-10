@@ -45,6 +45,21 @@ jobs:
       - name: Type check
         run: pnpm exec turbo run check
 
+      - name: MSRV check
+        run: |
+          cargo install cargo-msrv --locked
+          cargo msrv verify --rust-version \
+            "$(cargo metadata --format-version 1 --no-deps |
+               jq -r '[.packages[].rust_version // empty] | unique |
+                       if length == 1 then .[0]
+                       else error("inconsistent MSRVs: \(.)") end')"
+
+      - name: Autoinherit check
+        run: |
+          cargo install cargo-autoinherit --locked
+          cargo autoinherit --prefer-simple-dotted
+          git diff --exit-code -- Cargo.toml */Cargo.toml
+
   test:
     name: Test (${{ matrix.os == 'ubuntu-latest' && 'Linux' || 'Windows' }})
     runs-on: ${{ matrix.os }}
@@ -84,9 +99,12 @@ jobs:
       - name: JS test
         run: pnpm exec turbo run test
 
-      - name: E2E fuzz pipeline
+      - name: Instrumentation test
+        run: pnpm run test:instrumentation
+
+      - name: E2E test
         run: pnpm run test:e2e
-        timeout-minutes: 2
+        timeout-minutes: 5
 
       - name: ESLint
         if: runner.os == 'Linux'
@@ -128,9 +146,12 @@ jobs:
       - name: JS test
         run: pnpm exec turbo run test
 
-      - name: E2E fuzz pipeline
+      - name: Instrumentation test
+        run: pnpm run test:instrumentation
+
+      - name: E2E test
         run: pnpm run test:e2e
-        timeout-minutes: 2
+        timeout-minutes: 5
 
   test-musl:
     name: Test (musl)
@@ -170,6 +191,9 @@ jobs:
       - name: JS test
         run: pnpm exec turbo run test
 
-      - name: E2E fuzz pipeline
+      - name: Instrumentation test
+        run: pnpm run test:instrumentation
+
+      - name: E2E test
         run: pnpm run test:e2e
-        timeout-minutes: 2
+        timeout-minutes: 5

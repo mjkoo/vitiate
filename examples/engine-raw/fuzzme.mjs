@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * End-to-end fuzzing example: instrument a target with the SWC WASM plugin,
+ * Documentation example: instrument a target with the SWC WASM plugin,
  * then fuzz it with the @vitiate/engine LibAFL engine until a crash is found.
+ * For the recommended workflow, use the Vitest plugin (see examples/url-parser/).
  */
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -116,14 +117,16 @@ for (let i = 0; i < MAX_ITERATIONS; i++) {
   const input = fuzzer.getNextInput();
 
   let exitKind = ExitKind.Ok;
+  const execStart = process.hrtime.bigint();
   try {
     target(input);
   } catch (e) {
     exitKind = ExitKind.Crash;
     crashInput = { input: Buffer.from(input), error: e, iteration: i + 1 };
   }
+  const execTimeNs = Number(process.hrtime.bigint() - execStart);
 
-  const iterResult = fuzzer.reportResult(exitKind);
+  const iterResult = fuzzer.reportResult(exitKind, execTimeNs);
 
   // Print progress every 10k iterations
   if ((i + 1) % 10_000 === 0) {

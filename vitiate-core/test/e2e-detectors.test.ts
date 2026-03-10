@@ -122,7 +122,7 @@ describe("detector pipeline: fuzz mode", () => {
     }
 
     result = await runVitest(
-      "vitest.fuzz-pipeline.config.ts",
+      "vitest.fuzz.config.ts",
       { VITIATE_FUZZ: "1" },
       60_000,
     );

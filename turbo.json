@@ -16,7 +16,11 @@
       "dependsOn": ["build"],
       "cache": false
     },
-    "test:fuzz-pipeline": {
+    "test:e2e": {
+      "dependsOn": ["build"],
+      "cache": false
+    },
+    "test:instrumentation": {
       "dependsOn": ["build"],
       "cache": false
     }

@@ -116,7 +116,7 @@ describe("fuzz pipeline: discovers planted bugs end-to-end", () => {
       const chunks: Buffer[] = [];
       const child = spawn(
         "pnpm",
-        ["exec", "vitest", "run", "--config", "vitest.fuzz-pipeline.config.ts"],
+        ["exec", "vitest", "run", "--config", "vitest.fuzz.config.ts"],
         {
           cwd: EXAMPLE_DIR,
           timeout: 300_000,
@@ -144,34 +144,34 @@ describe("fuzz pipeline: discovers planted bugs end-to-end", () => {
 
   it("finds the parse-url planted bug via instrumented fuzz run", () => {
     // The fuzz run should find at least one planted bug and exit non-zero
-    if (result.exitCode !== 1) dumpOutput("fuzz-pipeline", result.output);
+    if (result.exitCode !== 1) dumpOutput("e2e-fuzz", result.output);
     expect(result.exitCode).toBe(1);
 
     // A crash artifact should have been written
     const artifacts = findArtifacts(PARSE_URL_ARTIFACT_DIR);
-    if (artifacts.length < 1) dumpOutput("fuzz-pipeline", result.output);
+    if (artifacts.length < 1) dumpOutput("e2e-fuzz", result.output);
     expect(artifacts.length).toBeGreaterThanOrEqual(1);
   });
 
   it("finds the parse-url-async planted bug via async fuzz target", () => {
     // The fuzz run should find at least one planted bug and exit non-zero
-    if (result.exitCode !== 1) dumpOutput("fuzz-pipeline", result.output);
+    if (result.exitCode !== 1) dumpOutput("e2e-fuzz", result.output);
     expect(result.exitCode).toBe(1);
 
     // A crash artifact should have been written
     const artifacts = findArtifacts(PARSE_URL_ASYNC_ARTIFACT_DIR);
-    if (artifacts.length < 1) dumpOutput("fuzz-pipeline", result.output);
+    if (artifacts.length < 1) dumpOutput("e2e-fuzz", result.output);
     expect(artifacts.length).toBeGreaterThanOrEqual(1);
   });
 
   it("finds the validate-scheme planted bug via CmpLog token injection", () => {
     // The fuzz run should find at least one planted bug and exit non-zero
-    if (result.exitCode !== 1) dumpOutput("fuzz-pipeline", result.output);
+    if (result.exitCode !== 1) dumpOutput("e2e-fuzz", result.output);
     expect(result.exitCode).toBe(1);
 
     // A crash artifact should have been written
     const artifacts = findArtifacts(VALIDATE_SCHEME_ARTIFACT_DIR);
-    if (artifacts.length < 1) dumpOutput("fuzz-pipeline", result.output);
+    if (artifacts.length < 1) dumpOutput("e2e-fuzz", result.output);
     expect(artifacts.length).toBeGreaterThanOrEqual(1);
   });
 });

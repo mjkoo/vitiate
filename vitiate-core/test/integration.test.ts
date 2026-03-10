@@ -1,8 +1,7 @@
 /**
- * End-to-end integration tests for the fuzz API.
+ * Integration tests for corpus loading and crash replay.
  */
 import { describe, it, expect, afterEach } from "vitest";
-import { execSync } from "node:child_process";
 import { existsSync, rmSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,11 +11,11 @@ import { loadSeedCorpus, writeArtifact } from "../src/corpus.js";
 import { setCacheDir, resetCacheDir } from "../src/config.js";
 import { parseCommand } from "./parser-target.js";
 
-const E2E_DIR = path.dirname(fileURLToPath(import.meta.url));
+const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 
-describe("e2e: regression mode with seeded corpus", () => {
+describe("regression mode with seeded corpus", () => {
   it("runs all seed corpus entries without crashing", () => {
-    const seeds = loadSeedCorpus(E2E_DIR, "parse-planted-bug");
+    const seeds = loadSeedCorpus(TEST_DIR, "parse-planted-bug");
     expect(seeds.length).toBeGreaterThanOrEqual(3);
 
     // Run the target with each seed - none should crash
@@ -27,7 +26,7 @@ describe("e2e: regression mode with seeded corpus", () => {
   });
 });
 
-describe("e2e: fuzzing mode discovers planted bug", () => {
+describe("fuzzing mode discovers planted bug", () => {
   let tmpDir: string;
   const originalFuzz = process.env["VITIATE_FUZZ"];
   const originalCov = globalThis.__vitiate_cov;
@@ -73,23 +72,3 @@ describe("e2e: fuzzing mode discovers planted bug", () => {
     expect(() => parseCommand(crashEntry)).toThrow("parser crash");
   });
 }, 60000);
-
-describe("e2e: instrumented child process", () => {
-  it("runs the instrumented vitest config and all tests pass", () => {
-    const vitiatePkg = path.resolve(
-      path.dirname(fileURLToPath(import.meta.url)),
-      "..",
-    );
-    // Run the instrumented test suite as a child process
-    // It verifies that instrumented code produces non-zero coverage entries
-    const output = execSync(
-      "pnpm exec vitest run --config test/vitest.instrumented.config.ts",
-      {
-        cwd: vitiatePkg,
-        timeout: 60_000,
-        encoding: "utf-8",
-      },
-    );
-    expect(output).toContain("2 passed");
-  });
-}, 120000);
