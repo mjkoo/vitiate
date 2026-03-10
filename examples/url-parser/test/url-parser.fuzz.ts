@@ -1,4 +1,4 @@
-import { fuzz } from "vitiate";
+import { fuzz } from "@vitiate/core";
 import { parseUrl, normalizeUrl, ParseError } from "../src/url-parser.js";
 
 fuzz("parse-url", (data: Buffer) => {

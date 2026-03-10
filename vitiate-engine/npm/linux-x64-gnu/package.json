@@ -1,0 +1,26 @@
+{
+  "name": "@vitiate/engine-linux-x64-gnu",
+  "version": "0.1.0",
+  "cpu": [
+    "x64"
+  ],
+  "main": "vitiate-engine.linux-x64-gnu.node",
+  "files": [
+    "vitiate-engine.linux-x64-gnu.node"
+  ],
+  "description": "Native Node.js addon for vitiate",
+  "license": "MIT",
+  "engines": {
+    "node": ">= 18"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
+  "os": [
+    "linux"
+  ],
+  "libc": [
+    "glibc"
+  ]
+}

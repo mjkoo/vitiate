@@ -8,7 +8,7 @@
     "fuzz:cli": "vitiate test/url-parser.fuzz.ts -max_total_time=30"
   },
   "dependencies": {
-    "vitiate": "workspace:*"
+    "@vitiate/core": "workspace:*"
   },
   "devDependencies": {
     "vite": "^6.0.0",

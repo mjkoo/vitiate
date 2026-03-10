@@ -9,7 +9,7 @@
     "skipLibCheck": true
   },
   "include": [
-    "vitiate/src/**/*.ts",
+    "vitiate-core/src/**/*.ts",
     "examples/*/src/**/*.ts",
     "examples/*/test/**/*.ts"
   ]

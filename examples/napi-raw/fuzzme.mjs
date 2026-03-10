@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * End-to-end fuzzing example: instrument a target with the SWC WASM plugin,
- * then fuzz it with the vitiate-napi LibAFL engine until a crash is found.
+ * then fuzz it with the @vitiate/engine LibAFL engine until a crash is found.
  */
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -12,7 +12,7 @@ import vm from "node:vm";
 const require = createRequire(
   path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
-    "../../vitiate/package.json",
+    "../../vitiate-core/package.json",
   ),
 );
 const { transformSync } = require("@swc/core");
@@ -22,7 +22,7 @@ const {
   ExitKind,
   IterationResult,
   traceCmp,
-} = require("vitiate-napi");
+} = require("@vitiate/engine");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -48,7 +48,7 @@ function fuzzme(data) {
 // ---------------------------------------------------------------------------
 const wasmPluginPath = path.resolve(
   __dirname,
-  "../../vitiate-instrument/vitiate_instrument.wasm",
+  "../../vitiate-swc-plugin/vitiate_swc_plugin.wasm",
 );
 
 console.log("Instrumenting target with SWC WASM plugin...");

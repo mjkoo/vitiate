@@ -1,0 +1,23 @@
+{
+  "name": "@vitiate/engine-win32-x64-msvc",
+  "version": "0.1.0",
+  "cpu": [
+    "x64"
+  ],
+  "main": "vitiate-engine.win32-x64-msvc.node",
+  "files": [
+    "vitiate-engine.win32-x64-msvc.node"
+  ],
+  "description": "Native Node.js addon for vitiate",
+  "license": "MIT",
+  "engines": {
+    "node": ">= 18"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
+  "os": [
+    "win32"
+  ]
+}

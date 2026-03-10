@@ -1,4 +1,4 @@
-import { fuzz } from "vitiate";
+import { fuzz } from "@vitiate/core";
 import { validateScheme, ParseError } from "../src/url-parser.js";
 
 fuzz("validate-scheme", (data: Buffer) => {

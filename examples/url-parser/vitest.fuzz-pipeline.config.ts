@@ -1,5 +1,5 @@
 import { defineConfig } from "vitest/config";
-import { vitiatePlugin } from "vitiate/plugin";
+import { vitiatePlugin } from "@vitiate/core/plugin";
 
 export default defineConfig({
   plugins: [

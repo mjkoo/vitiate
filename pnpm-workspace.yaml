@@ -1,8 +1,8 @@
 packages:
-  - vitiate
-  - vitiate-napi
-  - vitiate-napi/npm/*
-  - vitiate-instrument
+  - vitiate-core
+  - vitiate-engine
+  - vitiate-engine/npm/*
+  - vitiate-swc-plugin
   - examples/*
 
 onlyBuiltDependencies:

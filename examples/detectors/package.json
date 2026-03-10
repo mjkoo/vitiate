@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {},
   "dependencies": {
-    "vitiate": "workspace:*"
+    "@vitiate/core": "workspace:*"
   },
   "devDependencies": {
     "vite": "^6.0.0",

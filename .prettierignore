@@ -9,7 +9,7 @@ Cargo.lock
 .pnpm-store/
 .claude/
 openspec/
-vitiate-napi/npm/
-vitiate-napi/index.js
-vitiate-napi/index.d.ts
+vitiate-engine/npm/
+vitiate-engine/index.js
+vitiate-engine/index.d.ts
 *.md
