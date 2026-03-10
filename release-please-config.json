@@ -1,0 +1,101 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "include-component-in-tag": false,
+  "bump-minor-pre-major": true,
+  "bump-patch-for-minor-pre-major": true,
+  "changelog-sections": [
+    { "type": "feat", "section": "Features" },
+    { "type": "fix", "section": "Bug Fixes" },
+    { "type": "perf", "section": "Performance Improvements" },
+    { "type": "revert", "section": "Reverts" },
+    { "type": "docs", "section": "Documentation", "hidden": true },
+    { "type": "style", "section": "Styles", "hidden": true },
+    { "type": "chore", "section": "Miscellaneous Chores", "hidden": true },
+    { "type": "refactor", "section": "Code Refactoring", "hidden": true },
+    { "type": "test", "section": "Tests", "hidden": true },
+    { "type": "build", "section": "Build System", "hidden": true },
+    { "type": "ci", "section": "Continuous Integration", "hidden": true }
+  ],
+  "packages": {
+    "vitiate-core": {
+      "release-type": "node",
+      "component": "@vitiate/core"
+    },
+    "vitiate-engine": {
+      "release-type": "node",
+      "component": "@vitiate/engine",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "/Cargo.toml",
+          "jsonpath": "$.workspace.package.version"
+        }
+      ]
+    },
+    "vitiate-engine/npm/darwin-arm64": {
+      "release-type": "node",
+      "component": "@vitiate/engine-darwin-arm64"
+    },
+    "vitiate-engine/npm/linux-arm64-gnu": {
+      "release-type": "node",
+      "component": "@vitiate/engine-linux-arm64-gnu"
+    },
+    "vitiate-engine/npm/linux-x64-gnu": {
+      "release-type": "node",
+      "component": "@vitiate/engine-linux-x64-gnu"
+    },
+    "vitiate-engine/npm/linux-x64-musl": {
+      "release-type": "node",
+      "component": "@vitiate/engine-linux-x64-musl"
+    },
+    "vitiate-engine/npm/win32-x64-msvc": {
+      "release-type": "node",
+      "component": "@vitiate/engine-win32-x64-msvc"
+    },
+    "vitiate-engine/npm/darwin-x64": {
+      "release-type": "node",
+      "component": "@vitiate/engine-darwin-x64"
+    },
+    "vitiate-engine/npm/win32-arm64-msvc": {
+      "release-type": "node",
+      "component": "@vitiate/engine-win32-arm64-msvc"
+    },
+    "vitiate-engine/npm/linux-arm64-musl": {
+      "release-type": "node",
+      "component": "@vitiate/engine-linux-arm64-musl"
+    },
+    "vitiate-engine/npm/linux-arm-gnueabihf": {
+      "release-type": "node",
+      "component": "@vitiate/engine-linux-arm-gnueabihf"
+    },
+    "vitiate-swc-plugin": {
+      "release-type": "node",
+      "component": "@vitiate/swc-plugin"
+    },
+    "vitiate-fuzzed-data-provider": {
+      "release-type": "node",
+      "component": "@vitiate/fuzzed-data-provider"
+    }
+  },
+  "plugins": [
+    {
+      "type": "linked-versions",
+      "groupName": "vitiate",
+      "components": [
+        "@vitiate/core",
+        "@vitiate/engine",
+        "@vitiate/engine-darwin-arm64",
+        "@vitiate/engine-linux-arm64-gnu",
+        "@vitiate/engine-linux-x64-gnu",
+        "@vitiate/engine-linux-x64-musl",
+        "@vitiate/engine-win32-x64-msvc",
+        "@vitiate/engine-darwin-x64",
+        "@vitiate/engine-win32-arm64-msvc",
+        "@vitiate/engine-linux-arm64-musl",
+        "@vitiate/engine-linux-arm-gnueabihf",
+        "@vitiate/swc-plugin",
+        "@vitiate/fuzzed-data-provider"
+      ]
+    }
+  ]
+}

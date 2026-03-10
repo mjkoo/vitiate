@@ -1,0 +1,269 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  release-please:
+    name: Release Please
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      releases_created: ${{ steps.release.outputs['vitiate-core--release_created'] }}
+      tag_name: ${{ steps.release.outputs['vitiate-core--tag_name'] }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+
+  build-native:
+    name: Build Native (${{ matrix.target }})
+    needs: release-please
+    if: |
+      always() &&
+      needs.release-please.result != 'failure' &&
+      (needs.release-please.outputs.releases_created == 'true' || github.event_name == 'workflow_dispatch')
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-latest
+            use_zig: true
+          - target: armv7-unknown-linux-gnueabihf
+            runner: ubuntu-latest
+            use_zig: true
+          - target: x86_64-apple-darwin
+            runner: macos-latest
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+          - target: aarch64-pc-windows-msvc
+            runner: windows-latest
+            # Disable LTO and increase codegen-units to avoid LLVM OOM on GitHub Actions
+            disable_lto: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install musl tools
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Install aarch64 cross-compilation tools
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Install Zig
+        if: matrix.use_zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Disable LTO
+        if: matrix.disable_lto
+        shell: bash
+        run: |
+          echo "CARGO_PROFILE_RELEASE_LTO=false" >> "$GITHUB_ENV"
+          echo "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=256" >> "$GITHUB_ENV"
+
+      - name: Build native addon
+        run: cd vitiate-engine && pnpm exec napi build --platform --release --target ${{ matrix.target }} ${{ matrix.use_zig && '--use-zig' || '' }}
+        env:
+          CC: ${{ matrix.target == 'x86_64-unknown-linux-musl' && 'musl-gcc' || (matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-gcc' || '') }}
+          CXX: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-g++' || '' }}
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.target == 'aarch64-unknown-linux-gnu' && 'aarch64-linux-gnu-gcc' || '' }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bindings-${{ matrix.target }}
+          path: vitiate-engine/vitiate-engine.*.node
+          if-no-files-found: error
+
+  build-js:
+    name: Build JS + WASM
+    needs: release-please
+    if: |
+      always() &&
+      needs.release-please.result != 'failure' &&
+      (needs.release-please.outputs.releases_created == 'true' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build all packages
+        run: pnpm run build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm
+          path: vitiate-swc-plugin/vitiate_swc_plugin.wasm
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-core
+          path: vitiate-core/dist/
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-fuzzed-data-provider
+          path: vitiate-fuzzed-data-provider/dist/
+          if-no-files-found: error
+
+  publish:
+    name: Publish to npm
+    needs: [release-please, build-native, build-js]
+    if: |
+      always() &&
+      needs.build-native.result == 'success' &&
+      needs.build-js.result == 'success' &&
+      (needs.release-please.outputs.releases_created == 'true' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name || github.sha }}
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org/
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Download native artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/bindings
+          pattern: bindings-*
+          merge-multiple: true
+
+      - name: Download WASM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm
+          path: artifacts/wasm
+
+      - name: Download core dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-core
+          path: artifacts/dist-core
+
+      - name: Download fuzzed-data-provider dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-fuzzed-data-provider
+          path: artifacts/dist-fuzzed-data-provider
+
+      - name: Move native artifacts into platform packages
+        run: cd vitiate-engine && pnpm exec napi artifacts --output-dir ../artifacts/bindings
+
+      - name: Copy WASM artifact
+        run: cp artifacts/wasm/vitiate_swc_plugin.wasm vitiate-swc-plugin/
+
+      - name: Copy TypeScript build artifacts
+        run: |
+          mkdir -p vitiate-core/dist vitiate-fuzzed-data-provider/dist
+          cp -r artifacts/dist-core/* vitiate-core/dist/
+          cp -r artifacts/dist-fuzzed-data-provider/* vitiate-fuzzed-data-provider/dist/
+
+      - name: Verify all artifacts present
+        run: |
+          set -e
+          for f in \
+            vitiate-engine/npm/darwin-arm64/vitiate-engine.darwin-arm64.node \
+            vitiate-engine/npm/darwin-x64/vitiate-engine.darwin-x64.node \
+            vitiate-engine/npm/linux-arm64-gnu/vitiate-engine.linux-arm64-gnu.node \
+            vitiate-engine/npm/linux-arm64-musl/vitiate-engine.linux-arm64-musl.node \
+            vitiate-engine/npm/linux-arm-gnueabihf/vitiate-engine.linux-arm-gnueabihf.node \
+            vitiate-engine/npm/linux-x64-gnu/vitiate-engine.linux-x64-gnu.node \
+            vitiate-engine/npm/linux-x64-musl/vitiate-engine.linux-x64-musl.node \
+            vitiate-engine/npm/win32-arm64-msvc/vitiate-engine.win32-arm64-msvc.node \
+            vitiate-engine/npm/win32-x64-msvc/vitiate-engine.win32-x64-msvc.node \
+            vitiate-swc-plugin/vitiate_swc_plugin.wasm \
+            vitiate-core/dist/index.js \
+            vitiate-fuzzed-data-provider/dist/index.js; do
+            test -f "$f" || { echo "Missing artifact: $f"; exit 1; }
+          done
+          echo "All artifacts verified."
+
+      - name: Publish all packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -e
+          PUBLISH_FLAGS="--no-git-checks --access public"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            PUBLISH_FLAGS="$PUBLISH_FLAGS --dry-run"
+            echo "DRY RUN: packages will NOT be published to npm"
+          else
+            PUBLISH_FLAGS="$PUBLISH_FLAGS --provenance"
+          fi
+          packages=(
+            vitiate-engine/npm/darwin-arm64
+            vitiate-engine/npm/darwin-x64
+            vitiate-engine/npm/linux-arm64-gnu
+            vitiate-engine/npm/linux-arm64-musl
+            vitiate-engine/npm/linux-arm-gnueabihf
+            vitiate-engine/npm/linux-x64-gnu
+            vitiate-engine/npm/linux-x64-musl
+            vitiate-engine/npm/win32-arm64-msvc
+            vitiate-engine/npm/win32-x64-msvc
+            vitiate-engine
+            vitiate-swc-plugin
+            vitiate-fuzzed-data-provider
+            vitiate-core
+          )
+          for pkg in "${packages[@]}"; do
+            echo "Publishing $pkg..."
+            (cd "$pkg" && pnpm publish $PUBLISH_FLAGS)
+          done

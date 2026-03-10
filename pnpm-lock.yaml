@@ -123,15 +123,24 @@ importers:
       '@vitiate/engine-darwin-x64':
         specifier: workspace:*
         version: link:npm/darwin-x64
+      '@vitiate/engine-linux-arm-gnueabihf':
+        specifier: workspace:*
+        version: link:npm/linux-arm-gnueabihf
       '@vitiate/engine-linux-arm64-gnu':
         specifier: workspace:*
         version: link:npm/linux-arm64-gnu
+      '@vitiate/engine-linux-arm64-musl':
+        specifier: workspace:*
+        version: link:npm/linux-arm64-musl
       '@vitiate/engine-linux-x64-gnu':
         specifier: workspace:*
         version: link:npm/linux-x64-gnu
       '@vitiate/engine-linux-x64-musl':
         specifier: workspace:*
         version: link:npm/linux-x64-musl
+      '@vitiate/engine-win32-arm64-msvc':
+        specifier: workspace:*
+        version: link:npm/win32-arm64-msvc
       '@vitiate/engine-win32-x64-msvc':
         specifier: workspace:*
         version: link:npm/win32-x64-msvc
@@ -140,11 +149,17 @@ importers:
 
   vitiate-engine/npm/darwin-x64: {}
 
+  vitiate-engine/npm/linux-arm-gnueabihf: {}
+
   vitiate-engine/npm/linux-arm64-gnu: {}
+
+  vitiate-engine/npm/linux-arm64-musl: {}
 
   vitiate-engine/npm/linux-x64-gnu: {}
 
   vitiate-engine/npm/linux-x64-musl: {}
+
+  vitiate-engine/npm/win32-arm64-msvc: {}
 
   vitiate-engine/npm/win32-x64-msvc: {}
 

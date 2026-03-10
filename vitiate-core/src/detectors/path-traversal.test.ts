@@ -324,10 +324,13 @@ describe("PathTraversalDetector", () => {
     expect(tokenStrings).toContain("..\\");
     expect(tokenStrings).toContain("\x00");
     expect(tokenStrings).toContain("%2e%2e%2f");
-    // Default deniedPaths is platform-dependent
+    // Default deniedPaths is platform-dependent; the implementation
+    // lowercases on Windows via normalizePath, so compare accordingly.
     if (process.platform === "win32") {
       expect(tokenStrings).toContain(
-        nodePath.resolve("C:\\Windows\\System32\\drivers\\etc\\hosts"),
+        nodePath
+          .resolve("C:\\Windows\\System32\\drivers\\etc\\hosts")
+          .toLowerCase(),
       );
     } else {
       expect(tokenStrings).toContain("/etc/passwd");
@@ -350,9 +353,14 @@ describe("PathTraversalDetector", () => {
     ]);
     const tokens = detector.getTokens();
     const tokenStrings = tokens.map((t) => new TextDecoder().decode(t));
-    // Tokens contain the resolved paths (platform-dependent)
-    expect(tokenStrings).toContain(nodePath.resolve("/etc/passwd"));
-    expect(tokenStrings).toContain(nodePath.resolve("/proc/self/environ"));
+    // Tokens contain the resolved paths (platform-dependent);
+    // the implementation lowercases on Windows via normalizePath.
+    const normalize = (p: string) =>
+      process.platform === "win32"
+        ? nodePath.resolve(p).toLowerCase()
+        : nodePath.resolve(p);
+    expect(tokenStrings).toContain(normalize("/etc/passwd"));
+    expect(tokenStrings).toContain(normalize("/proc/self/environ"));
   });
 
   it("resetIteration is a no-op", () => {
