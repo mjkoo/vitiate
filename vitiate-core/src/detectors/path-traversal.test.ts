@@ -7,6 +7,12 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 
+/** A path that is in the default deniedPaths on the current platform. */
+const PLATFORM_DENIED_PATH =
+  process.platform === "win32"
+    ? "C:\\Windows\\System32\\drivers\\etc\\hosts"
+    : "/etc/passwd";
+
 describe("PathTraversalDetector", () => {
   let detector: PathTraversalDetector;
 
@@ -17,13 +23,15 @@ describe("PathTraversalDetector", () => {
 
   // ── Policy model tests ──
 
-  it("default policy denies /etc/passwd", () => {
+  it("default policy denies platform-specific sensitive path", () => {
     detector = new PathTraversalDetector();
     detector.setup();
     setDetectorActive(true);
 
     const fs = require("fs");
-    expect(() => fs.readFileSync("/etc/passwd")).toThrow(VulnerabilityError);
+    expect(() => fs.readFileSync(PLATFORM_DENIED_PATH)).toThrow(
+      VulnerabilityError,
+    );
   });
 
   it("default policy allows arbitrary paths outside deniedPaths", () => {
@@ -176,13 +184,13 @@ describe("PathTraversalDetector", () => {
 
     const fs = require("fs");
     try {
-      fs.readFileSync("/etc/passwd");
+      fs.readFileSync(PLATFORM_DENIED_PATH);
       expect.unreachable("should have thrown");
     } catch (e: unknown) {
       expect(e).toBeInstanceOf(VulnerabilityError);
       const ve = e as VulnerabilityError;
       expect(ve.context).toHaveProperty("function", "readFileSync");
-      expect(ve.context).toHaveProperty("path", "/etc/passwd");
+      expect(ve.context).toHaveProperty("path", PLATFORM_DENIED_PATH);
       expect(ve.context).toHaveProperty("resolvedPath");
       expect(ve.context).toHaveProperty("deniedEntry");
       expect(ve.context).not.toHaveProperty("sandboxRoot");
@@ -197,7 +205,7 @@ describe("PathTraversalDetector", () => {
     setDetectorActive(true);
 
     const fsPromises = require("fs/promises");
-    expect(() => fsPromises.readFile("/etc/passwd")).toThrow(
+    expect(() => fsPromises.readFile(PLATFORM_DENIED_PATH)).toThrow(
       VulnerabilityError,
     );
   });
@@ -211,8 +219,10 @@ describe("PathTraversalDetector", () => {
     const fsPromises = require("fs/promises");
 
     // Both should be hooked
-    expect(() => fs.readFileSync("/etc/passwd")).toThrow(VulnerabilityError);
-    expect(() => fsPromises.readFile("/etc/passwd")).toThrow(
+    expect(() => fs.readFileSync(PLATFORM_DENIED_PATH)).toThrow(
+      VulnerabilityError,
+    );
+    expect(() => fsPromises.readFile(PLATFORM_DENIED_PATH)).toThrow(
       VulnerabilityError,
     );
 
@@ -223,7 +233,7 @@ describe("PathTraversalDetector", () => {
     // After teardown, neither should throw VulnerabilityError
     const fnFs = () => {
       try {
-        fs.readFileSync("/etc/passwd");
+        fs.readFileSync(PLATFORM_DENIED_PATH);
       } catch (e: unknown) {
         if (e instanceof VulnerabilityError) throw e;
       }
@@ -278,7 +288,7 @@ describe("PathTraversalDetector", () => {
     // Node.js guarantees require("fs").promises === require("fs/promises").
     // Hooking fs/promises should also intercept fs.promises.readFile().
     const fs = require("fs");
-    expect(() => fs.promises.readFile("/etc/passwd")).toThrow(
+    expect(() => fs.promises.readFile(PLATFORM_DENIED_PATH)).toThrow(
       VulnerabilityError,
     );
   });
