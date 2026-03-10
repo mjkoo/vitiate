@@ -32,6 +32,7 @@ import {
   warnUnknownVitiateEnvVars,
   type FuzzOptions,
 } from "./config.js";
+import { KNOWN_DETECTOR_KEYS } from "./detectors/index.js";
 
 export interface CliArgs {
   testFile: string;
@@ -109,7 +110,7 @@ export const cliParser = object({
             "detectors are enabled. Pass an empty string to disable all.",
         ),
         lineBreak(),
-        text("Detectors: prototypePollution, commandInjection, pathTraversal"),
+        text(`Detectors: ${[...KNOWN_DETECTOR_KEYS].join(", ")}`),
         lineBreak(),
         text("Syntax: name to enable, name.key=value to set options."),
         lineBreak(),
@@ -166,13 +167,6 @@ function warnUnsupportedFlags(parsed: InferValue<typeof cliParser>): void {
   }
 }
 
-/** Known detector names (camelCase, matching FuzzOptions.detectors keys). */
-const KNOWN_DETECTOR_NAMES = new Set([
-  "prototypePollution",
-  "commandInjection",
-  "pathTraversal",
-]);
-
 /**
  * Parse the `-detectors` flag value into a `FuzzOptions.detectors` config object.
  *
@@ -187,7 +181,7 @@ const KNOWN_DETECTOR_NAMES = new Set([
 export function parseDetectorsFlag(spec: string): FuzzOptions["detectors"] {
   // Start with all detectors disabled — the flag overrides all defaults.
   const detectors: Record<string, unknown> = {};
-  for (const name of KNOWN_DETECTOR_NAMES) {
+  for (const name of KNOWN_DETECTOR_KEYS) {
     detectors[name] = false;
   }
 
@@ -201,9 +195,9 @@ export function parseDetectorsFlag(spec: string): FuzzOptions["detectors"] {
     const dotIdx = directive.indexOf(".");
     if (dotIdx !== -1) {
       const name = directive.slice(0, dotIdx);
-      if (!KNOWN_DETECTOR_NAMES.has(name)) {
+      if (!KNOWN_DETECTOR_KEYS.has(name)) {
         process.stderr.write(
-          `vitiate: error: unknown detector: ${name}\nValid detectors: ${[...KNOWN_DETECTOR_NAMES].join(", ")}\n`,
+          `vitiate: error: unknown detector: ${name}\nValid detectors: ${[...KNOWN_DETECTOR_KEYS].join(", ")}\n`,
         );
         process.exit(1);
       }
@@ -216,10 +210,13 @@ export function parseDetectorsFlag(spec: string): FuzzOptions["detectors"] {
         process.exit(1);
       }
       const key = rest.slice(0, eqIdx);
-      const value = rest.slice(eqIdx + 1);
+      const rawValue = rest.slice(eqIdx + 1);
+      const value: string | number = /^-?\d+(\.\d+)?$/.test(rawValue)
+        ? Number(rawValue)
+        : rawValue;
       const existing = detectors[name];
       if (typeof existing === "object" && existing !== null) {
-        (existing as Record<string, string>)[key] = value;
+        (existing as Record<string, string | number>)[key] = value;
       } else {
         detectors[name] = { [key]: value };
       }
@@ -227,9 +224,9 @@ export function parseDetectorsFlag(spec: string): FuzzOptions["detectors"] {
     }
 
     // Enable: name
-    if (!KNOWN_DETECTOR_NAMES.has(directive)) {
+    if (!KNOWN_DETECTOR_KEYS.has(directive)) {
       process.stderr.write(
-        `vitiate: error: unknown detector: ${directive}\nValid detectors: ${[...KNOWN_DETECTOR_NAMES].join(", ")}\n`,
+        `vitiate: error: unknown detector: ${directive}\nValid detectors: ${[...KNOWN_DETECTOR_KEYS].join(", ")}\n`,
       );
       process.exit(1);
     }

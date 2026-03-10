@@ -1448,13 +1448,13 @@ describe("config", () => {
 
     it("silently ignores unknown detector keys", () => {
       process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
-        detectors: { ssrf: true, prototypePollution: true },
+        detectors: { futureDetector: true, prototypePollution: true },
       });
       const options = getCliOptions();
       expect(options.detectors?.prototypePollution).toBe(true);
-      // ssrf should be stripped (unknown key)
+      // futureDetector should be stripped (unknown key)
       expect(
-        (options.detectors as Record<string, unknown>)?.["ssrf"],
+        (options.detectors as Record<string, unknown>)?.["futureDetector"],
       ).toBeUndefined();
     });
   });

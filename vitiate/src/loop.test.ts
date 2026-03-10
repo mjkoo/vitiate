@@ -405,6 +405,8 @@ describe("fuzz loop", () => {
       {
         runs: 1_000_000,
         fuzzTimeMs: 30_000,
+        minimizeBudget: 50_000,
+        minimizeTimeLimitMs: 30_000,
       },
     );
 

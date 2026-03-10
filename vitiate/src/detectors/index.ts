@@ -1,6 +1,6 @@
 export { VulnerabilityError } from "./vulnerability-error.js";
 export type { Detector } from "./types.js";
-export { DetectorManager } from "./manager.js";
+export { DetectorManager, KNOWN_DETECTOR_KEYS } from "./manager.js";
 export {
   installHook,
   isDetectorActive,

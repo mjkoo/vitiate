@@ -1,79 +1,36 @@
-## Purpose
+## ADDED Requirements
 
-Core framework for bug detectors: the `Detector` interface, `VulnerabilityError` type, `DetectorManager` orchestration, module hooking utility, and detector configuration schema.
+### Requirement: Stash helper for direct-replacement hooks
 
-## Requirements
+The module-hook utility SHALL export a `stashAndRethrow(error: unknown): never` helper function (or equivalent) that replicates the stash-and-rethrow behavior used internally by `installHook`. The helper SHALL:
 
-### Requirement: Detector interface
+1. If `error` is a `VulnerabilityError`, write it to the module-level stash slot (first-write-wins — if the slot is already occupied, the new error is discarded).
+2. Re-throw the original error unconditionally.
 
-The system SHALL define a `Detector` interface with the following lifecycle hooks:
+This helper is intended for detectors that wrap globals or prototype methods directly (not via `installHook`) but still need their findings recoverable by `DetectorManager.endIteration()` when the target swallows the thrown error.
 
-- `name` (readonly string): Unique identifier for the detector (kebab-case, e.g., `"prototype-pollution"`).
-- `tier` (readonly 1 | 2): Classification determining default-on (1) or opt-in (2) behavior.
-- `getTokens()`: Returns an array of `Uint8Array` tokens to pre-seed in the mutation dictionary.
-- `setup()`: Called once before fuzzing begins. Installs module hooks or initializes state.
-- `beforeIteration()`: Called before each target execution. Captures baseline state for snapshot-based detectors.
-- `afterIteration()`: Called after target execution completes without throwing. Checks for violations and throws `VulnerabilityError` if a condition is met. SHALL NOT be called when the target crashed or timed out. SHALL NOT perform state restoration — that is the responsibility of `resetIteration()`.
-- `resetIteration()`: Called after every iteration regardless of exit kind. Restores any per-iteration state captured by `beforeIteration()` (e.g., prototype restoration). SHALL NOT throw. If restoration fails, the detector SHALL make a best-effort attempt and continue silently.
-- `teardown()`: Called after fuzzing ends. Restores any patched modules.
+The calling convention for direct-replacement hooks differs from `installHook`. In `installHook`, the check callback throws a `VulnerabilityError` and the `installHook` wrapper catches it, stashes, and re-throws. With `stashAndRethrow`, the direct-replacement wrapper creates the `VulnerabilityError` and passes it to `stashAndRethrow` directly — `stashAndRethrow` stashes and throws in one step (it never returns). Example usage:
 
-#### Scenario: Detector implements all lifecycle hooks
+```typescript
+// Inside a direct-replacement wrapper:
+const ve = new VulnerabilityError(name, type, context);
+stashAndRethrow(ve); // stashes if slot is empty, then throws (never returns)
+```
 
-- **WHEN** a detector is registered with the `DetectorManager`
-- **THEN** the detector SHALL implement all seven interface members
-- **AND** the `name` SHALL be a non-empty kebab-case string
-- **AND** the `tier` SHALL be either `1` or `2`
+#### Scenario: Direct-replacement hook stashes VulnerabilityError
 
-#### Scenario: resetIteration called after Ok exit
+- **WHEN** a detector wraps a global function directly (not via `installHook`)
+- **AND** the wrapper's check throws a `VulnerabilityError`
+- **AND** the target catches the error (swallowing it)
+- **THEN** the `VulnerabilityError` SHALL be recoverable via `drainStashedVulnerabilityError()`
 
-- **WHEN** the target completes without throwing
-- **AND** `afterIteration()` has been called (which may or may not throw)
-- **THEN** `resetIteration()` SHALL be called on every active detector
-- **AND** `resetIteration()` SHALL run even if `afterIteration()` threw a `VulnerabilityError`
+#### Scenario: Stash helper preserves first-write-wins semantics
 
-#### Scenario: resetIteration called after crash exit
+- **WHEN** a `VulnerabilityError` is already stashed
+- **AND** a direct-replacement hook throws a second `VulnerabilityError`
+- **THEN** the stash SHALL retain the first error
 
-- **WHEN** the target throws during execution
-- **THEN** `afterIteration()` SHALL NOT be called
-- **AND** `resetIteration()` SHALL be called on every active detector
-- **AND** any per-iteration state captured by `beforeIteration()` SHALL be restored
-
-#### Scenario: resetIteration called after timeout exit
-
-- **WHEN** the watchdog fires
-- **THEN** `afterIteration()` SHALL NOT be called
-- **AND** `resetIteration()` SHALL be called on every active detector
-
-#### Scenario: resetIteration does not throw
-
-- **WHEN** `resetIteration()` encounters an error during state restoration
-- **THEN** it SHALL NOT throw
-- **AND** it SHALL make a best-effort attempt to restore state
-
-### Requirement: VulnerabilityError type
-
-The system SHALL define a `VulnerabilityError` class that extends `Error`. It SHALL include:
-
-- `detectorName` (string): The name of the detector that fired (matches `Detector.name`).
-- `vulnerabilityType` (string): Human-readable vulnerability category (e.g., `"Prototype Pollution"`, `"Command Injection"`).
-- `context` (Record<string, unknown>): Structured metadata about the finding (e.g., which function was called, what argument triggered it, which prototype was modified).
-
-The error message SHALL include the detector name, vulnerability type, and a human-readable summary of the finding.
-
-#### Scenario: VulnerabilityError is instanceof Error
-
-- **WHEN** a detector throws a `VulnerabilityError`
-- **THEN** the thrown value SHALL be an instance of `Error`
-- **AND** `error instanceof VulnerabilityError` SHALL return `true`
-- **AND** `error.detectorName` SHALL match the detector's `name` property
-- **AND** `error.stack` SHALL include the call site where the vulnerability was triggered
-
-#### Scenario: VulnerabilityError is treated as a crash by the fuzz engine
-
-- **WHEN** a `VulnerabilityError` is thrown during target execution or in `afterIteration()`
-- **THEN** the fuzz loop SHALL classify the iteration as `ExitKind.Crash`
-- **AND** the Rust engine SHALL receive `ExitKind.Crash` via `reportResult()`
-- **AND** the engine SHALL evaluate it against `CrashFeedback` like any other crash
+## MODIFIED Requirements
 
 ### Requirement: DetectorManager orchestration
 
@@ -113,6 +70,8 @@ The `setDetectorActive()` function SHALL be an internal implementation detail of
 - **AND** the other Tier 1 detectors SHALL remain active
 
 #### Scenario: Unknown detector keys are silently ignored
+
+*Modified: replaces the main spec's `{ ssrf: true }` example, since `ssrf` is now a known detector.*
 
 - **WHEN** `DetectorManager` is constructed with `{ futureDetector: true }` (a detector not yet implemented)
 - **THEN** the unknown key SHALL be silently ignored
@@ -216,73 +175,9 @@ The `setDetectorActive()` function SHALL be an internal implementation detail of
 - **THEN** the `afterIteration()` method SHALL NOT be accessible as a public API
 - **AND** the only way to trigger detector checks SHALL be through `endIteration()`
 
-### Requirement: Module hooking utility
-
-The system SHALL provide a utility for safely monkey-patching Node built-in module exports. The utility SHALL:
-
-- Accept a module specifier (e.g., `"child_process"`, `"fs"`) and a function name.
-- Replace the exported function with a wrapper that runs a detector check before calling the original.
-- Store the original function reference for restoration.
-- Restore the original function when `restore()` is called.
-- Support hooking the same function from multiple detectors (hooks compose as a chain).
-
-The hook wrapper SHALL wrap the `check()` call in a try/catch. When the caught exception is a `VulnerabilityError`, the wrapper SHALL write it to a module-level stash slot (first-write-wins — if the slot is already occupied, the new error is discarded) and then re-throw the original error. The stash preserves the `VulnerabilityError` with its detection-site stack trace as a backup for cases where the target catches the thrown error. Non-`VulnerabilityError` exceptions from the `check` callback SHALL be re-thrown without stashing (these indicate detector bugs, not findings).
-
-The module SHALL export a `drainStashedVulnerabilityError()` function that returns the stashed `VulnerabilityError` (or `undefined` if none) and clears the slot. `DetectorManager` SHALL be the only caller — it drains in `endIteration()`, `beforeIteration()` (defensive discard), and `teardown()` (defensive cleanup).
-
-#### Scenario: Hook intercepts function call
-
-- **WHEN** a hook is installed on `child_process.exec`
-- **AND** the target calls `exec("ls")`
-- **THEN** the hook wrapper SHALL execute the detector check with the arguments
-- **AND** if the check passes, the original `exec` function SHALL be called with the same arguments
-
-#### Scenario: Hook restoration
-
-- **WHEN** `restore()` is called on a hook
-- **THEN** the module export SHALL be restored to the original function
-- **AND** subsequent calls SHALL bypass the detector check
-
-#### Scenario: Hook is gated by iteration window
-
-- **WHEN** a hooked function is called outside the `beforeIteration()`/`endIteration()` window (e.g., during Vite module resolution or fuzzer setup)
-- **THEN** the hook SHALL pass through to the original function without running the detector check
-
-#### Scenario: Hook stashes VulnerabilityError before re-throwing
-
-- **WHEN** the `check` callback throws a `VulnerabilityError`
-- **AND** the stash slot is empty
-- **THEN** the hook wrapper SHALL write the error to the module-level stash slot
-- **AND** the hook wrapper SHALL re-throw the same `VulnerabilityError`
-- **AND** the original function SHALL NOT be called
-
-#### Scenario: Second hook fire within same iteration does not overwrite stash
-
-- **WHEN** a hook has already stashed a `VulnerabilityError` in this iteration
-- **AND** a second hook fire throws a different `VulnerabilityError`
-- **THEN** the stash slot SHALL retain the first error (first-write-wins)
-- **AND** the second error SHALL still be re-thrown
-
-#### Scenario: Non-VulnerabilityError from check is not stashed
-
-- **WHEN** the `check` callback throws a `TypeError` (or other non-VulnerabilityError)
-- **THEN** the error SHALL propagate without being stashed
-- **AND** the stash slot SHALL remain unchanged
-
-#### Scenario: Drain returns and clears the stashed error
-
-- **WHEN** `drainStashedVulnerabilityError()` is called
-- **AND** a `VulnerabilityError` is stashed
-- **THEN** the function SHALL return the stashed error
-- **AND** the stash slot SHALL be cleared to `undefined`
-
-#### Scenario: Drain returns undefined when no error stashed
-
-- **WHEN** `drainStashedVulnerabilityError()` is called
-- **AND** no `VulnerabilityError` is stashed
-- **THEN** the function SHALL return `undefined`
-
 ### Requirement: Detector configuration schema
+
+*This replaces the main spec's statement that "Tier 2 detector fields (`redos`, `ssrf`, `unsafeEval`) are NOT included in this change" — they are now included.*
 
 The system SHALL define per-detector configuration using Valibot schemas within the `FuzzOptions.detectors` key. Each detector field SHALL accept either a `boolean` or a detector-specific options object:
 
@@ -387,33 +282,3 @@ The schema SHALL accept and silently ignore unknown keys within the `detectors` 
 
 - **WHEN** `-detectors ssrf.blockedHosts=meta.internal` is passed on the CLI
 - **THEN** `parseDetectorsFlag` SHALL return `{ ssrf: { blockedHosts: "meta.internal" } }`
-
-### Requirement: Stash helper for direct-replacement hooks
-
-The module-hook utility SHALL export a `stashAndRethrow(error: unknown): never` helper function (or equivalent) that replicates the stash-and-rethrow behavior used internally by `installHook`. The helper SHALL:
-
-1. If `error` is a `VulnerabilityError`, write it to the module-level stash slot (first-write-wins — if the slot is already occupied, the new error is discarded).
-2. Re-throw the original error unconditionally.
-
-This helper is intended for detectors that wrap globals or prototype methods directly (not via `installHook`) but still need their findings recoverable by `DetectorManager.endIteration()` when the target swallows the thrown error.
-
-The calling convention for direct-replacement hooks differs from `installHook`. In `installHook`, the check callback throws a `VulnerabilityError` and the `installHook` wrapper catches it, stashes, and re-throws. With `stashAndRethrow`, the direct-replacement wrapper creates the `VulnerabilityError` and passes it to `stashAndRethrow` directly — `stashAndRethrow` stashes and throws in one step (it never returns). Example usage:
-
-```typescript
-// Inside a direct-replacement wrapper:
-const ve = new VulnerabilityError(name, type, context);
-stashAndRethrow(ve); // stashes if slot is empty, then throws (never returns)
-```
-
-#### Scenario: Direct-replacement hook stashes VulnerabilityError
-
-- **WHEN** a detector wraps a global function directly (not via `installHook`)
-- **AND** the wrapper's check throws a `VulnerabilityError`
-- **AND** the target catches the error (swallowing it)
-- **THEN** the `VulnerabilityError` SHALL be recoverable via `drainStashedVulnerabilityError()`
-
-#### Scenario: Stash helper preserves first-write-wins semantics
-
-- **WHEN** a `VulnerabilityError` is already stashed
-- **AND** a direct-replacement hook throws a second `VulnerabilityError`
-- **THEN** the stash SHALL retain the first error

@@ -76,13 +76,22 @@ export class PathTraversalDetector implements Detector {
   private readonly resolvedDeniedPaths: string[];
   private hooks: ModuleHook[] = [];
 
-  constructor(allowedPaths?: string[], deniedPaths?: string[]) {
-    this.resolvedAllowedPaths = (allowedPaths ?? ["/"]).map((p) =>
+  constructor(
+    allowedPaths?: string | string[],
+    deniedPaths?: string | string[],
+  ) {
+    const normalizedAllowed =
+      typeof allowedPaths === "string"
+        ? [allowedPaths]
+        : (allowedPaths ?? ["/"]);
+    const normalizedDenied =
+      typeof deniedPaths === "string"
+        ? [deniedPaths]
+        : (deniedPaths ?? ["/etc/passwd"]);
+    this.resolvedAllowedPaths = normalizedAllowed.map((p) =>
       nodePath.resolve(p),
     );
-    this.resolvedDeniedPaths = (deniedPaths ?? ["/etc/passwd"]).map((p) =>
-      nodePath.resolve(p),
-    );
+    this.resolvedDeniedPaths = normalizedDenied.map((p) => nodePath.resolve(p));
   }
 
   getTokens(): Uint8Array[] {

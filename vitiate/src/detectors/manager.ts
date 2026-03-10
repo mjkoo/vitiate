@@ -14,6 +14,9 @@ import {
 import { PrototypePollutionDetector } from "./prototype-pollution.js";
 import { CommandInjectionDetector } from "./command-injection.js";
 import { PathTraversalDetector } from "./path-traversal.js";
+import { RedosDetector } from "./redos.js";
+import { SsrfDetector } from "./ssrf.js";
+import { UnsafeEvalDetector } from "./unsafe-eval.js";
 
 type DetectorConfig = FuzzOptions["detectors"];
 
@@ -39,13 +42,51 @@ const DETECTOR_REGISTRY: DetectorRegistration[] = [
     create: (options?: unknown) => {
       const opts =
         typeof options === "object" && options !== null
-          ? (options as { allowedPaths?: string[]; deniedPaths?: string[] })
+          ? (options as {
+              allowedPaths?: string | string[];
+              deniedPaths?: string | string[];
+            })
           : undefined;
       return new PathTraversalDetector(opts?.allowedPaths, opts?.deniedPaths);
     },
     tier: 1,
   },
+  {
+    key: "redos",
+    create: (options?: unknown) => {
+      const opts =
+        typeof options === "object" && options !== null
+          ? (options as { thresholdMs?: number })
+          : undefined;
+      return new RedosDetector(opts?.thresholdMs);
+    },
+    tier: 2,
+  },
+  {
+    key: "ssrf",
+    create: (options?: unknown) => {
+      const opts =
+        typeof options === "object" && options !== null
+          ? (options as {
+              blockedHosts?: string | string[];
+              allowedHosts?: string | string[];
+            })
+          : undefined;
+      return new SsrfDetector(opts?.blockedHosts, opts?.allowedHosts);
+    },
+    tier: 2,
+  },
+  {
+    key: "unsafeEval",
+    create: () => new UnsafeEvalDetector(),
+    tier: 2,
+  },
 ];
+
+/** All known detector config keys (camelCase, matching FuzzOptions.detectors keys). */
+export const KNOWN_DETECTOR_KEYS: ReadonlySet<string> = new Set(
+  DETECTOR_REGISTRY.map((r) => r.key),
+);
 
 export class DetectorManager {
   private readonly detectors: Detector[];

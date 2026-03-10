@@ -47,6 +47,20 @@ export function isDetectorActive(): boolean {
 }
 
 /**
+ * Stash a VulnerabilityError (first-write-wins) and re-throw.
+ *
+ * For use by detectors that wrap globals or prototype methods directly
+ * (not via installHook) but still need findings recoverable by
+ * DetectorManager.endIteration() when the target swallows the thrown error.
+ */
+export function stashAndRethrow(error: unknown): never {
+  if (error instanceof VulnerabilityError) {
+    stashedVulnerabilityError ??= error;
+  }
+  throw error;
+}
+
+/**
  * A single installed hook on a module export.
  * Stores the original function for restoration.
  */
@@ -86,11 +100,7 @@ export function installHook(
       try {
         check(...args);
       } catch (e) {
-        if (e instanceof VulnerabilityError) {
-          // First-write-wins: only stash if slot is empty
-          stashedVulnerabilityError ??= e;
-        }
-        throw e;
+        stashAndRethrow(e);
       }
     }
     return (original as (...args: unknown[]) => unknown).apply(this, args);

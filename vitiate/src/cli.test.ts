@@ -337,6 +337,9 @@ describe("-detectors flag", () => {
       prototypePollution: true,
       commandInjection: false,
       pathTraversal: false,
+      redos: false,
+      ssrf: false,
+      unsafeEval: false,
     });
   });
 
@@ -348,6 +351,9 @@ describe("-detectors flag", () => {
       prototypePollution: false,
       commandInjection: false,
       pathTraversal: { deniedPaths: "/etc/passwd" },
+      redos: false,
+      ssrf: false,
+      unsafeEval: false,
     });
   });
 
@@ -382,6 +388,9 @@ describe("parseDetectorsFlag", () => {
       prototypePollution: true,
       commandInjection: false,
       pathTraversal: false,
+      redos: false,
+      ssrf: false,
+      unsafeEval: false,
     });
   });
 
@@ -390,6 +399,9 @@ describe("parseDetectorsFlag", () => {
       prototypePollution: false,
       commandInjection: false,
       pathTraversal: false,
+      redos: false,
+      ssrf: false,
+      unsafeEval: false,
     });
   });
 
@@ -399,6 +411,9 @@ describe("parseDetectorsFlag", () => {
         prototypePollution: false,
         commandInjection: false,
         pathTraversal: { deniedPaths: "/etc/passwd" },
+        redos: false,
+        ssrf: false,
+        unsafeEval: false,
       },
     );
   });
@@ -410,6 +425,9 @@ describe("parseDetectorsFlag", () => {
       prototypePollution: false,
       commandInjection: false,
       pathTraversal: { deniedPaths: "/etc/passwd" },
+      redos: false,
+      ssrf: false,
+      unsafeEval: false,
     });
   });
 
@@ -421,6 +439,9 @@ describe("parseDetectorsFlag", () => {
       pathTraversal: {
         deniedPaths: `/etc/passwd${path.delimiter}/proc/self/environ`,
       },
+      redos: false,
+      ssrf: false,
+      unsafeEval: false,
     });
   });
 
@@ -438,6 +459,9 @@ describe("parseDetectorsFlag", () => {
       prototypePollution: true,
       commandInjection: true,
       pathTraversal: false,
+      redos: false,
+      ssrf: false,
+      unsafeEval: false,
     });
   });
 

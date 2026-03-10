@@ -76,9 +76,12 @@ describe("DetectorManager", () => {
     expect(manager.activeDetectorNames).toContain("path-traversal");
   });
 
-  it("enables all Tier 1 detectors with empty config", () => {
+  it("enables all Tier 1 detectors with empty config (no Tier 2)", () => {
     const manager = new DetectorManager({});
     expect(manager.activeDetectorNames).toHaveLength(3);
+    expect(manager.activeDetectorNames).toContain("prototype-pollution");
+    expect(manager.activeDetectorNames).toContain("command-injection");
+    expect(manager.activeDetectorNames).toContain("path-traversal");
   });
 
   it("disables a detector when set to false", () => {
@@ -474,6 +477,28 @@ describe("PathTraversalDetector", () => {
     expect(() => fs.readFileSync("/tmp/secrets/key.pem")).toThrow(
       VulnerabilityError,
     );
+  });
+
+  it("accepts single-string deniedPaths (CLI path normalization)", () => {
+    // CLI parseDetectorsFlag produces a raw string, not an array.
+    // The constructor must normalize it rather than calling .map() on a string.
+    detector = new PathTraversalDetector(undefined, "/tmp/secrets");
+    detector.setup();
+    setDetectorActive(true);
+
+    const fs = require("fs");
+    expect(() => fs.readFileSync("/tmp/secrets/key.pem")).toThrow(
+      VulnerabilityError,
+    );
+  });
+
+  it("accepts single-string allowedPaths (CLI path normalization)", () => {
+    detector = new PathTraversalDetector("/var/www");
+    detector.setup();
+    setDetectorActive(true);
+
+    const fs = require("fs");
+    expect(() => fs.readFileSync("/etc/hosts")).toThrow(VulnerabilityError);
   });
 
   it("separator-aware prefix matching prevents false positives", () => {

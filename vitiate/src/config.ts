@@ -4,6 +4,7 @@
 
 import path from "node:path";
 import * as v from "valibot";
+import { KNOWN_DETECTOR_KEYS } from "./detectors/index.js";
 
 const NonNegativeInteger = v.pipe(
   v.number(),
@@ -34,20 +35,24 @@ const PathTraversalOptionsSchema = v.object({
   deniedPaths: v.optional(StringOrStringArray),
 });
 
+const RedosOptionsSchema = v.object({
+  /** Per-call wall-clock time threshold in milliseconds. Default: 100. */
+  thresholdMs: v.optional(v.number()),
+});
+
+const SsrfOptionsSchema = v.object({
+  /** Additional host specifications to block (CIDR, IP, hostname, wildcard domain). */
+  blockedHosts: v.optional(StringOrStringArray),
+  /** Host specifications to allow, overriding the blocklist. */
+  allowedHosts: v.optional(StringOrStringArray),
+});
+
 const DetectorsSchema = v.pipe(
   v.record(v.string(), v.unknown()),
   v.transform((input) => {
     // Extract known keys, silently ignore unknown keys for forward compatibility
     const result: Record<string, unknown> = {};
-    const knownBooleans = ["prototypePollution", "commandInjection"];
-    const knownWithOptions = ["pathTraversal"];
-
-    for (const key of knownBooleans) {
-      if (key in input) {
-        result[key] = input[key];
-      }
-    }
-    for (const key of knownWithOptions) {
+    for (const key of KNOWN_DETECTOR_KEYS) {
       if (key in input) {
         result[key] = input[key];
       }
@@ -60,6 +65,9 @@ const DetectorsSchema = v.pipe(
     pathTraversal: v.optional(
       v.union([v.boolean(), PathTraversalOptionsSchema]),
     ),
+    redos: v.optional(v.union([v.boolean(), RedosOptionsSchema])),
+    ssrf: v.optional(v.union([v.boolean(), SsrfOptionsSchema])),
+    unsafeEval: v.optional(v.boolean()),
   }),
 );
 
