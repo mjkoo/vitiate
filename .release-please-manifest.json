@@ -1,15 +1,15 @@
 {
-  "vitiate-core": "0.1.0",
-  "vitiate-engine": "0.1.0",
-  "vitiate-engine/npm/darwin-arm64": "0.1.0",
-  "vitiate-engine/npm/linux-arm64-gnu": "0.1.0",
-  "vitiate-engine/npm/linux-x64-gnu": "0.1.0",
-  "vitiate-engine/npm/linux-x64-musl": "0.1.0",
-  "vitiate-engine/npm/win32-x64-msvc": "0.1.0",
-  "vitiate-engine/npm/darwin-x64": "0.1.0",
+  "vitiate-core": "0.1.1",
+  "vitiate-engine": "0.1.1",
+  "vitiate-engine/npm/darwin-arm64": "0.1.1",
+  "vitiate-engine/npm/linux-arm64-gnu": "0.1.1",
+  "vitiate-engine/npm/linux-x64-gnu": "0.1.1",
+  "vitiate-engine/npm/linux-x64-musl": "0.1.1",
+  "vitiate-engine/npm/win32-x64-msvc": "0.1.1",
+  "vitiate-engine/npm/darwin-x64": "0.1.1",
   "vitiate-engine/npm/win32-arm64-msvc": "0.1.0",
   "vitiate-engine/npm/linux-arm64-musl": "0.1.0",
   "vitiate-engine/npm/linux-arm-gnueabihf": "0.1.0",
-  "vitiate-swc-plugin": "0.1.0",
-  "vitiate-fuzzed-data-provider": "0.1.0"
+  "vitiate-swc-plugin": "0.1.1",
+  "vitiate-fuzzed-data-provider": "0.1.1"
 }
