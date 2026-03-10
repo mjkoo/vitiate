@@ -153,14 +153,17 @@ describe("FuzzedDataProvider", () => {
 
   describe("consumeBigIntegral", () => {
     it("consumes unsigned 8-byte bigint", () => {
+      // Bytes [0,0,0,0,0,0,0,0xff]: LE read from end gives 0xff = 255n
+      // Range [0, 2^64-1], result = 255n % 2^64 + 0 = 255n
       const provider = fdp(0, 0, 0, 0, 0, 0, 0, 0xff);
       const result = provider.consumeBigIntegral(8);
       expect(typeof result).toBe("bigint");
-      expect(result).toBeGreaterThanOrEqual(0n);
-      expect(result).toBeLessThanOrEqual(2n ** 64n - 1n);
+      expect(result).toBe(255n);
     });
 
     it("consumes signed 8-byte bigint", () => {
+      // All 0xff: LE raw = 2^64-1, range [-2^63, 2^63-1], size 2^64
+      // Result = (2^64-1) % 2^64 + (-2^63) = 2^63 - 1 = 9223372036854775807n
       const result = fdp(
         0xff,
         0xff,
@@ -171,16 +174,15 @@ describe("FuzzedDataProvider", () => {
         0xff,
         0xff,
       ).consumeBigIntegral(8, true);
-      expect(result).toBeGreaterThanOrEqual(-(2n ** 63n));
-      expect(result).toBeLessThanOrEqual(2n ** 63n - 1n);
+      expect(result).toBe(9223372036854775807n);
     });
 
     it("handles partial consumption", () => {
+      // Bytes [0x01, 0x02, 0x03]: LE from end: 0x03 | (0x02 << 8) | (0x01 << 16) = 66051n
       const provider = fdp(0x01, 0x02, 0x03);
       const result = provider.consumeBigIntegral(16);
       expect(provider.remainingBytes).toBe(0);
-      expect(result).toBeGreaterThanOrEqual(0n);
-      expect(result).toBeLessThanOrEqual(2n ** 24n - 1n);
+      expect(result).toBe(66051n);
     });
 
     it("throws TypeError for non-integer maxNumBytes", () => {
@@ -190,10 +192,11 @@ describe("FuzzedDataProvider", () => {
 
   describe("consumeBigIntegralInRange", () => {
     it("handles arbitrary bigint range", () => {
+      // 20 bytes of 0xff: reads 16 bytes (128 bits needed for range 2^128-1)
+      // LE raw = 2^128-1, result = (2^128-1) % 2^128 + 0 = 2^128-1
       const provider = fdp(...new Array<number>(20).fill(0xff));
       const result = provider.consumeBigIntegralInRange(0n, 2n ** 128n - 1n);
-      expect(result).toBeGreaterThanOrEqual(0n);
-      expect(result).toBeLessThanOrEqual(2n ** 128n - 1n);
+      expect(result).toBe(340282366920938463463374607431768211455n);
     });
 
     it("returns value when min equals max", () => {

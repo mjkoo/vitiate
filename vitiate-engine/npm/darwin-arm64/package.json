@@ -9,18 +9,21 @@
     "vitiate-engine.darwin-arm64.node"
   ],
   "description": "Native Node.js addon for vitiate",
+  "keywords": [
+    "fuzzing",
+    "libafl",
+    "coverage-guided",
+    "native-addon",
+    "napi"
+  ],
   "license": "MIT",
+  "engines": {
+    "node": ">= 18"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/mjkoo/vitiate.git",
     "directory": "vitiate-engine"
-  },
-  "keywords": [
-    "fuzzing",
-    "native-addon"
-  ],
-  "engines": {
-    "node": ">= 18"
   },
   "publishConfig": {
     "registry": "https://registry.npmjs.org/",

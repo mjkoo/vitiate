@@ -115,6 +115,11 @@ export class FuzzedDataProvider {
   /**
    * Read an unsigned integer of `numBytes` bytes in little-endian order
    * from the end of the buffer.
+   *
+   * Precondition: numBytes <= 6 (callers must enforce this to stay within
+   * Number.MAX_SAFE_INTEGER). All public entry points enforce this via
+   * consumeIntegral's maxNumBytes check or consumeIntegralInRangeInternal's
+   * range cap at 2^48-1.
    */
   private readUintLE(numBytes: number): number {
     const consumed = this.consumeFromEnd(numBytes);

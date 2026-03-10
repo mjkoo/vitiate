@@ -1,12 +1,12 @@
 {
-  "name": "@vitiate/engine-linux-x64-musl",
+  "name": "@vitiate/engine-linux-arm64-musl",
   "version": "0.1.0",
   "cpu": [
-    "x64"
+    "arm64"
   ],
-  "main": "vitiate-engine.linux-x64-musl.node",
+  "main": "vitiate-engine.linux-arm64-musl.node",
   "files": [
-    "vitiate-engine.linux-x64-musl.node"
+    "vitiate-engine.linux-arm64-musl.node"
   ],
   "description": "Native Node.js addon for vitiate",
   "keywords": [
