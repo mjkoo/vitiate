@@ -2,8 +2,7 @@
  * Prototype pollution detector: snapshots built-in prototypes before each
  * iteration and diffs after execution to detect unauthorized modifications.
  */
-import type { Detector } from "./types.js";
-import { VulnerabilityError } from "./vulnerability-error.js";
+import { type Detector, VulnerabilityError } from "./types.js";
 
 const ENCODER = new TextEncoder();
 

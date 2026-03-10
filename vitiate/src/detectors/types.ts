@@ -1,4 +1,30 @@
 /**
+ * Error type thrown by detectors when a vulnerability is found.
+ * Treated as ExitKind.Crash by the fuzz engine — reuses the existing crash path.
+ */
+export class VulnerabilityError extends Error {
+  readonly detectorName: string;
+  readonly vulnerabilityType: string;
+  readonly context: Record<string, unknown>;
+
+  constructor(
+    detectorName: string,
+    vulnerabilityType: string,
+    context: Record<string, unknown>,
+    message?: string,
+  ) {
+    const summary =
+      message ??
+      `[${detectorName}] ${vulnerabilityType}: ${JSON.stringify(context)}`;
+    super(summary);
+    this.name = "VulnerabilityError";
+    this.detectorName = detectorName;
+    this.vulnerabilityType = vulnerabilityType;
+    this.context = context;
+  }
+}
+
+/**
  * Interface for bug detectors that hook into the fuzz loop lifecycle.
  */
 export interface Detector {

@@ -6,8 +6,7 @@
  */
 import { createRequire } from "node:module";
 import nodePath from "node:path";
-import type { Detector } from "./types.js";
-import { VulnerabilityError } from "./vulnerability-error.js";
+import { type Detector, VulnerabilityError } from "./types.js";
 import { installHook, type ModuleHook } from "./module-hook.js";
 
 const require = createRequire(import.meta.url);

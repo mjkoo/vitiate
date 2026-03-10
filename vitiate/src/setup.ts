@@ -12,7 +12,7 @@ import {
   getCoverageMapSize,
   getCliOptions,
 } from "./config.js";
-import { installDetectorModuleHooks } from "./detectors/early-hooks.js";
+import { installDetectorModuleHooks } from "./detectors/manager.js";
 
 // Auto-init when loaded as a Vitest setup file
 await initGlobals();

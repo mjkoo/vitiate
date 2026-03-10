@@ -2,8 +2,7 @@
  * Command injection detector: hooks child_process functions and checks
  * for a goal string in command arguments.
  */
-import type { Detector } from "./types.js";
-import { VulnerabilityError } from "./vulnerability-error.js";
+import { type Detector, VulnerabilityError } from "./types.js";
 import { installHook, type ModuleHook } from "./module-hook.js";
 
 const ENCODER = new TextEncoder();

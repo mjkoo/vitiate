@@ -2,8 +2,7 @@
  * Unsafe eval detector: hooks eval() and Function constructor to detect
  * fuzz input reaching code evaluation via a goal string.
  */
-import type { Detector } from "./types.js";
-import { VulnerabilityError } from "./vulnerability-error.js";
+import { type Detector, VulnerabilityError } from "./types.js";
 import { isDetectorActive, stashAndRethrow } from "./module-hook.js";
 
 const ENCODER = new TextEncoder();

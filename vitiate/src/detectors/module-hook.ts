@@ -6,7 +6,7 @@
  * this window pass through unconditionally.
  */
 import { createRequire } from "node:module";
-import { VulnerabilityError } from "./vulnerability-error.js";
+import { VulnerabilityError } from "./types.js";
 
 const require = createRequire(import.meta.url);
 

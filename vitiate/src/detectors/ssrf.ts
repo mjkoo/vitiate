@@ -2,8 +2,7 @@
  * SSRF detector: hooks Node.js HTTP request APIs and checks target
  * hostnames against a configurable blocklist/allowlist.
  */
-import type { Detector } from "./types.js";
-import { VulnerabilityError } from "./vulnerability-error.js";
+import { type Detector, VulnerabilityError } from "./types.js";
 import {
   installHook,
   isDetectorActive,

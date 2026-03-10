@@ -42,7 +42,7 @@ import {
   installDetectorModuleHooks,
   getDetectorManager,
   resetDetectorHooks,
-} from "./detectors/early-hooks.js";
+} from "./detectors/manager.js";
 import { getCoverageMap } from "./globals.js";
 import { runFuzzLoop } from "./loop.js";
 import { runMergeMode, runOptimizeMode } from "./merge.js";
