@@ -145,6 +145,15 @@ importers:
 
   vitiate-engine/npm/win32-x64-msvc: {}
 
+  vitiate-fuzzed-data-provider:
+    devDependencies:
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(@swc/core@1.15.17)(jiti@2.6.1)(postcss@8.5.6)(typescript@5.9.3)
+      vitest:
+        specifier: ^3.1.0
+        version: 3.2.4(@types/node@25.3.0)(jiti@2.6.1)
+
   vitiate-swc-plugin: {}
 
 packages:

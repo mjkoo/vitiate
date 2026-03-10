@@ -1,0 +1,581 @@
+## ADDED Requirements
+
+### Requirement: FuzzedDataProvider class construction
+
+The system SHALL export a `FuzzedDataProvider` class from `@vitiate/fuzzed-data-provider`. The constructor SHALL accept a `Uint8Array` (which includes Node.js `Buffer` as a subclass). The instance SHALL track remaining unconsumed bytes via a `remainingBytes` readonly property.
+
+#### Scenario: Construct from Uint8Array
+
+- **WHEN** `new FuzzedDataProvider(new Uint8Array([1, 2, 3]))` is called
+- **THEN** `remainingBytes` SHALL equal `3`
+
+#### Scenario: Construct from Node.js Buffer
+
+- **WHEN** `new FuzzedDataProvider(Buffer.from([1, 2, 3]))` is called
+- **THEN** `remainingBytes` SHALL equal `3`
+
+#### Scenario: Construct from empty input
+
+- **WHEN** `new FuzzedDataProvider(new Uint8Array(0))` is called
+- **THEN** `remainingBytes` SHALL equal `0`
+
+### Requirement: Split-buffer consumption strategy
+
+The system SHALL use the LLVM split-buffer consumption strategy. Individual scalar values (booleans, integrals, floats, doubles, `pickValue`, `pickValues`) SHALL be consumed from the **end** of the buffer in **little-endian** byte order. Bulk data (byte arrays, strings, boolean arrays, integral arrays, number arrays) SHALL be consumed from the **front** of the buffer in **big-endian** byte order. The `remainingBytes` property SHALL track the unconsumed region between the two pointers and SHALL decrease as bytes are consumed from either end.
+
+#### Scenario: Scalar and array consumption are independent
+
+- **WHEN** a `FuzzedDataProvider` is constructed with 10 bytes
+- **AND** `consumeBoolean()` is called (consumes 1 byte from end)
+- **AND** `consumeBytes(2)` is called (consumes 2 bytes from front)
+- **THEN** `remainingBytes` SHALL equal `7`
+- **AND** the scalar consumed the last byte of the original buffer
+- **AND** the array consumed the first 2 bytes of the original buffer
+
+#### Scenario: Consumption regions do not overlap
+
+- **WHEN** a `FuzzedDataProvider` is constructed with 4 bytes
+- **AND** `consumeBytes(2)` is called (front pointer advances by 2)
+- **AND** `consumeIntegral(2)` is called (end pointer retreats by 2)
+- **THEN** `remainingBytes` SHALL equal `0`
+- **AND** no byte is read twice
+
+### Requirement: consumeBoolean
+
+The system SHALL provide a `consumeBoolean(): boolean` method that consumes 1 byte from the end of the buffer. If the least significant bit of the consumed byte is 1, the method SHALL return `true`; otherwise `false`.
+
+#### Scenario: Consume true
+
+- **WHEN** the last unconsumed byte is `0x03` (binary `...11`)
+- **THEN** `consumeBoolean()` SHALL return `true`
+- **AND** `remainingBytes` SHALL decrease by 1
+
+#### Scenario: Consume false
+
+- **WHEN** the last unconsumed byte is `0x02` (binary `...10`)
+- **THEN** `consumeBoolean()` SHALL return `false`
+
+#### Scenario: Exhausted buffer
+
+- **WHEN** `remainingBytes` is `0`
+- **THEN** `consumeBoolean()` SHALL return `false`
+
+### Requirement: consumeIntegral
+
+The system SHALL provide a `consumeIntegral(maxNumBytes: number, isSigned?: boolean): number` method that consumes up to `maxNumBytes` bytes from the end of the buffer and returns an integer. The `maxNumBytes` parameter MUST be between 1 and 6 inclusive. If `isSigned` is `true`, the result SHALL be in the signed range for that byte width; otherwise unsigned. The default for `isSigned` SHALL be `false`. If fewer than `maxNumBytes` bytes remain, the method SHALL consume only the available bytes and return a value within the representable range of those bytes.
+
+#### Scenario: Consume unsigned 2-byte integer
+
+- **WHEN** the last 2 unconsumed bytes (in buffer order) are `[0x01, 0x00]`
+- **THEN** `consumeIntegral(2)` SHALL return `1` (little-endian: 0x00_01 = 1)
+
+#### Scenario: Consume signed 1-byte integer
+
+- **WHEN** the last unconsumed byte is `0xFF`
+- **THEN** `consumeIntegral(1, true)` SHALL return `127` (unsigned read `255`, then `min + (255 % 256)` = `-128 + 255` = `127`)
+
+#### Scenario: Fewer bytes than maxNumBytes
+
+- **WHEN** `consumeIntegral(4)` is called with only 2 bytes remaining
+- **THEN** 2 bytes SHALL be consumed
+- **AND** the result SHALL be in the range representable by 2 unsigned bytes (`[0, 65535]`)
+
+#### Scenario: maxNumBytes out of range
+
+- **WHEN** `consumeIntegral(0)` or `consumeIntegral(7)` is called
+- **THEN** a `RangeError` SHALL be thrown
+
+#### Scenario: Non-integer maxNumBytes
+
+- **WHEN** `consumeIntegral(1.5)` is called
+- **THEN** a `TypeError` SHALL be thrown
+
+### Requirement: consumeIntegralInRange
+
+The system SHALL provide a `consumeIntegralInRange(min: number, max: number): number` method that consumes the minimum number of bytes needed to represent the range `[min, max]` from the end of the buffer, and returns a value in that range (inclusive). The number of bytes consumed SHALL be `ceil(log2(max - min + 1) / 8)`. The range `max - min` MUST NOT exceed `2^48 - 1` (6 bytes); for larger ranges, callers MUST use `consumeBigIntegralInRange` instead.
+
+#### Scenario: Range within a single byte
+
+- **WHEN** `consumeIntegralInRange(0, 255)` is called
+- **THEN** 1 byte SHALL be consumed
+- **AND** the result SHALL be between 0 and 255 inclusive
+
+#### Scenario: Range requiring multiple bytes
+
+- **WHEN** `consumeIntegralInRange(0, 65535)` is called
+- **THEN** 2 bytes SHALL be consumed
+- **AND** the result SHALL be between 0 and 65535 inclusive
+
+#### Scenario: min equals max
+
+- **WHEN** `consumeIntegralInRange(42, 42)` is called
+- **THEN** the result SHALL be `42`
+- **AND** no bytes SHALL be consumed
+
+#### Scenario: Negative range
+
+- **WHEN** `consumeIntegralInRange(-100, 100)` is called
+- **THEN** the result SHALL be between -100 and 100 inclusive
+
+#### Scenario: Range exceeds 2^48
+
+- **WHEN** `consumeIntegralInRange(0, Number.MAX_SAFE_INTEGER)` is called
+- **THEN** a `RangeError` SHALL be thrown with a message suggesting `consumeBigIntegralInRange`
+
+#### Scenario: min greater than max
+
+- **WHEN** `consumeIntegralInRange(10, 5)` is called
+- **THEN** a `RangeError` SHALL be thrown
+
+#### Scenario: Exhausted buffer
+
+- **WHEN** `remainingBytes` is `0`
+- **THEN** `consumeIntegralInRange(5, 100)` SHALL return `5` (the min value)
+
+### Requirement: consumeBigIntegral
+
+The system SHALL provide a `consumeBigIntegral(maxNumBytes: number, isSigned?: boolean): bigint` method that consumes up to `maxNumBytes` bytes from the end of the buffer and returns a `bigint`. There is no upper limit on `maxNumBytes` (beyond available bytes). The default for `isSigned` SHALL be `false`.
+
+#### Scenario: Consume unsigned 8-byte bigint
+
+- **WHEN** `consumeBigIntegral(8)` is called with sufficient bytes
+- **THEN** the result SHALL be a `bigint` in the range `[0, 2^64 - 1]`
+
+#### Scenario: Consume signed bigint
+
+- **WHEN** `consumeBigIntegral(8, true)` is called
+- **THEN** the result SHALL be a `bigint` in the range `[-2^63, 2^63 - 1]`
+
+#### Scenario: maxNumBytes exceeds remaining bytes
+
+- **WHEN** `consumeBigIntegral(16)` is called with only 3 bytes remaining
+- **THEN** 3 bytes SHALL be consumed
+- **AND** the result SHALL be a `bigint` in the range representable by 3 unsigned bytes (`[0, 2^24 - 1]`)
+
+#### Scenario: Non-integer maxNumBytes
+
+- **WHEN** `consumeBigIntegral(2.5)` is called
+- **THEN** a `TypeError` SHALL be thrown
+
+### Requirement: consumeBigIntegralInRange
+
+The system SHALL provide a `consumeBigIntegralInRange(min: bigint, max: bigint): bigint` method that consumes the minimum bytes needed to represent the range and returns a value in `[min, max]`. Byte consumption SHALL use iterative byte-by-byte reading, stopping when the range is fully representable.
+
+#### Scenario: Arbitrary bigint range
+
+- **WHEN** `consumeBigIntegralInRange(0n, 2n ** 128n - 1n)` is called
+- **THEN** the result SHALL be a `bigint` in the specified range
+
+#### Scenario: min equals max
+
+- **WHEN** `consumeBigIntegralInRange(42n, 42n)` is called
+- **THEN** the result SHALL be `42n`
+- **AND** no bytes SHALL be consumed
+
+#### Scenario: min greater than max
+
+- **WHEN** `consumeBigIntegralInRange(10n, 5n)` is called
+- **THEN** a `RangeError` SHALL be thrown
+
+#### Scenario: Exhausted buffer
+
+- **WHEN** `remainingBytes` is `0`
+- **THEN** `consumeBigIntegralInRange(5n, 100n)` SHALL return `5n`
+
+### Requirement: consumeNumber
+
+The system SHALL provide a `consumeNumber(): number` method that consumes 8 bytes from the end of the buffer and interprets them as an IEEE-754 double-precision float in little-endian order. The result MAY be any IEEE-754 value including NaN, Infinity, -Infinity, and denormalized numbers. When fewer than 8 bytes remain, all remaining bytes SHALL be consumed and placed in the most significant byte positions of an 8-byte little-endian buffer, with the least significant bytes zero-padded. This preserves the sign, exponent, and high mantissa bits from the available data.
+
+#### Scenario: Read a double
+
+- **WHEN** `consumeNumber()` is called with at least 8 bytes remaining
+- **THEN** 8 bytes SHALL be consumed from the end
+- **AND** the result SHALL be the little-endian IEEE-754 double interpretation of those bytes
+
+#### Scenario: Fewer than 8 bytes remaining
+
+- **WHEN** `remainingBytes` is 3 and the remaining bytes are `[A, B, C]`
+- **THEN** the method SHALL construct an 8-byte LE buffer `[0x00, 0x00, 0x00, 0x00, 0x00, A, B, C]`
+- **AND** return the IEEE-754 double interpretation of that buffer
+- **AND** `remainingBytes` SHALL be `0`
+
+#### Scenario: No bytes remaining
+
+- **WHEN** `remainingBytes` is `0`
+- **THEN** `consumeNumber()` SHALL return `0`
+
+### Requirement: consumeNumberInRange
+
+The system SHALL provide a `consumeNumberInRange(min: number, max: number): number` method that SHALL be an alias for `consumeDoubleInRange(min, max)`.
+
+#### Scenario: Delegates to consumeDoubleInRange
+
+- **WHEN** `consumeNumberInRange(0, 100)` is called
+- **THEN** the result SHALL be identical to calling `consumeDoubleInRange(0, 100)` with the same buffer state
+
+### Requirement: consumeFloat and consumeFloatInRange
+
+The system SHALL provide `consumeFloat(): number` and `consumeFloatInRange(min: number, max: number): number` methods. `consumeFloat()` SHALL return a value in the 32-bit float range `[-3.4028235e38, 3.4028235e38]` by delegating to `consumeFloatInRange`. `consumeFloatInRange` SHALL consume 4 bytes (via `consumeProbabilityFloat`) and scale the result to `[min, max]`. When the range spans zero and exceeds the 32-bit float range, the method SHALL split the range in half using a boolean to select the sub-range, preventing precision loss.
+
+#### Scenario: consumeFloat returns 32-bit range value
+
+- **WHEN** `consumeFloat()` is called
+- **THEN** the result SHALL be between `-3.4028235e38` and `3.4028235e38`
+
+#### Scenario: consumeFloatInRange with valid range
+
+- **WHEN** `consumeFloatInRange(10.0, 20.0)` is called
+- **THEN** the result SHALL be between `10.0` and `20.0` inclusive
+
+#### Scenario: consumeFloatInRange with min equal to max
+
+- **WHEN** `consumeFloatInRange(5.0, 5.0)` is called
+- **THEN** the result SHALL be `5.0`
+- **AND** no bytes SHALL be consumed
+
+#### Scenario: consumeFloatInRange with min greater than max
+
+- **WHEN** `consumeFloatInRange(10.0, 5.0)` is called
+- **THEN** a `RangeError` SHALL be thrown
+
+#### Scenario: Range splitting for large spans
+
+- **WHEN** `consumeFloatInRange(-3.4028235e38, 3.4028235e38)` is called
+- **THEN** 1 byte (for boolean sub-range selection) plus 4 bytes (for probability) SHALL be consumed
+- **AND** the result SHALL be in the full range
+
+### Requirement: consumeDouble and consumeDoubleInRange
+
+The system SHALL provide `consumeDouble(): number` and `consumeDoubleInRange(min: number, max: number): number` methods. `consumeDouble()` SHALL return a value in the 64-bit double range `[-Number.MAX_VALUE, Number.MAX_VALUE]` by delegating to `consumeDoubleInRange`. `consumeDoubleInRange` SHALL consume 8 bytes (via `consumeProbabilityDouble`) and scale the result to `[min, max]`. The same range-splitting logic as `consumeFloatInRange` SHALL apply when the range spans zero and exceeds `Number.MAX_VALUE`.
+
+#### Scenario: consumeDouble returns full double range value
+
+- **WHEN** `consumeDouble()` is called
+- **THEN** the result SHALL be between `-Number.MAX_VALUE` and `Number.MAX_VALUE`
+
+#### Scenario: consumeDoubleInRange with valid range
+
+- **WHEN** `consumeDoubleInRange(-1.0, 1.0)` is called
+- **THEN** the result SHALL be between `-1.0` and `1.0` inclusive
+
+#### Scenario: consumeDoubleInRange with min equal to max
+
+- **WHEN** `consumeDoubleInRange(7.5, 7.5)` is called
+- **THEN** the result SHALL be `7.5`
+- **AND** no bytes SHALL be consumed
+
+#### Scenario: consumeDoubleInRange with min greater than max
+
+- **WHEN** `consumeDoubleInRange(10.0, 5.0)` is called
+- **THEN** a `RangeError` SHALL be thrown
+
+### Requirement: consumeProbabilityFloat and consumeProbabilityDouble
+
+The system SHALL provide `consumeProbabilityFloat(): number` and `consumeProbabilityDouble(): number` methods. `consumeProbabilityFloat` SHALL consume 4 bytes as an unsigned 32-bit integer and divide by `0xFFFFFFFF` to produce a value in `[0.0, 1.0]`. `consumeProbabilityDouble` SHALL consume 8 bytes as an unsigned 64-bit integer (via bigint) and divide by `0xFFFFFFFFFFFFFFFF` to produce a value in `[0.0, 1.0]`.
+
+#### Scenario: consumeProbabilityFloat with all-zero bytes
+
+- **WHEN** the last 4 unconsumed bytes are all `0x00`
+- **THEN** `consumeProbabilityFloat()` SHALL return `0.0`
+
+#### Scenario: consumeProbabilityFloat with all-max bytes
+
+- **WHEN** the last 4 unconsumed bytes are all `0xFF`
+- **THEN** `consumeProbabilityFloat()` SHALL return `1.0`
+
+#### Scenario: consumeProbabilityDouble with all-zero bytes
+
+- **WHEN** the last 8 unconsumed bytes are all `0x00`
+- **THEN** `consumeProbabilityDouble()` SHALL return `0.0`
+
+#### Scenario: consumeProbabilityDouble with all-max bytes
+
+- **WHEN** the last 8 unconsumed bytes are all `0xFF`
+- **THEN** `consumeProbabilityDouble()` SHALL return `1.0`
+
+### Requirement: pickValue
+
+The system SHALL provide a `pickValue<T>(array: ReadonlyArray<T>): T` method that consumes bytes from the end of the buffer (via `consumeIntegralInRange(0, array.length - 1)`) and returns the element at the resulting index.
+
+#### Scenario: Pick from non-empty array
+
+- **WHEN** `pickValue(["a", "b", "c"])` is called
+- **THEN** the result SHALL be one of `"a"`, `"b"`, or `"c"`
+
+#### Scenario: Empty array
+
+- **WHEN** `pickValue([])` is called
+- **THEN** a `RangeError` SHALL be thrown
+
+### Requirement: pickValues
+
+The system SHALL provide a `pickValues<T>(array: ReadonlyArray<T>, numValues: number): T[]` method that selects `numValues` unique elements from `array` without replacement. Each selection uses `consumeIntegralInRange` on the shrinking remaining array.
+
+#### Scenario: Pick multiple unique values
+
+- **WHEN** `pickValues(["a", "b", "c", "d"], 2)` is called
+- **THEN** the result SHALL contain exactly 2 elements
+- **AND** both elements SHALL be from the input array
+- **AND** the elements SHALL be distinct
+
+#### Scenario: numValues equals array length
+
+- **WHEN** `pickValues([1, 2, 3], 3)` is called
+- **THEN** the result SHALL contain all 3 elements (in fuzzer-determined order)
+
+#### Scenario: Empty array
+
+- **WHEN** `pickValues([], 1)` is called
+- **THEN** a `RangeError` SHALL be thrown
+
+#### Scenario: numValues exceeds array length
+
+- **WHEN** `pickValues([1, 2], 5)` is called
+- **THEN** a `RangeError` SHALL be thrown
+
+#### Scenario: Negative numValues
+
+- **WHEN** `pickValues([1, 2], -1)` is called
+- **THEN** a `RangeError` SHALL be thrown
+
+#### Scenario: Non-integer numValues
+
+- **WHEN** `pickValues([1, 2], 1.5)` is called
+- **THEN** a `TypeError` SHALL be thrown
+
+### Requirement: consumeBooleans
+
+The system SHALL provide a `consumeBooleans(maxLength: number): boolean[]` method that consumes up to `maxLength` bytes from the **front** of the buffer. Each byte is converted to a boolean by checking the least significant bit. The returned array MAY be shorter than `maxLength` if fewer bytes remain.
+
+#### Scenario: Consume booleans from front
+
+- **WHEN** `consumeBooleans(3)` is called with bytes `[0x01, 0x02, 0x03]` at the front
+- **THEN** the result SHALL be `[true, false, true]`
+
+#### Scenario: Fewer bytes than requested
+
+- **WHEN** `consumeBooleans(10)` is called with 3 bytes remaining
+- **THEN** the result SHALL have length 3
+
+#### Scenario: Non-integer maxLength
+
+- **WHEN** `consumeBooleans(2.5)` is called
+- **THEN** a `TypeError` SHALL be thrown
+
+### Requirement: consumeIntegrals
+
+The system SHALL provide a `consumeIntegrals(maxLength: number, numBytesPerIntegral: number, isSigned?: boolean): number[]` method that consumes integrals from the **front** of the buffer in big-endian order. The array length SHALL be `ceil(min(remainingBytes, maxLength * numBytesPerIntegral) / numBytesPerIntegral)`. This means the final element MAY consume fewer bytes than `numBytesPerIntegral` if the remaining data is not evenly divisible, producing a smaller value for that element. The default for `isSigned` SHALL be `false`.
+
+#### Scenario: Consume array of unsigned 2-byte integers
+
+- **WHEN** `consumeIntegrals(3, 2)` is called with bytes `[0x00, 0x01, 0x00, 0x02, 0x00, 0x03]` at the front
+- **THEN** the result SHALL be `[1, 2, 3]` (big-endian)
+
+#### Scenario: Partial final element
+
+- **WHEN** `consumeIntegrals(10, 4)` is called with 9 bytes remaining
+- **THEN** the result SHALL have 3 elements
+- **AND** the first 2 elements SHALL consume 4 bytes each
+- **AND** the third element SHALL consume the remaining 1 byte (producing a smaller value)
+
+#### Scenario: Non-integer parameters
+
+- **WHEN** `consumeIntegrals(1.5, 2)` or `consumeIntegrals(2, 1.5)` is called
+- **THEN** a `TypeError` SHALL be thrown
+
+### Requirement: consumeBigIntegrals
+
+The system SHALL provide a `consumeBigIntegrals(maxLength: number, numBytesPerIntegral: number, isSigned?: boolean): bigint[]` method with the same semantics as `consumeIntegrals` but returning `bigint` values. It SHALL consume from the **front** in big-endian order.
+
+#### Scenario: Consume array of 8-byte bigints
+
+- **WHEN** `consumeBigIntegrals(2, 8)` is called with 16 bytes at the front
+- **THEN** the result SHALL be an array of 2 `bigint` values
+
+#### Scenario: Non-integer parameters
+
+- **WHEN** `consumeBigIntegrals(1.5, 8)` is called
+- **THEN** a `TypeError` SHALL be thrown
+
+### Requirement: consumeNumbers
+
+The system SHALL provide a `consumeNumbers(maxLength: number): number[]` method that consumes IEEE-754 doubles (8 bytes each) from the **front** of the buffer in big-endian order. The array length SHALL be `ceil(min(remainingBytes, maxLength * 8) / 8)`. The final element MAY consume fewer than 8 bytes if the remaining data is not evenly divisible by 8; in that case, the available bytes SHALL occupy the most significant byte positions of a big-endian 8-byte buffer, with trailing bytes zero-padded.
+
+#### Scenario: Consume array of doubles
+
+- **WHEN** `consumeNumbers(2)` is called with 16 bytes at the front
+- **THEN** the result SHALL be an array of 2 `number` values
+
+#### Scenario: Partial final element
+
+- **WHEN** `consumeNumbers(2)` is called with 11 bytes remaining
+- **THEN** the result SHALL have 2 elements
+- **AND** the first element SHALL consume 8 bytes (full BE double)
+- **AND** the second element SHALL consume the remaining 3 bytes, placed in the most significant positions of a BE double with trailing zeros
+
+#### Scenario: Non-integer maxLength
+
+- **WHEN** `consumeNumbers(1.5)` is called
+- **THEN** a `TypeError` SHALL be thrown
+
+### Requirement: consumeBytes
+
+The system SHALL provide a `consumeBytes(maxLength: number): Uint8Array` method that consumes up to `maxLength` bytes from the **front** of the buffer and returns them as a `Uint8Array`. The returned array MAY be shorter than `maxLength` if fewer bytes remain.
+
+#### Scenario: Consume bytes
+
+- **WHEN** `consumeBytes(3)` is called with bytes `[0xAA, 0xBB, 0xCC, 0xDD]` at the front
+- **THEN** the result SHALL be `Uint8Array([0xAA, 0xBB, 0xCC])`
+- **AND** `remainingBytes` SHALL decrease by 3
+
+#### Scenario: Fewer bytes than requested
+
+- **WHEN** `consumeBytes(100)` is called with 5 bytes remaining
+- **THEN** the result SHALL have length 5
+
+#### Scenario: Non-integer maxLength
+
+- **WHEN** `consumeBytes(2.5)` is called
+- **THEN** a `TypeError` SHALL be thrown
+
+### Requirement: consumeRemainingAsBytes
+
+The system SHALL provide a `consumeRemainingAsBytes(): Uint8Array` method that consumes all remaining bytes from the front and returns them as a `Uint8Array`. After calling this method, `remainingBytes` SHALL be `0`.
+
+#### Scenario: Consume all remaining
+
+- **WHEN** a provider has 10 bytes remaining
+- **AND** `consumeRemainingAsBytes()` is called
+- **THEN** the result SHALL have length 10
+- **AND** `remainingBytes` SHALL be `0`
+
+#### Scenario: No bytes remaining
+
+- **WHEN** `remainingBytes` is `0`
+- **THEN** `consumeRemainingAsBytes()` SHALL return an empty `Uint8Array`
+
+### Requirement: consumeString
+
+The system SHALL provide a `consumeString(maxLength: number, options?: { encoding?: string, printable?: boolean }): string` method that consumes up to `maxLength` bytes from the **front** of the buffer and decodes them as a string. The `encoding` option SHALL accept any encoding label supported by the WHATWG Encoding Standard (as implemented by `TextDecoder`). The default encoding SHALL be `"utf-8"`. If an unsupported encoding label is provided, the method SHALL throw a `RangeError`. If `printable` is `true`, each byte SHALL be mapped through a lookup table that cycles through ASCII printable characters (codepoints 32-126), ensuring all output characters are printable. The default for `printable` SHALL be `false`.
+
+#### Scenario: Consume ASCII string
+
+- **WHEN** `consumeString(5)` is called with bytes `[0x48, 0x65, 0x6C, 0x6C, 0x6F]`
+- **THEN** the result SHALL be `"Hello"`
+
+#### Scenario: Consume printable string
+
+- **WHEN** `consumeString(3, { printable: true })` is called
+- **THEN** all characters in the result SHALL have codepoints between 32 and 126
+
+#### Scenario: Consume UTF-8 string
+
+- **WHEN** `consumeString(10, { encoding: "utf-8" })` is called
+- **THEN** the bytes SHALL be decoded using UTF-8 encoding
+
+#### Scenario: Invalid encoding label
+
+- **WHEN** `consumeString(10, { encoding: "not-a-real-encoding" })` is called
+- **THEN** a `RangeError` SHALL be thrown
+
+#### Scenario: Fewer bytes than maxLength
+
+- **WHEN** `consumeString(100)` is called with 5 bytes remaining
+- **THEN** the result SHALL have length at most 5
+
+#### Scenario: Negative maxLength
+
+- **WHEN** `consumeString(-1)` is called
+- **THEN** a `RangeError` SHALL be thrown
+
+#### Scenario: Non-integer maxLength
+
+- **WHEN** `consumeString(2.5)` is called
+- **THEN** a `TypeError` SHALL be thrown
+
+### Requirement: consumeRemainingAsString
+
+The system SHALL provide a `consumeRemainingAsString(options?: { encoding?: string, printable?: boolean }): string` method that consumes all remaining bytes from the front and returns them as a string. After calling this method, `remainingBytes` SHALL be `0`. Options semantics (encoding, printable, validation) SHALL match `consumeString`.
+
+#### Scenario: Consume all as string
+
+- **WHEN** a provider has 10 bytes remaining
+- **AND** `consumeRemainingAsString()` is called
+- **THEN** `remainingBytes` SHALL be `0`
+- **AND** the result SHALL be a string of length at most 10
+
+### Requirement: consumeStringArray
+
+The system SHALL provide a `consumeStringArray(maxArrayLength: number, maxStringLength: number, options?: { encoding?: string, printable?: boolean }): string[]` method that repeatedly calls `consumeString(maxStringLength, options)` while `array.length < maxArrayLength AND remainingBytes > 0`. The loop SHALL also terminate if `consumeString` consumed zero bytes in an iteration, preventing degenerate behavior when `maxStringLength` is 0. Each produced string (including empty strings) SHALL be appended to the result array.
+
+#### Scenario: Consume string array
+
+- **WHEN** `consumeStringArray(3, 5)` is called with 20 bytes remaining
+- **THEN** the result SHALL be an array of up to 3 strings, each at most 5 characters
+
+#### Scenario: Buffer exhausted before maxArrayLength
+
+- **WHEN** `consumeStringArray(100, 5)` is called with 8 bytes remaining
+- **THEN** the result SHALL contain fewer than 100 strings (limited by available bytes)
+
+#### Scenario: Zero maxStringLength terminates immediately
+
+- **WHEN** `consumeStringArray(10, 0)` is called with 5 bytes remaining
+- **THEN** the result SHALL be an empty array
+- **AND** `remainingBytes` SHALL be unchanged (no bytes consumed)
+
+#### Scenario: Non-integer parameters
+
+- **WHEN** `consumeStringArray(1.5, 5)` or `consumeStringArray(3, 1.5)` is called
+- **THEN** a `TypeError` SHALL be thrown
+
+### Requirement: Input validation
+
+All methods that accept length, count, or byte-width parameters SHALL validate that these parameters are integers (using `Number.isInteger`) and throw `TypeError` if they are not. All methods that accept `min`/`max` range parameters SHALL throw `RangeError` if `min > max`. Methods SHALL use standard `TypeError` and `RangeError` — not custom error classes.
+
+#### Scenario: TypeError for non-integer length
+
+- **WHEN** any consumption method receives a non-integer numeric length parameter (e.g., `1.5`, `NaN`, `Infinity`)
+- **THEN** a `TypeError` SHALL be thrown with a message indicating the parameter must be an integer
+
+#### Scenario: RangeError for invalid range
+
+- **WHEN** any range method receives `min > max`
+- **THEN** a `RangeError` SHALL be thrown
+
+### Requirement: Exhausted buffer deterministic behavior
+
+When the buffer is exhausted (`remainingBytes === 0`), all consumption methods SHALL behave deterministically without throwing:
+- Range methods (`consumeIntegralInRange`, `consumeBigIntegralInRange`, `consumeFloatInRange`, `consumeDoubleInRange`) SHALL return `min`
+- `consumeNumber()` SHALL return `0`
+- `consumeBoolean()` SHALL return `false`
+- Array and string methods SHALL return empty arrays/strings
+- `consumeProbabilityFloat()` and `consumeProbabilityDouble()` SHALL return `0.0`
+
+#### Scenario: All methods safe on exhausted buffer
+
+- **WHEN** `remainingBytes` is `0`
+- **THEN** `consumeBoolean()` SHALL return `false`
+- **AND** `consumeIntegralInRange(5, 10)` SHALL return `5`
+- **AND** `consumeNumber()` SHALL return `0`
+- **AND** `consumeBytes(10)` SHALL return an empty `Uint8Array`
+- **AND** `consumeString(10)` SHALL return `""`
+- **AND** `consumeProbabilityFloat()` SHALL return `0.0`
+- **AND** `consumeProbabilityDouble()` SHALL return `0.0`
+
+### Requirement: Package structure
+
+The package SHALL be named `@vitiate/fuzzed-data-provider`, located in the `vitiate-fuzzed-data-provider/` directory, and registered as a pnpm workspace member. It SHALL be ESM-only (`"type": "module"`), built with `tsup`, and have zero runtime dependencies. The package SHALL export `FuzzedDataProvider` as the primary export from its entry point.
+
+#### Scenario: Import from package
+
+- **WHEN** a consumer adds `@vitiate/fuzzed-data-provider` as a dependency
+- **AND** writes `import { FuzzedDataProvider } from "@vitiate/fuzzed-data-provider"`
+- **THEN** the import SHALL resolve successfully
+- **AND** `FuzzedDataProvider` SHALL be a class constructor
+
+#### Scenario: No runtime dependencies
+
+- **WHEN** the package.json is inspected
+- **THEN** `dependencies` SHALL be empty or absent
+- **AND** the package SHALL not import from Node.js-specific modules (no `Buffer`, `fs`, `path`, etc.)

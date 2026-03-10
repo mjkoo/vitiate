@@ -10,6 +10,7 @@
   },
   "include": [
     "vitiate-core/src/**/*.ts",
+    "vitiate-fuzzed-data-provider/src/**/*.ts",
     "examples/*/src/**/*.ts",
     "examples/*/test/**/*.ts"
   ]
