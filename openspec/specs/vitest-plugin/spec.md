@@ -14,7 +14,7 @@ The `options` parameter SHALL accept:
   - `maxLen` (number, optional): Maximum input length in bytes.
   - `timeoutMs` (number, optional): Per-execution timeout in milliseconds.
   - `fuzzTimeMs` (number, optional): Total fuzzing time limit in milliseconds.
-  - `runs` (number, optional): Maximum number of fuzzing iterations.
+  - `fuzzExecs` (number, optional): Maximum number of fuzzing iterations.
   - `seed` (number, optional): RNG seed for reproducible fuzzing.
 
 - `cacheDir` (string, optional): Cache directory path, resolved relative to project root.

@@ -291,7 +291,7 @@ function toCliArgs(parsed: InferValue<typeof cliParser>): CliArgs {
     fuzzOptions: {
       maxLen,
       timeoutMs: timeout != null ? timeout * 1000 : undefined,
-      runs,
+      fuzzExecs: runs,
       seed,
       fuzzTimeMs: maxTotalTime != null ? maxTotalTime * 1000 : undefined,
       minimizeBudget,

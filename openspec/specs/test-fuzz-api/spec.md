@@ -15,7 +15,7 @@ The `FuzzOptions` SHALL support:
 - `maxLen` (number, optional): Maximum input length in bytes.
 - `timeoutMs` (number, optional): Per-execution timeout in milliseconds.
 - `fuzzTimeMs` (number, optional): Total fuzzing time limit in milliseconds.
-- `runs` (number, optional): Maximum number of fuzzing iterations.
+- `fuzzExecs` (number, optional): Maximum number of fuzzing iterations.
 - `seed` (number, optional): RNG seed for reproducible fuzzing.
 - `detectors` (object, optional): Per-detector enable/disable and configuration. Each field accepts `boolean` or a detector-specific options object. Absent key = tier default (Tier 1 on, Tier 2 off).
 

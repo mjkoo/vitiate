@@ -31,7 +31,7 @@ describe("parseArgs", () => {
 
   it("parses -runs flag", () => {
     const result = parseArgs(argv("./test.ts", "-runs=100000"));
-    expect(result.fuzzOptions.runs).toBe(100000);
+    expect(result.fuzzOptions.fuzzExecs).toBe(100000);
   });
 
   it("parses -seed flag", () => {
@@ -49,7 +49,7 @@ describe("parseArgs", () => {
       argv("./test.ts", "-timeout=10", "-runs=100000", "-seed=42"),
     );
     expect(result.fuzzOptions.timeoutMs).toBe(10000);
-    expect(result.fuzzOptions.runs).toBe(100000);
+    expect(result.fuzzOptions.fuzzExecs).toBe(100000);
     expect(result.fuzzOptions.seed).toBe(42);
   });
 
@@ -145,7 +145,7 @@ describe("parseArgs", () => {
         const result = parseArgs(
           argv("./test.ts", "-fork=1", "-runs=1000", "-timeout=5"),
         );
-        expect(result.fuzzOptions.runs).toBe(1000);
+        expect(result.fuzzOptions.fuzzExecs).toBe(1000);
         expect(result.fuzzOptions.timeoutMs).toBe(5000);
         // -fork=1 is default, no warning
         expect(stderrSpy).not.toHaveBeenCalled();
@@ -178,7 +178,7 @@ describe("-artifact_prefix flag", () => {
     );
     expect(result.artifactPrefix).toBe("./out/");
     expect(result.fuzzOptions.timeoutMs).toBe(10000);
-    expect(result.fuzzOptions.runs).toBe(1000);
+    expect(result.fuzzOptions.fuzzExecs).toBe(1000);
   });
 });
 
@@ -234,7 +234,7 @@ describe("zero-value CLI flags (0 = unlimited convention)", () => {
 
   it("-runs=0 converts to runs: 0", () => {
     const result = parseArgs(argv("./test.ts", "-runs=0"));
-    expect(result.fuzzOptions.runs).toBe(0);
+    expect(result.fuzzOptions.fuzzExecs).toBe(0);
   });
 
   it("-max_total_time=0 converts to fuzzTimeMs: 0", () => {
@@ -504,10 +504,10 @@ describe("CLI env var forwarding", () => {
   });
 
   it("getCliOptions round-trips through VITIATE_FUZZ_OPTIONS", () => {
-    const options = { runs: 5000, maxLen: 2048, seed: 99 };
+    const options = { fuzzExecs: 5000, maxLen: 2048, seed: 99 };
     process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify(options);
     const parsed = getCliOptions();
-    expect(parsed.runs).toBe(5000);
+    expect(parsed.fuzzExecs).toBe(5000);
     expect(parsed.maxLen).toBe(2048);
     expect(parsed.seed).toBe(99);
   });

@@ -22,10 +22,10 @@ The loop SHALL terminate when any of these conditions is met:
 - A crash or timeout is detected AND not suppressed or replaced by dedup AND `stopOnCrash` is `true`.
 - The crash counter reaches `maxCrashes` (when `maxCrashes` is non-zero) AND `stopOnCrash` is `false`.
 - The time limit (`fuzzTimeMs`) is reached.
-- The iteration limit (`runs`) is reached.
+- The iteration limit (`fuzzExecs`) is reached.
 - The process receives SIGINT.
 
-For `runs` and the time limit, a value of 0 means unlimited (equivalent to no limit being set). The loop runs until a termination condition is met.
+For `fuzzExecs` and the time limit, a value of 0 means unlimited (equivalent to no limit being set). The loop runs until a termination condition is met.
 
 The fuzz loop SHALL NOT import or call `setDetectorActive()` directly. All detector active flag management SHALL be handled internally by `DetectorManager.beforeIteration()` and `DetectorManager.endIteration()`.
 
@@ -153,7 +153,7 @@ The fuzz loop SHALL NOT import or call `setDetectorActive()` directly. All detec
 
 #### Scenario: Iteration limit reached
 
-- **WHEN** the iteration count reaches the configured `runs` limit
+- **WHEN** the iteration count reaches the configured `fuzzExecs` limit
 - **THEN** the loop terminates and the result reflects all crashes found during the campaign
 
 #### Scenario: Native crash during target execution
@@ -577,3 +577,33 @@ When `reportResult()` returns `Interesting`, the system SHALL persist the input 
 - **AND** `corpusOutputDir` is not set
 - **THEN** no file is written to disk
 - **AND** the input is retained in the in-memory corpus for the remainder of the process
+
+### Requirement: VITIATE_FUZZ_EXECS environment variable override
+
+The `VITIATE_FUZZ_EXECS` environment variable SHALL override `FuzzOptions.fuzzExecs` when set. It accepts a non-negative integer value (plain count, no unit conversion). Invalid values (non-integer, negative, non-finite) SHALL produce a warning on stderr and be ignored, matching the `VITIATE_FUZZ_TIME` / `getFuzzTime()` error handling pattern.
+
+The override SHALL be applied in `getCliOptions()` after parsing `VITIATE_FUZZ_OPTIONS`, following the same pattern as `getFuzzTime()` overriding `fuzzTimeMs`. This applies universally — both CLI and Vitest modes.
+
+`VITIATE_FUZZ_EXECS` SHALL be added to the `KNOWN_VITIATE_ENV_VARS` set so that it does not trigger the unknown-env-var warning.
+
+#### Scenario: VITIATE_FUZZ_EXECS overrides fuzzExecs
+
+- **WHEN** `VITIATE_FUZZ_EXECS=50000` is set in the environment
+- **AND** `fuzzExecs` is set to `100000` via `VITIATE_FUZZ_OPTIONS`
+- **THEN** the fuzzer SHALL use `fuzzExecs: 50000` (env var takes precedence)
+
+#### Scenario: VITIATE_FUZZ_EXECS with invalid value
+
+- **WHEN** `VITIATE_FUZZ_EXECS=notanumber` is set in the environment
+- **THEN** a warning SHALL be printed to stderr
+- **AND** the env var SHALL be ignored (config or default value applies)
+
+#### Scenario: VITIATE_FUZZ_EXECS with zero
+
+- **WHEN** `VITIATE_FUZZ_EXECS=0` is set in the environment
+- **THEN** the fuzzer SHALL use `fuzzExecs: 0` (unlimited)
+
+#### Scenario: VITIATE_FUZZ_EXECS unset
+
+- **WHEN** `VITIATE_FUZZ_EXECS` is not set in the environment
+- **THEN** the `fuzzExecs` value from `VITIATE_FUZZ_OPTIONS` or the per-test options SHALL be used unchanged

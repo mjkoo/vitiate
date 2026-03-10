@@ -83,7 +83,7 @@ The CLI SHALL accept libFuzzer-style flags (hyphen prefix, `=` separator):
 
 - `-max_len=N`: Maximum input length in bytes. Passed to `FuzzerConfig.maxInputLen`.
 - `-timeout=N`: Per-execution timeout in seconds. Converted to milliseconds for `FuzzOptions.timeoutMs`. Applies to both synchronous and asynchronous fuzz targets.
-- `-runs=N`: Exit after N executions. Passed to `FuzzOptions.runs`.
+- `-runs=N`: Exit after N executions. Passed to `FuzzOptions.fuzzExecs`.
 - `-seed=N`: RNG seed. Passed to `FuzzerConfig.seed`.
 - `-artifact_prefix=<path>`: Prefix path for crash/timeout artifacts. See `cli-artifact-prefix` capability.
 - `-dict=<path>`: Path to an AFL/libfuzzer-format dictionary file. Resolved relative to cwd. The resolved absolute path SHALL be passed to the child process via the `dictionaryPath` field in the `VITIATE_CLI_IPC` JSON blob. See `user-dictionary` capability.
@@ -109,7 +109,7 @@ The CLI SHALL accept libFuzzer-style flags (hyphen prefix, `=` separator):
 #### Scenario: Multiple flags
 
 - **WHEN** `npx vitiate ./test.ts -timeout=10 -runs=100000 -seed=42` is executed
-- **THEN** the fuzzer is configured with timeout 10000ms, 100000 max runs, and seed 42
+- **THEN** the fuzzer is configured with timeout 10000ms, 100000 fuzzExecs, and seed 42
 - **AND** the timeout applies to both synchronous and asynchronous targets
 
 #### Scenario: Dictionary flag

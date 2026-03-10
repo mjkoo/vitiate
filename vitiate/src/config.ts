@@ -81,8 +81,8 @@ const FuzzOptionsSchema = v.object({
   timeoutMs: v.optional(NonNegativeInteger),
   /** Total fuzzing time limit in milliseconds. */
   fuzzTimeMs: v.optional(NonNegativeInteger),
-  /** Maximum number of fuzzing iterations. */
-  runs: v.optional(NonNegativeInteger),
+  /** Maximum number of fuzzing iterations. 0 means unlimited. */
+  fuzzExecs: v.optional(NonNegativeInteger),
   /** RNG seed for reproducible fuzzing. */
   seed: v.optional(AnyInteger),
   /** Maximum target re-executions during crash minimization. Default: 10,000. */
@@ -240,6 +240,25 @@ export function getFuzzTime(): number | undefined {
   return parsed * 1000;
 }
 
+/**
+ * Read `VITIATE_FUZZ_EXECS` env var and return as a number.
+ * Returns `undefined` when unset/empty, or when the value is invalid (warns on stderr).
+ */
+export function getFuzzExecs(): number | undefined {
+  const raw = process.env["VITIATE_FUZZ_EXECS"];
+  if (raw === undefined || raw === "") return undefined;
+
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 0) {
+    process.stderr.write(
+      `vitiate: warning: invalid VITIATE_FUZZ_EXECS value: ${JSON.stringify(raw)} (expected non-negative integer)\n`,
+    );
+    return undefined;
+  }
+
+  return parsed;
+}
+
 export function getDictionaryPathEnv(): string | undefined {
   return getCliIpc().dictionaryPath;
 }
@@ -349,6 +368,7 @@ export function resetCacheDir(): void {
 
 const KNOWN_VITIATE_ENV_VARS = new Set([
   "VITIATE_FUZZ",
+  "VITIATE_FUZZ_EXECS",
   "VITIATE_FUZZ_TIME",
   "VITIATE_OPTIMIZE",
   "VITIATE_SUPERVISOR",
@@ -431,6 +451,11 @@ export function getCliOptions(): FuzzOptions {
   const fuzzTimeOverride = getFuzzTime();
   if (fuzzTimeOverride !== undefined) {
     options = { ...options, fuzzTimeMs: fuzzTimeOverride };
+  }
+
+  const fuzzExecsOverride = getFuzzExecs();
+  if (fuzzExecsOverride !== undefined) {
+    options = { ...options, fuzzExecs: fuzzExecsOverride };
   }
 
   return options;

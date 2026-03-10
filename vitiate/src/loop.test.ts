@@ -64,11 +64,11 @@ describe("fuzz loop", () => {
     // Set a single fixed edge to 1 (idempotent). This ensures the seed
     // produces novel coverage (so the corpus is non-empty) without making
     // every subsequent input "interesting" — which would trigger calibration
-    // and stage execution, inflating totalExecs beyond the runs limit.
+    // and stage execution, inflating totalExecs beyond the fuzzExecs limit.
     cov[0] = 1;
   }
 
-  it("runs against a trivial target and terminates after runs limit", async () => {
+  it("runs against a trivial target and terminates after fuzzExecs limit", async () => {
     await setupFuzzingMode();
     let callCount = 0;
     const target = (data: Buffer): void => {
@@ -81,11 +81,11 @@ describe("fuzz loop", () => {
       tmpDir,
       "trivial",
       "test.fuzz.ts",
-      { runs: 100, grimoire: false, unicode: false },
+      { fuzzExecs: 100, grimoire: false, unicode: false },
     );
 
     expect(result.crashed).toBe(false);
-    // callCount >= runs because calibration re-runs also call the target.
+    // callCount >= fuzzExecs because calibration re-runs also call the target.
     expect(callCount).toBeGreaterThanOrEqual(100);
     expect(result.totalExecs).toBe(100);
   });
@@ -106,7 +106,7 @@ describe("fuzz loop", () => {
       "crashme",
       "test.fuzz.ts",
       {
-        runs: 1_000_000,
+        fuzzExecs: 1_000_000,
       },
     );
 
@@ -125,7 +125,7 @@ describe("fuzz loop", () => {
     const crashData = readFileSync(result.crashArtifactPath!);
     expect(crashData[0]).toBe(0x42);
   });
-  it("runs an async target and terminates after runs limit", async () => {
+  it("runs an async target and terminates after fuzzExecs limit", async () => {
     await setupFuzzingMode();
     let callCount = 0;
     const target = async (data: Buffer): Promise<void> => {
@@ -140,14 +140,14 @@ describe("fuzz loop", () => {
       "async-trivial",
       "test.fuzz.ts",
       {
-        runs: 100,
+        fuzzExecs: 100,
         grimoire: false,
         unicode: false,
       },
     );
 
     expect(result.crashed).toBe(false);
-    // callCount >= runs because calibration re-runs also call the target.
+    // callCount >= fuzzExecs because calibration re-runs also call the target.
     expect(callCount).toBeGreaterThanOrEqual(100);
     expect(result.totalExecs).toBe(100);
   });
@@ -168,7 +168,7 @@ describe("fuzz loop", () => {
       "async-crash",
       "test.fuzz.ts",
       {
-        runs: 1_000_000,
+        fuzzExecs: 1_000_000,
       },
     );
 
@@ -194,7 +194,7 @@ describe("fuzz loop", () => {
       "sync-timeout",
       "test.fuzz.ts",
       {
-        runs: 1,
+        fuzzExecs: 1,
         timeoutMs: 200,
       },
     );
@@ -224,13 +224,13 @@ describe("fuzz loop", () => {
       "no-timeout",
       "test.fuzz.ts",
       {
-        runs: 10,
+        fuzzExecs: 10,
         timeoutMs: 5000,
       },
     );
 
     expect(result.crashed).toBe(false);
-    // callCount >= runs because calibration re-runs also call the target.
+    // callCount >= fuzzExecs because calibration re-runs also call the target.
     expect(callCount).toBeGreaterThanOrEqual(10);
   });
 
@@ -256,7 +256,7 @@ describe("fuzz loop", () => {
         "no-leak",
         "test.fuzz.ts",
         {
-          runs: 50,
+          fuzzExecs: 50,
           timeoutMs: 5000,
         },
       );
@@ -266,7 +266,7 @@ describe("fuzz loop", () => {
       await new Promise((resolve) => setImmediate(resolve));
 
       expect(result.crashed).toBe(false);
-      // callCount >= runs because calibration re-runs also call the target.
+      // callCount >= fuzzExecs because calibration re-runs also call the target.
       expect(callCount).toBeGreaterThanOrEqual(50);
       expect(rejections).toEqual([]);
     } finally {
@@ -290,7 +290,7 @@ describe("fuzz loop", () => {
       "not-timeout",
       "test.fuzz.ts",
       {
-        runs: 1_000_000,
+        fuzzExecs: 1_000_000,
         timeoutMs: 5000, // Long timeout - should never fire
       },
     );
@@ -314,7 +314,7 @@ describe("fuzz loop", () => {
           "no-cov",
           "test.fuzz.ts",
           {
-            runs: 1,
+            fuzzExecs: 1,
           },
         ),
       ).rejects.toThrow("coverage map not initialized");
@@ -332,7 +332,7 @@ describe("fuzz loop", () => {
 
     await expect(
       runFuzzLoop(target, tmpDir, "no-cov-seeds", "test.fuzz.ts", {
-        runs: 100,
+        fuzzExecs: 100,
       }),
     ).rejects.toThrow(/none produced coverage/);
   });
@@ -357,7 +357,7 @@ describe("fuzz loop", () => {
       tmpDir,
       "corpus-dirs-test",
       "test.fuzz.ts",
-      { runs: 1_000_000 },
+      { fuzzExecs: 1_000_000 },
       { corpusDirs: [extraDir] },
     );
 
@@ -403,7 +403,7 @@ describe("fuzz loop", () => {
       "minimize-test",
       "test.fuzz.ts",
       {
-        runs: 1_000_000,
+        fuzzExecs: 1_000_000,
         fuzzTimeMs: 30_000,
         minimizeBudget: 50_000,
         minimizeTimeLimitMs: 30_000,
@@ -421,7 +421,7 @@ describe("fuzz loop", () => {
     expect(artifactData[0]).toBe(0xde);
     expect(artifactData[1]).toBe(0xad);
   });
-  it("runs=0 means unlimited iterations (runs until crash or other limit)", async () => {
+  it("fuzzExecs=0 means unlimited iterations (runs until crash or other limit)", async () => {
     await setupFuzzingMode();
     const target = (data: Buffer): void => {
       simulateCoverage(data);
@@ -430,14 +430,14 @@ describe("fuzz loop", () => {
       }
     };
 
-    // runs=0 should mean unlimited; fuzzTimeMs is the safety net
+    // fuzzExecs=0 should mean unlimited; fuzzTimeMs is the safety net
     const result = await runFuzzLoop(
       target,
       tmpDir,
       "runs-zero",
       "test.fuzz.ts",
       {
-        runs: 0,
+        fuzzExecs: 0,
         fuzzTimeMs: 30_000,
       },
     );
@@ -451,7 +451,7 @@ describe("fuzz loop", () => {
 
   // Tests below use `grimoire: false`, `unicode: false`, and `redqueen: false`
   // to ensure deterministic totalExecs counts. These options disable mutational
-  // stages that run extra iterations beyond the `runs` limit.
+  // stages that run extra iterations beyond the `fuzzExecs` limit.
   // Grimoire/REDQUEEN integration is tested at the engine level (Rust unit tests).
   // A full TypeScript pipeline test for these features would be
   // non-deterministic and belongs in fuzz-pipeline.test.ts if needed.
@@ -477,7 +477,7 @@ describe("fuzz loop", () => {
       "cal-loop",
       "test.fuzz.ts",
       {
-        runs: 50,
+        fuzzExecs: 50,
         grimoire: false,
         unicode: false,
         redqueen: false,
@@ -511,7 +511,7 @@ describe("fuzz loop", () => {
       "async-cov",
       "test.fuzz.ts",
       {
-        runs: 50,
+        fuzzExecs: 50,
         grimoire: false,
         unicode: false,
         redqueen: false,
@@ -545,7 +545,7 @@ describe("fuzz loop", () => {
       "async-cov-timeout",
       "test.fuzz.ts",
       {
-        runs: 50,
+        fuzzExecs: 50,
         timeoutMs: 5000,
         grimoire: false,
         unicode: false,
@@ -560,7 +560,7 @@ describe("fuzz loop", () => {
     expect(callCount).toBeGreaterThan(50);
   });
 
-  it("fuzzTimeMs=0 means unlimited total time (runs until crash or runs limit)", async () => {
+  it("fuzzTimeMs=0 means unlimited total time (runs until crash or fuzzExecs limit)", async () => {
     await setupFuzzingMode();
     const target = (data: Buffer): void => {
       simulateCoverage(data);
@@ -569,7 +569,7 @@ describe("fuzz loop", () => {
       }
     };
 
-    // fuzzTimeMs=0 should mean unlimited; runs is the safety net
+    // fuzzTimeMs=0 should mean unlimited; fuzzExecs is the safety net
     const result = await runFuzzLoop(
       target,
       tmpDir,
@@ -577,7 +577,7 @@ describe("fuzz loop", () => {
       "test.fuzz.ts",
       {
         fuzzTimeMs: 0,
-        runs: 1_000_000,
+        fuzzExecs: 1_000_000,
       },
     );
 
@@ -612,7 +612,7 @@ describe("fuzz loop", () => {
         tmpDir,
         "stage-execs",
         "test.fuzz.ts",
-        { runs: 50, timeoutMs: 5000, grimoire: false },
+        { fuzzExecs: 50, timeoutMs: 5000, grimoire: false },
       );
 
       expect(result.crashed).toBe(false);
@@ -639,11 +639,11 @@ describe("fuzz loop", () => {
         tmpDir,
         "stage-no-cmp",
         "test.fuzz.ts",
-        { runs: 50, grimoire: false, unicode: false, redqueen: false },
+        { fuzzExecs: 50, grimoire: false, unicode: false, redqueen: false },
       );
 
       expect(result.crashed).toBe(false);
-      // Without CmpLog data (no I2S) and with Grimoire/REDQUEEN disabled, totalExecs === runs.
+      // Without CmpLog data (no I2S) and with Grimoire/REDQUEEN disabled, totalExecs === fuzzExecs.
       expect(result.totalExecs).toBe(50);
       // callCount > totalExecs due to calibration re-runs.
       expect(callCount).toBeGreaterThan(result.totalExecs);
@@ -679,7 +679,7 @@ describe("fuzz loop", () => {
         tmpDir,
         "stage-crash",
         "test.fuzz.ts",
-        { runs: 1_000_000, fuzzTimeMs: 30_000, grimoire: false },
+        { fuzzExecs: 1_000_000, fuzzTimeMs: 30_000, grimoire: false },
       );
 
       expect(result.crashed).toBe(true);
@@ -712,11 +712,11 @@ describe("fuzz loop", () => {
         tmpDir,
         "stage-async",
         "test.fuzz.ts",
-        { runs: 50, timeoutMs: 5000, grimoire: false },
+        { fuzzExecs: 50, timeoutMs: 5000, grimoire: false },
       );
 
       expect(result.crashed).toBe(false);
-      // Stage ran: totalExecs > runs
+      // Stage ran: totalExecs > fuzzExecs
       expect(result.totalExecs).toBeGreaterThan(50);
       // Calibration + stage: callCount > totalExecs
       expect(callCount).toBeGreaterThan(result.totalExecs);
@@ -752,7 +752,7 @@ describe("fuzz loop", () => {
         "stage-timeout",
         "test.fuzz.ts",
         {
-          runs: 1_000_000,
+          fuzzExecs: 1_000_000,
           timeoutMs: 200,
           fuzzTimeMs: 30_000,
           grimoire: false,
@@ -795,7 +795,7 @@ describe("fuzz loop", () => {
         tmpDir,
         "stage-execs-abort",
         "test.fuzz.ts",
-        { runs: 1_000_000, fuzzTimeMs: 30_000, grimoire: false },
+        { fuzzExecs: 1_000_000, fuzzTimeMs: 30_000, grimoire: false },
       );
 
       expect(result.crashed).toBe(true);
@@ -887,11 +887,11 @@ describe("fuzz loop", () => {
         tmpDir,
         "stage-no-wd",
         "test.fuzz.ts",
-        { runs: 50, grimoire: false, unicode: false },
+        { fuzzExecs: 50, grimoire: false, unicode: false },
       );
 
       expect(result.crashed).toBe(false);
-      // Stage ran without watchdog: totalExecs > runs
+      // Stage ran without watchdog: totalExecs > fuzzExecs
       expect(result.totalExecs).toBeGreaterThan(50);
       expect(callCount).toBeGreaterThan(result.totalExecs);
     });
@@ -939,13 +939,13 @@ describe("fuzz loop", () => {
         tmpDir,
         "stage-cal-crash",
         "test.fuzz.ts",
-        { runs: 50, grimoire: false, unicode: false, redqueen: false },
+        { fuzzExecs: 50, grimoire: false, unicode: false, redqueen: false },
       );
 
       expect(result.crashed).toBe(false);
       // No stage ran: calibration crashed before any stage could start.
       expect(result.totalExecs).toBe(50);
-      // callCount > runs because of calibration attempts (even though they crash).
+      // callCount > fuzzExecs because of calibration attempts (even though they crash).
       expect(callCount).toBeGreaterThan(50);
     });
   });
@@ -980,7 +980,7 @@ describe("fuzz loop", () => {
         tmpDir,
         "multi-crash",
         "test.fuzz.ts",
-        { runs: 1_000_000, fuzzTimeMs: 30_000 },
+        { fuzzExecs: 1_000_000, fuzzTimeMs: 30_000 },
         { stopOnCrash: false, maxCrashes: 3 },
       );
 
@@ -1006,7 +1006,7 @@ describe("fuzz loop", () => {
         tmpDir,
         "stop-first",
         "test.fuzz.ts",
-        { runs: 1_000_000, fuzzTimeMs: 30_000 },
+        { fuzzExecs: 1_000_000, fuzzTimeMs: 30_000 },
         { stopOnCrash: true },
       );
 
@@ -1055,13 +1055,13 @@ describe("fuzz loop", () => {
         tmpDir,
         "unlimited-crash",
         "test.fuzz.ts",
-        { runs: 5000 },
+        { fuzzExecs: 5000 },
         { stopOnCrash: false, maxCrashes: 0 },
       );
 
       // Both seeded inputs trigger crashes with unique dedup keys.
       // maxCrashes=0 means unlimited — the loop should NOT stop at any
-      // crash limit, only the runs limit terminates.
+      // crash limit, only the fuzzExecs limit terminates.
       expect(result.crashed).toBe(true);
       expect(result.crashCount).toBeGreaterThanOrEqual(2);
     });
@@ -1097,7 +1097,7 @@ describe("fuzz loop", () => {
           tmpDir,
           "limit-warn",
           "test.fuzz.ts",
-          { runs: 1_000_000, fuzzTimeMs: 30_000 },
+          { fuzzExecs: 1_000_000, fuzzTimeMs: 30_000 },
           { stopOnCrash: false, maxCrashes: 2 },
         );
 
@@ -1121,7 +1121,7 @@ describe("fuzz loop", () => {
         tmpDir,
         "no-crash",
         "test.fuzz.ts",
-        { runs: 50, grimoire: false, unicode: false },
+        { fuzzExecs: 50, grimoire: false, unicode: false },
         { stopOnCrash: false },
       );
 
@@ -1161,7 +1161,7 @@ describe("fuzz loop", () => {
         tmpDir,
         "stage-continue",
         "test.fuzz.ts",
-        { runs: 1_000_000, fuzzTimeMs: 30_000, grimoire: false },
+        { fuzzExecs: 1_000_000, fuzzTimeMs: 30_000, grimoire: false },
         { stopOnCrash: false, maxCrashes: 5 },
       );
 
@@ -1186,7 +1186,7 @@ describe("fuzz loop", () => {
         tmpDir,
         "dedup-first",
         "test.fuzz.ts",
-        { runs: 1_000_000, fuzzTimeMs: 30_000 },
+        { fuzzExecs: 1_000_000, fuzzTimeMs: 30_000 },
         { stopOnCrash: true },
       );
 
@@ -1219,7 +1219,7 @@ describe("fuzz loop", () => {
         tmpDir,
         "dedup-suppress",
         "test.fuzz.ts",
-        { runs: 5000 },
+        { fuzzExecs: 5000 },
         { stopOnCrash: false, maxCrashes: 0 },
       );
 
@@ -1252,7 +1252,7 @@ describe("fuzz loop", () => {
         tmpDir,
         "dedup-failopen",
         "test.fuzz.ts",
-        { runs: 1_000_000, fuzzTimeMs: 30_000 },
+        { fuzzExecs: 1_000_000, fuzzTimeMs: 30_000 },
         { stopOnCrash: false, maxCrashes: 3 },
       );
 
@@ -1283,7 +1283,7 @@ describe("fuzz loop", () => {
         tmpDir,
         "dedup-replace",
         "test.fuzz.ts",
-        { runs: 5000 },
+        { fuzzExecs: 5000 },
         { stopOnCrash: false, maxCrashes: 0 },
       );
 
@@ -1309,7 +1309,7 @@ describe("fuzz loop", () => {
         tmpDir,
         "dedup-zero",
         "test.fuzz.ts",
-        { runs: 50, grimoire: false, unicode: false },
+        { fuzzExecs: 50, grimoire: false, unicode: false },
         { stopOnCrash: false },
       );
 
@@ -1333,7 +1333,7 @@ describe("fuzz loop", () => {
         tmpDir,
         "result-fields",
         "test.fuzz.ts",
-        { runs: 1_000_000 },
+        { fuzzExecs: 1_000_000 },
       );
 
       expect(result.crashed).toBe(true);
@@ -1353,7 +1353,7 @@ describe("fuzz loop", () => {
         tmpDir,
         "no-crash-fields",
         "test.fuzz.ts",
-        { runs: 10, grimoire: false, unicode: false },
+        { fuzzExecs: 10, grimoire: false, unicode: false },
       );
 
       expect(result.crashed).toBe(false);
@@ -1385,7 +1385,7 @@ describe("fuzz loop", () => {
         tmpDir,
         testName,
         "test.fuzz.ts",
-        { runs: 10, grimoire: false, unicode: false, redqueen: false },
+        { fuzzExecs: 10, grimoire: false, unicode: false, redqueen: false },
         { libfuzzerCompat: true },
       );
 
@@ -1412,7 +1412,7 @@ describe("fuzz loop", () => {
       };
       await expect(
         runFuzzLoop(target, tmpDir, testName, "test.fuzz.ts", {
-          runs: 10,
+          fuzzExecs: 10,
           grimoire: false,
           unicode: false,
           redqueen: false,
@@ -1446,7 +1446,7 @@ describe("fuzz loop", () => {
       "proto-pollution",
       "test.fuzz.ts",
       {
-        runs: 100000,
+        fuzzExecs: 100000,
         fuzzTimeMs: 60000,
         grimoire: false,
         unicode: false,
@@ -1478,7 +1478,7 @@ describe("fuzz loop", () => {
       "vuln-artifact",
       "test.fuzz.ts",
       {
-        runs: 10,
+        fuzzExecs: 10,
         grimoire: false,
         unicode: false,
         redqueen: false,
