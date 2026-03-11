@@ -294,7 +294,7 @@ The following detector fields SHALL be defined for Tier 1 detectors:
 
 - `prototypePollution?: boolean`
 - `commandInjection?: boolean`
-- `pathTraversal?: boolean | { allowedPaths?: string[]; deniedPaths?: string[] }`
+- `pathTraversal?: boolean | { allowedPaths?: string[]; deniedPaths?: string[] }` — Tier 1 on Unix/macOS, Tier 2 on Windows (the default allowed-path policy cannot reliably cover cross-drive access, UNC paths, or junctions on Windows, making false positives likely without explicit user configuration).
 
 The following detector fields SHALL be defined for Tier 2 detectors:
 

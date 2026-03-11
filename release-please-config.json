@@ -68,6 +68,10 @@
     "vitiate-fuzzed-data-provider": {
       "release-type": "node",
       "component": "@vitiate/fuzzed-data-provider"
+    },
+    "vitiate": {
+      "release-type": "node",
+      "component": "vitiate"
     }
   },
   "plugins": [
@@ -85,7 +89,8 @@
         "@vitiate/engine-linux-arm64-musl",
         "@vitiate/engine-linux-arm-gnueabihf",
         "@vitiate/swc-plugin",
-        "@vitiate/fuzzed-data-provider"
+        "@vitiate/fuzzed-data-provider",
+        "vitiate"
       ]
     }
   ]

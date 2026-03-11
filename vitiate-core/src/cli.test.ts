@@ -76,7 +76,7 @@ describe("parseArgs", () => {
       }
     });
 
-    it("parses -fork=0 with warning about unsupported non-fork mode", () => {
+    it("parses -fork=0 with warning about unsupported in-process mode", () => {
       const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
       try {
         const result = parseArgs(argv("./test.ts", "-fork=0"));
@@ -113,7 +113,7 @@ describe("parseArgs", () => {
       }
     });
 
-    it("parses -jobs=4 with warning that parallel jobs are ignored", () => {
+    it("parses -jobs=4 with warning that multiple sessions are ignored", () => {
       const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
       try {
         parseArgs(argv("./test.ts", "-jobs=4"));

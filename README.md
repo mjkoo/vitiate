@@ -269,8 +269,8 @@ vitiatePlugin({
 Prebuilt native binaries are provided for:
 
 - Linux: x86_64 (glibc, musl), aarch64 (glibc, musl), armv7 (gnueabihf)
-- macOS: x86_64, aarch64 (Apple Silicon)
-- Windows: x86_64, aarch64
+- macOS: aarch64 (Apple Silicon)
+- Windows: x86_64
 
 Requires Node.js 18 or later, Vite 6+, and Vitest 3.1+.
 

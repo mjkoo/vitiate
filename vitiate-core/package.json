@@ -34,10 +34,11 @@
     "./setup": {
       "types": "./dist/setup.d.ts",
       "import": "./dist/setup.js"
+    },
+    "./cli": {
+      "types": "./dist/cli.d.ts",
+      "import": "./dist/cli.js"
     }
-  },
-  "bin": {
-    "vitiate": "dist/cli.js"
   },
   "files": [
     "dist"

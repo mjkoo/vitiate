@@ -266,6 +266,25 @@ export function getFuzzExecs(): number | undefined {
   return parsed;
 }
 
+/**
+ * Read `VITIATE_MAX_CRASHES` env var and return as a number.
+ * Returns `undefined` when unset/empty, or when the value is invalid (warns on stderr).
+ */
+export function getMaxCrashes(): number | undefined {
+  const raw = process.env["VITIATE_MAX_CRASHES"];
+  if (raw === undefined || raw === "") return undefined;
+
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 0) {
+    process.stderr.write(
+      `vitiate: warning: invalid VITIATE_MAX_CRASHES value: ${JSON.stringify(raw)} (expected non-negative integer)\n`,
+    );
+    return undefined;
+  }
+
+  return parsed;
+}
+
 export function getDictionaryPathEnv(): string | undefined {
   return getCliIpc().dictionaryPath;
 }
@@ -377,6 +396,7 @@ const KNOWN_VITIATE_ENV_VARS = new Set([
   "VITIATE_FUZZ",
   "VITIATE_FUZZ_EXECS",
   "VITIATE_FUZZ_TIME",
+  "VITIATE_MAX_CRASHES",
   "VITIATE_OPTIMIZE",
   "VITIATE_SUPERVISOR",
   "VITIATE_SHMEM",
@@ -470,6 +490,11 @@ export function getCliOptions(): FuzzOptions {
   const fuzzExecsOverride = getFuzzExecs();
   if (fuzzExecsOverride !== undefined) {
     options = { ...options, fuzzExecs: fuzzExecsOverride };
+  }
+
+  const maxCrashesOverride = getMaxCrashes();
+  if (maxCrashesOverride !== undefined) {
+    options = { ...options, maxCrashes: maxCrashesOverride };
   }
 
   return options;

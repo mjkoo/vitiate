@@ -9,5 +9,6 @@
   "vitiate-engine/npm/linux-arm64-musl": "0.0.0",
   "vitiate-engine/npm/linux-arm-gnueabihf": "0.0.0",
   "vitiate-swc-plugin": "0.0.0",
-  "vitiate-fuzzed-data-provider": "0.0.0"
+  "vitiate-fuzzed-data-provider": "0.0.0",
+  "vitiate": "0.0.0"
 }

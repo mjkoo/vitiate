@@ -132,12 +132,20 @@ export const cliParser = object({
   // libFuzzer-compatible flags: accepted for OSS-Fuzz compatibility
   fork: optional(
     option("-fork", integer({ min: 0 }), {
-      description: [text("Accepted for libFuzzer compatibility (always 1)")],
+      description: [
+        text(
+          "Parallel fuzzing workers (libFuzzer compat, accepted but ignored)",
+        ),
+      ],
     }),
   ),
   jobs: optional(
     option("-jobs", integer({ min: 0 }), {
-      description: [text("Accepted for libFuzzer compatibility (always 1)")],
+      description: [
+        text(
+          "Independent fuzzing sessions (libFuzzer compat, accepted but ignored)",
+        ),
+      ],
     }),
   ),
   merge: optional(
@@ -153,17 +161,17 @@ function warnUnsupportedFlags(parsed: InferValue<typeof cliParser>): void {
   if (parsed.fork !== undefined && parsed.fork !== 1) {
     if (parsed.fork === 0) {
       process.stderr.write(
-        `vitiate: warning: -fork=0 (non-fork mode) is not supported; vitiate always uses fork mode (equivalent to -fork=1)\n`,
+        `vitiate: warning: -fork=0 (in-process mode) is not supported; vitiate always runs the fuzz target in a supervised child process\n`,
       );
     } else {
       process.stderr.write(
-        `vitiate: warning: -fork=${parsed.fork} is ignored; vitiate runs a single supervised worker (equivalent to -fork=1)\n`,
+        `vitiate: warning: -fork=${parsed.fork} is ignored; vitiate does not support parallel workers and always runs a single supervised child process\n`,
       );
     }
   }
   if (parsed.jobs !== undefined && parsed.jobs !== 1) {
     process.stderr.write(
-      `vitiate: warning: -jobs=${parsed.jobs} is ignored; vitiate runs a single job at a time (equivalent to -jobs=1)\n`,
+      `vitiate: warning: -jobs=${parsed.jobs} is ignored; vitiate collects crashes continuously in a single process instead of running independent per-crash sessions. Use VITIATE_MAX_CRASHES to limit crash collection.\n`,
     );
   }
 }
@@ -501,7 +509,7 @@ async function runChildMode(
   }
 }
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   const {
     testFile,
     corpusDirs,

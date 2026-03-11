@@ -15,6 +15,7 @@ export default tseslint.config(
       "vitiate-engine/index.js",
       "vitiate-engine/index.d.ts",
       "**/*.config.ts",
+      "**/.astro/",
     ],
   },
   js.configs.recommended,

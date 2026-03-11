@@ -246,6 +246,7 @@ jobs:
             vitiate-swc-plugin
             vitiate-fuzzed-data-provider
             vitiate-core
+            vitiate
           )
           for pkg in "${packages[@]}"; do
             echo "Publishing $pkg..."

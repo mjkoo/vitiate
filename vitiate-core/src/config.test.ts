@@ -17,6 +17,7 @@ import {
   getCliOptions,
   getFuzzExecs,
   getFuzzTime,
+  getMaxCrashes,
   resolveInstrumentOptions,
   resolveStopOnCrash,
   COVERAGE_MAP_SIZE,
@@ -1177,6 +1178,186 @@ describe("config", () => {
         expect(opts.fuzzExecs).toBe(100000);
         expect(chunks.length).toBe(1);
         expect(chunks[0]).toContain("VITIATE_FUZZ_EXECS");
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+  });
+
+  describe("getMaxCrashes", () => {
+    const original = process.env["VITIATE_MAX_CRASHES"];
+
+    afterEach(() => {
+      if (original === undefined) {
+        delete process.env["VITIATE_MAX_CRASHES"];
+      } else {
+        process.env["VITIATE_MAX_CRASHES"] = original;
+      }
+    });
+
+    it("returns undefined when not set", () => {
+      delete process.env["VITIATE_MAX_CRASHES"];
+      expect(getMaxCrashes()).toBeUndefined();
+    });
+
+    it("returns undefined when empty", () => {
+      process.env["VITIATE_MAX_CRASHES"] = "";
+      expect(getMaxCrashes()).toBeUndefined();
+    });
+
+    it("parses valid integer", () => {
+      process.env["VITIATE_MAX_CRASHES"] = "50";
+      expect(getMaxCrashes()).toBe(50);
+    });
+
+    it("parses 0 as 0", () => {
+      process.env["VITIATE_MAX_CRASHES"] = "0";
+      expect(getMaxCrashes()).toBe(0);
+    });
+
+    it("rejects negative values with warning", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_MAX_CRASHES"] = "-5";
+        expect(getMaxCrashes()).toBeUndefined();
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toContain("VITIATE_MAX_CRASHES");
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+
+    it("rejects non-integer values with warning", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_MAX_CRASHES"] = "1.5";
+        expect(getMaxCrashes()).toBeUndefined();
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toContain("VITIATE_MAX_CRASHES");
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+
+    it("rejects non-numeric strings with warning", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_MAX_CRASHES"] = "abc";
+        expect(getMaxCrashes()).toBeUndefined();
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toContain("VITIATE_MAX_CRASHES");
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+
+    it("rejects Infinity with warning", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_MAX_CRASHES"] = "Infinity";
+        expect(getMaxCrashes()).toBeUndefined();
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toContain("VITIATE_MAX_CRASHES");
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+  });
+
+  describe("getCliOptions VITIATE_MAX_CRASHES integration", () => {
+    const originalOpts = process.env["VITIATE_FUZZ_OPTIONS"];
+    const originalMaxCrashes = process.env["VITIATE_MAX_CRASHES"];
+
+    afterEach(() => {
+      if (originalOpts === undefined) {
+        delete process.env["VITIATE_FUZZ_OPTIONS"];
+      } else {
+        process.env["VITIATE_FUZZ_OPTIONS"] = originalOpts;
+      }
+      if (originalMaxCrashes === undefined) {
+        delete process.env["VITIATE_MAX_CRASHES"];
+      } else {
+        process.env["VITIATE_MAX_CRASHES"] = originalMaxCrashes;
+      }
+    });
+
+    it("VITIATE_MAX_CRASHES overrides VITIATE_FUZZ_OPTIONS.maxCrashes", () => {
+      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        maxCrashes: 100,
+      });
+      process.env["VITIATE_MAX_CRASHES"] = "50";
+      const opts = getCliOptions();
+      expect(opts.maxCrashes).toBe(50);
+    });
+
+    it("VITIATE_MAX_CRASHES works alone without VITIATE_FUZZ_OPTIONS", () => {
+      delete process.env["VITIATE_FUZZ_OPTIONS"];
+      process.env["VITIATE_MAX_CRASHES"] = "10";
+      const opts = getCliOptions();
+      expect(opts.maxCrashes).toBe(10);
+    });
+
+    it("valid VITIATE_MAX_CRASHES applies when VITIATE_FUZZ_OPTIONS has invalid JSON", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_FUZZ_OPTIONS"] = "not-json";
+        process.env["VITIATE_MAX_CRASHES"] = "30";
+        const opts = getCliOptions();
+        expect(opts.maxCrashes).toBe(30);
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toContain("VITIATE_FUZZ_OPTIONS");
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+
+    it("invalid VITIATE_MAX_CRASHES does not clobber valid VITIATE_FUZZ_OPTIONS.maxCrashes", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+          maxCrashes: 100,
+        });
+        process.env["VITIATE_MAX_CRASHES"] = "not-a-number";
+        const opts = getCliOptions();
+        expect(opts.maxCrashes).toBe(100);
+        expect(chunks.length).toBe(1);
+        expect(chunks[0]).toContain("VITIATE_MAX_CRASHES");
       } finally {
         process.stderr.write = originalWrite;
       }

@@ -1,0 +1,32 @@
+{
+  "name": "vitiate",
+  "version": "0.1.0",
+  "description": "Coverage-guided fuzzing for JavaScript and TypeScript, built as a Vitest plugin.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mjkoo/vitiate.git",
+    "directory": "vitiate"
+  },
+  "keywords": [
+    "fuzzing",
+    "fuzz-testing",
+    "coverage-guided",
+    "security",
+    "vitest"
+  ],
+  "type": "module",
+  "bin": {
+    "vitiate": "bin.mjs"
+  },
+  "files": [
+    "bin.mjs"
+  ],
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
+  "dependencies": {
+    "@vitiate/core": "workspace:*"
+  }
+}

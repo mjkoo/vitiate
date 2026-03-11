@@ -1,13 +1,16 @@
 packages:
+  - vitiate
   - vitiate-core
   - vitiate-engine
   - vitiate-engine/npm/*
   - vitiate-fuzzed-data-provider
   - vitiate-swc-plugin
   - examples/*
+  - docs
 
 onlyBuiltDependencies:
   - "@optique/core"
   - "@optique/run"
   - "@swc/core"
   - esbuild
+  - sharp

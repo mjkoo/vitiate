@@ -4,7 +4,7 @@
 
 The system SHALL export a `vitiatePlugin(options?)` function that returns an array of two Vite plugins (`Plugin[]`):
 
-- **`vitiate:hooks`** (`enforce: "pre"`): Rewrites ESM named imports of hooked built-in modules (`child_process`, `fs`) into default import + destructuring. This ensures imported values are read from the live module object at call time rather than from the frozen ESM namespace that Vitest externalizes at startup, enabling detector module hooks to intercept calls.
+- **`vitiate:hooks`** (`enforce: "pre"`): Rewrites ESM named imports of hooked built-in modules (`child_process`, `fs`, `fs/promises`, `http2`) into default import + destructuring. This ensures imported values are read from the live module object at call time rather than from the frozen ESM namespace that Vitest externalizes at startup, enabling detector module hooks to intercept calls.
 - **`vitiate:instrument`** (`enforce: "post"`): Runs SWC instrumentation (edge coverage counters, comparison tracing) after all other transforms (TypeScript, JSX, etc. are already compiled to JavaScript).
 
 The `options` parameter SHALL accept:
@@ -149,11 +149,11 @@ The `configureVitest` hook SHALL NOT be used for setup file registration because
 
 The `rewriteHookedImports` function SHALL perform a quick bail-out check before parsing: if the source code does not reference any hooked module in an import-like context, the function SHALL return `null` without invoking `es-module-lexer`.
 
-The bail-out check for each hooked module SHALL use patterns that match how the module appears in import or require statements, not bare substring matching. For `child_process`, `code.includes("child_process")` is sufficiently specific. For `fs`, the check SHALL use patterns that avoid matching unrelated occurrences of the substring "fs" (e.g., in identifiers like `offset`, function names, or comments). Suitable patterns include checking for `'"fs"'`, `"'fs'"`, `'"fs/'`, or `"'fs/"`.
+The bail-out check for each hooked module SHALL use patterns that match how the module appears in import or require statements, not bare substring matching. For `child_process`, `fs/promises`, and `http2`, `code.includes(mod)` is sufficiently specific because these strings are unlikely to appear as substrings of unrelated identifiers. For `fs`, the check SHALL use patterns that avoid matching unrelated occurrences of the substring "fs" (e.g., in identifiers like `offset`, function names, or comments). Suitable patterns include checking for `'"fs"'`, `"'fs'"`, `':fs"'`, or `"':fs'"`.
 
 The bail-out is a performance optimization only — false positives (proceeding to parse when no hooked imports exist) are acceptable, but false negatives (skipping a file that does contain hooked imports) are not.
 
-#### Scenario: File without fs or child_process imports skips parsing
+#### Scenario: File without hooked module imports skips parsing
 
 - **WHEN** `rewriteHookedImports` is called with source code that does not contain any hooked module import
 - **THEN** the function SHALL return `null` without calling `es-module-lexer`

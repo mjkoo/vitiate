@@ -11,8 +11,8 @@ The CLI SHALL:
 1. Parse the test file path from the first positional argument.
 2. Parse the optional `-test=<name>` flag.
 3. Check for the `VITIATE_SUPERVISOR` environment variable to determine mode:
-   - **If absent (parent mode)**: Allocate shmem, spawn itself as a child process with `VITIATE_SUPERVISOR` set to the shmem identifier, and enter the supervisor wait loop. If `-test` is provided, use the name as `testName` for `runSupervisor()`. Otherwise, derive `testName` from the filename.
-   - **If present (child mode)**: Attach to the shmem region, set `VITIATE_FUZZ=1` in the process environment, and call `startVitest('test', [testFile], ...)` with the vitiate plugin loaded. If `-test` is provided, escape and anchor the name as `^{escaped}$` and pass as `testNamePattern` to `startVitest()`.
+   - **If absent (parent mode)**: Allocate shmem, spawn itself as a child process with `VITIATE_SUPERVISOR` set to `"1"` (a boolean flag indicating child mode), and enter the supervisor wait loop. The shmem identifier is passed separately via `VITIATE_SHMEM`. If `-test` is provided, use the name as `testName` for `runSupervisor()`. Otherwise, derive `testName` from the filename.
+   - **If present (child mode)**: Attach to the shmem region (via `VITIATE_SHMEM`), set `VITIATE_FUZZ=1` in the process environment, and call `startVitest('test', [testFile], ...)` with the vitiate plugin loaded. If `-test` is provided, escape and anchor the name as `^{escaped}$` and pass as `testNamePattern` to `startVitest()`.
 4. In parent mode, forward the exit code from the supervisor's exit code protocol (0, 1, or respawn on signal death).
 
 #### Scenario: Basic invocation (parent mode)
@@ -87,13 +87,18 @@ The CLI SHALL accept libFuzzer-style flags (hyphen prefix, `=` separator):
 - `-seed=N`: RNG seed. Passed to `FuzzerConfig.seed`.
 - `-artifact_prefix=<path>`: Prefix path for crash/timeout artifacts. See `cli-artifact-prefix` capability.
 - `-dict=<path>`: Path to an AFL/libfuzzer-format dictionary file. Resolved relative to cwd. The resolved absolute path SHALL be passed to the child process via the `dictionaryPath` field in the `VITIATE_CLI_IPC` JSON blob. See `user-dictionary` capability.
-- `-fork=N`: Accepted for OSS-Fuzz compatibility. Vitiate always runs a single
-  supervised worker; this flag is permanently ignored. `-fork=1` is silently
-  accepted (matches the default architecture). `-fork=0` warns that non-fork
-  mode is not available. `-fork=N` (N>1) warns that multi-worker mode is ignored.
-- `-jobs=N`: Accepted for OSS-Fuzz compatibility. Vitiate always runs a single job;
-  this flag is permanently ignored. `-jobs=1` is silently accepted.
-  `-jobs=N` (N>1) prints a warning.
+- `-fork=N`: Parallel fuzzing workers (libFuzzer compat, accepted but ignored).
+  Vitiate always runs the fuzz target in a supervised child process; this flag is
+  permanently ignored. `-fork=1` is silently accepted (matches the default
+  architecture). `-fork=0` warns that in-process mode is not supported. `-fork=N`
+  (N>1) warns that parallel workers are not supported.
+- `-jobs=N`: Independent fuzzing sessions (libFuzzer compat, accepted but ignored).
+  Vitiate collects crashes continuously in a single process instead of running
+  independent per-crash sessions. `-jobs=1` is silently accepted. `-jobs=N` (N>1)
+  prints a warning suggesting `VITIATE_MAX_CRASHES` to limit crash collection.
+- `-max_total_time=N`: Total fuzzing time limit in seconds. Converted to milliseconds for `FuzzOptions.fuzzTimeMs`.
+- `-minimize_budget=N`: Maximum iterations for input minimization.
+- `-minimize_time_limit=N`: Time limit for input minimization in seconds.
 - `-merge=1`: Enter corpus merge mode. Load all inputs from all specified corpus directories, replay each through the fuzz target to collect coverage edges, run set cover to select the minimal subset covering all edges, and write surviving entries to the first corpus directory. At least one corpus directory SHALL be required when `-merge=1` is set; the CLI SHALL print an error and exit with code 1 if no corpus directories are provided. See `set-cover-merge` capability for full merge behavior.
 
 #### Scenario: Artifact prefix flag
@@ -128,13 +133,13 @@ The CLI SHALL accept libFuzzer-style flags (hyphen prefix, `=` separator):
 #### Scenario: Multi-worker fork flag is ignored
 
 - **WHEN** `npx vitiate ./test.ts -fork=4` is executed
-- **THEN** a warning is printed that `-fork=4` is ignored (vitiate runs a single supervised worker)
+- **THEN** a warning is printed that `-fork=4` is ignored (vitiate does not support parallel workers and always runs a single supervised child process)
 - **AND** fuzzing proceeds with single-worker mode
 
 #### Scenario: Parallel jobs flag is ignored
 
 - **WHEN** `npx vitiate ./test.ts -jobs=4` is executed
-- **THEN** a warning is printed that `-jobs=4` is ignored (vitiate runs a single job)
+- **THEN** a warning is printed that `-jobs=4` is ignored (vitiate collects crashes continuously in a single process instead of running independent per-crash sessions, suggests `VITIATE_MAX_CRASHES`)
 - **AND** fuzzing proceeds normally
 
 #### Scenario: Timeout enforced on synchronous target
