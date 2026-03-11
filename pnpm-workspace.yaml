@@ -13,4 +13,5 @@ onlyBuiltDependencies:
   - "@optique/run"
   - "@swc/core"
   - esbuild
+  - lefthook
   - sharp

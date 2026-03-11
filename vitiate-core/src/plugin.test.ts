@@ -1,4 +1,5 @@
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { init } from "es-module-lexer";
 import type { Plugin } from "vite";
 import { describe, it, expect, afterEach, beforeAll } from "vitest";
@@ -216,6 +217,35 @@ describe("plugin", () => {
         "coverageMapSize must be an integer in [256, 4194304]",
       );
     });
+
+    it("returns server.deps.inline true when exclude is empty", () => {
+      const instrument = findPlugin(
+        vitiatePlugin({ instrument: { exclude: [] } }),
+        "vitiate:instrument",
+      );
+      const config = callConfig(instrument, {});
+      expect(config).toHaveProperty("server");
+      const server = config["server"] as Record<string, unknown>;
+      const deps = server["deps"] as Record<string, unknown>;
+      expect(deps["inline"]).toBe(true);
+    });
+
+    it("does not set server.deps with default exclude", () => {
+      const instrument = findPlugin(vitiatePlugin(), "vitiate:instrument");
+      const config = callConfig(instrument, {});
+      expect(config).not.toHaveProperty("server");
+    });
+
+    it("does not set server.deps when exclude contains a narrower node_modules pattern", () => {
+      const instrument = findPlugin(
+        vitiatePlugin({
+          instrument: { exclude: ["**/node_modules/lodash/**"] },
+        }),
+        "vitiate:instrument",
+      );
+      const config = callConfig(instrument, {});
+      expect(config).not.toHaveProperty("server");
+    });
   });
 
   describe("hooks plugin transform", () => {
@@ -233,6 +263,19 @@ describe("plugin", () => {
         code: string,
         id: string,
       ) => { code: string; map: unknown } | null;
+      return transform.call({ getCombinedSourcemap: () => null }, code, id);
+    }
+
+    function callInstrumentTransform(
+      plugins: Plugin[],
+      code: string,
+      id: string,
+    ): Promise<{ code: string; map?: string } | null> {
+      const instrument = findPlugin(plugins, "vitiate:instrument");
+      const transform = instrument.transform as (
+        code: string,
+        id: string,
+      ) => Promise<{ code: string; map?: string } | null>;
       return transform.call({ getCombinedSourcemap: () => null }, code, id);
     }
 
@@ -479,7 +522,7 @@ describe("plugin", () => {
       expect(result).toBeNull();
     });
 
-    it("skips node_modules files", () => {
+    it("skips node_modules files with default config", () => {
       const hooks = findPlugin(vitiatePlugin(), "vitiate:hooks");
       const result = callHooksTransform(
         hooks,
@@ -487,6 +530,86 @@ describe("plugin", () => {
         "/project/node_modules/some-lib/index.js",
       );
       expect(result).toBeNull();
+    });
+
+    it("processes a node_modules file when exclude is empty", () => {
+      const hooks = findPlugin(
+        vitiatePlugin({ instrument: { exclude: [] } }),
+        "vitiate:hooks",
+      );
+      const result = callHooksTransform(
+        hooks,
+        'import { execSync } from "child_process";',
+        "/project/node_modules/some-lib/index.js",
+      );
+      expect(result).not.toBeNull();
+      expect(result!.code).toContain(
+        'import __vitiate_child_process from "child_process";',
+      );
+      expect(result!.code).toContain(
+        "const { execSync } = __vitiate_child_process;",
+      );
+    });
+
+    it("excludes vitiate-core even when exclude is empty", async () => {
+      const plugins = vitiatePlugin({ instrument: { exclude: [] } });
+      const hooks = findPlugin(plugins, "vitiate:hooks");
+      const vitiateCoreSrc = path.dirname(fileURLToPath(import.meta.url));
+      const id = `${vitiateCoreSrc}/some-internal.ts`;
+      const code = 'import { execSync } from "child_process";';
+      expect(callHooksTransform(hooks, code, id)).toBeNull();
+      expect(await callInstrumentTransform(plugins, code, id)).toBeNull();
+    });
+
+    it("excludes vitiate-engine even when exclude is empty", async () => {
+      const plugins = vitiatePlugin({ instrument: { exclude: [] } });
+      const hooks = findPlugin(plugins, "vitiate:hooks");
+      const engineDir = path.dirname(
+        require.resolve("@vitiate/engine/package.json"),
+      );
+      const id = `${engineDir}/src/index.ts`;
+      const code = 'import { execSync } from "child_process";';
+      expect(callHooksTransform(hooks, code, id)).toBeNull();
+      expect(await callInstrumentTransform(plugins, code, id)).toBeNull();
+    });
+
+    it("excludes vitiate-swc-plugin even when exclude is empty", async () => {
+      const plugins = vitiatePlugin({ instrument: { exclude: [] } });
+      const hooks = findPlugin(plugins, "vitiate:hooks");
+      const swcDir = path.dirname(
+        require.resolve("@vitiate/swc-plugin/package.json"),
+      );
+      const id = `${swcDir}/index.js`;
+      const code = 'import { execSync } from "child_process";';
+      expect(callHooksTransform(hooks, code, id)).toBeNull();
+      expect(await callInstrumentTransform(plugins, code, id)).toBeNull();
+    });
+
+    it("narrowing include does not prevent hooks plugin from rewriting imports outside include scope", async () => {
+      const plugins = vitiatePlugin({
+        instrument: { include: ["src/**/*.ts"] },
+      });
+      const hooks = findPlugin(plugins, "vitiate:hooks");
+      // A test file outside the "src/**/*.ts" include scope should still
+      // get its hooked imports rewritten by the hooks plugin.
+      const result = callHooksTransform(
+        hooks,
+        'import { execSync } from "child_process";',
+        "/project/tests/parser.test.ts",
+      );
+      expect(result).not.toBeNull();
+      expect(result!.code).toContain(
+        'import __vitiate_child_process from "child_process";',
+      );
+
+      // The instrument plugin should NOT instrument the same file because
+      // it falls outside the narrowed include scope.
+      const instrumentResult = await callInstrumentTransform(
+        plugins,
+        'import { execSync } from "child_process";',
+        "/project/tests/parser.test.ts",
+      );
+      expect(instrumentResult).toBeNull();
     });
 
     it("skips non-JS/TS files (CSS, JSON, SVG)", () => {

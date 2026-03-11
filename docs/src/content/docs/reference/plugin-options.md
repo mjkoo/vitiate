@@ -36,6 +36,28 @@ instrument?: {
 
 Instrument only the code you are fuzzing — excluding test files and dependencies improves performance and reduces noise in coverage feedback.
 
+#### Instrumenting node_modules
+
+By default, `**/node_modules/**` is in the `exclude` list, so dependencies are not instrumented. To fuzz into your dependencies (e.g., finding bugs in libraries you consume), remove the node_modules exclusion:
+
+```ts
+vitiatePlugin({
+  instrument: {
+    exclude: [],  // instrument everything, including node_modules
+  },
+});
+```
+
+When `exclude` does not contain a pattern mentioning `node_modules`, the plugin automatically configures Vitest to inline dependencies through the Vite transform pipeline (`server.deps.inline: true`). This is required for node_modules files to reach the instrumentation hooks.
+
+Vitiate's own packages (`@vitiate/core`, `@vitiate/engine`, `@vitiate/swc-plugin`) are always excluded regardless of your configuration.
+
+**Performance considerations:**
+
+- **Build time**: Instrumenting node_modules significantly increases build time because every dependency file passes through SWC.
+- **Coverage map saturation**: Large dependency trees produce many coverage edges, which can exhaust slots in the coverage map. If the fuzzer stops finding new coverage despite exercising new code paths, increase `coverageMapSize`.
+- **Feedback quality**: When the coverage map is saturated, hash collisions reduce the fuzzer's ability to distinguish interesting inputs. Narrow your `include` patterns to instrument only the specific packages you are investigating, or increase `coverageMapSize`.
+
 ### fuzz
 
 Default `FuzzOptions` applied to all `fuzz()` calls. Per-test options override these.

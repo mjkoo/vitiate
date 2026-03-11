@@ -279,16 +279,16 @@ function rewriteHookedImports(
   return { code: ms.toString(), map: ms.generateMap({ hires: true }) };
 }
 
-function resolveWasmPath(): string {
-  const instrumentPkgPath = require.resolve("@vitiate/swc-plugin/package.json");
-  const instrumentPkg = require(instrumentPkgPath) as { main?: string };
-  if (!instrumentPkg.main) {
+function resolveSwcPlugin(): { wasmPath: string; packageDir: string } {
+  const pkgPath = require.resolve("@vitiate/swc-plugin/package.json");
+  const pkg = require(pkgPath) as { main?: string };
+  if (!pkg.main) {
     throw new Error(
       "@vitiate/swc-plugin package.json is missing a 'main' field",
     );
   }
-  const pkgDir = path.dirname(instrumentPkgPath);
-  return path.join(pkgDir, instrumentPkg.main);
+  const packageDir = path.dirname(pkgPath);
+  return { wasmPath: path.join(packageDir, pkg.main), packageDir };
 }
 
 function resolveSetupPath(): string {
@@ -341,12 +341,26 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin[] {
   const vitiateNapiDir = path.dirname(
     require.resolve("@vitiate/engine/package.json"),
   );
-  const filter = createFilter(include, [
+  const { wasmPath, packageDir: vitiateSWCDir } = resolveSwcPlugin();
+  const resolvedExclude = [
     ...exclude,
     `${vitiateDir}/**`,
     `${vitiateNapiDir}/**`,
-  ]);
-  const wasmPath = resolveWasmPath();
+    `${vitiateSWCDir}/**`,
+  ];
+  // Instrument plugin: include+exclude controls which files get SWC coverage counters.
+  const instrumentFilter = createFilter(include, resolvedExclude);
+  // Hooks plugin: exclude-only filter. The hooks plugin must process all JS/TS files
+  // not in the exclude list (regardless of include patterns) because detector import
+  // rewriting must work across all user code including test files, even when
+  // instrumentation scope is narrowed via include.
+  const hooksFilter = createFilter(undefined, resolvedExclude);
+  // Heuristic: if no user-provided exclude pattern mentions "node_modules",
+  // assume the user wants to instrument dependencies. We check the original
+  // exclude array (not resolvedExclude, which includes vitiate's own dirs).
+  const nodeModulesExcluded = exclude.some((pattern) =>
+    pattern.includes("node_modules"),
+  );
   const setupPath = resolveSetupPath();
 
   let swcModule: Promise<typeof import("@swc/core")> | undefined;
@@ -364,15 +378,11 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin[] {
     },
 
     transform(code, id) {
-      // Only transform files that could contain user imports.
-      // Skip node_modules, virtual modules, and non-JS/TS files.
-      if (
-        id.includes("/node_modules/") ||
-        id.includes("\\node_modules\\") ||
-        id.startsWith("\0")
-      )
-        return null;
+      // Skip virtual modules and non-JS/TS files unconditionally.
+      if (id.startsWith("\0")) return null;
       if (!JS_TS_EXTENSIONS.test(id)) return null;
+      // Apply the exclude-only filter (respects user's exclude config).
+      if (!hooksFilter(id)) return null;
       return rewriteHookedImports(code);
     },
   };
@@ -404,15 +414,22 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin[] {
         }
       }
 
+      // When node_modules are not excluded, tell Vitest to inline all
+      // dependencies through the Vite transform pipeline so they reach
+      // our transform hooks for instrumentation and hook rewriting.
+      // Note: server.deps.inline is a Vitest runtime extension not present
+      // in Vite's ServerOptions type, so we cast to satisfy the config hook
+      // return type.
       return {
-        test: {
-          setupFiles: [setupPath],
-        },
+        test: { setupFiles: [setupPath] },
+        ...(!nodeModulesExcluded
+          ? { server: { deps: { inline: true } } as Record<string, unknown> }
+          : {}),
       };
     },
 
     async transform(code, id) {
-      if (!filter(id)) return null;
+      if (!instrumentFilter(id)) return null;
 
       swcModule ??= import("@swc/core");
       const { transform } = await swcModule;
