@@ -1,0 +1,38 @@
+---
+title: Vitiate
+description: Coverage-guided fuzzing for JavaScript and TypeScript, built as a Vitest plugin.
+template: splash
+hero:
+  tagline: Coverage-guided fuzzing for JavaScript and TypeScript, built as a Vitest plugin.
+  actions:
+    - text: Get Started
+      link: /vitiate/getting-started/quickstart/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/mjkoo/vitiate
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from "@astrojs/starlight/components";
+
+<CardGrid stagger>
+  <Card title="Vitest Integration" icon="seti:vitest">
+    Write fuzz tests alongside your unit tests using the familiar `test()`-style
+    API. Crashes become regression tests automatically.
+  </Card>
+  <Card title="LibAFL Engine" icon="rocket">
+    Powered by LibAFL's mutation engine: havoc mutations, CmpLog-guided byte
+    replacement, Grimoire structure-aware mutations, and Unicode-aware fuzzing.
+  </Card>
+  <Card title="SWC Instrumentation" icon="seti:json">
+    Edge coverage counters and comparison tracing inserted at build time via an
+    SWC WASM plugin. Zero runtime configuration.
+  </Card>
+  <Card title="Vulnerability Detectors" icon="warning">
+    Built-in detectors for prototype pollution, command injection, path
+    traversal, ReDoS, SSRF, and unsafe eval. Active in both fuzzing and
+    regression modes.
+  </Card>
+</CardGrid>
