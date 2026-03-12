@@ -168,26 +168,26 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Download native artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts/bindings
           pattern: bindings-*
           merge-multiple: true
 
       - name: Download WASM artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: wasm
           path: artifacts/wasm
 
       - name: Download core dist artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dist-core
           path: artifacts/dist-core
 
       - name: Download fuzzed-data-provider dist artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dist-fuzzed-data-provider
           path: artifacts/dist-fuzzed-data-provider
