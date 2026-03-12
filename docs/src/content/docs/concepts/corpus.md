@@ -106,7 +106,7 @@ Seed corpus entries are never deleted - they serve as the coverage baseline. Onl
 
 Minimize periodically, especially after long fuzzing sessions. A smaller corpus means faster regression test runs and faster seed evaluation at the start of the next fuzzing session.
 
-For libFuzzer-compatible corpus minimization across arbitrary directories, see the [standalone CLI's merge mode](/vitiate/guides/cli/#corpus-minimization-merge-mode).
+For libFuzzer-compatible corpus minimization across arbitrary directories, see the [standalone CLI's merge mode](/vitiate/guides/cli/#merge-mode).
 
 ### Checkpointing Fuzzer Progress
 
