@@ -57,7 +57,7 @@
   "dependencies": {
     "@optique/core": "1.0.0-dev.438+923a6492",
     "@optique/run": "1.0.0-dev.438+923a6492",
-    "@swc/core": "^1.15.17",
+    "@swc/core": "^1.15.18",
     "@vitiate/engine": "workspace:*",
     "@vitiate/swc-plugin": "workspace:*",
     "es-module-lexer": "^1.7.0",
