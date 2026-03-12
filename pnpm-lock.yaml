@@ -107,8 +107,8 @@ importers:
         specifier: 1.0.0-dev.438+923a6492
         version: 1.0.0-dev.438
       '@optique/run':
-        specifier: 1.0.0-dev.438+923a6492
-        version: 1.0.0-dev.438
+        specifier: 1.0.0-dev.566+923a6492
+        version: 1.0.0-dev.566
       '@swc/core':
         specifier: ^1.15.17
         version: 1.15.17
@@ -1451,8 +1451,12 @@ packages:
     resolution: {integrity: sha512-1pB14tKTG5D0qi0gGP+PAElHAWBFe/vTli5dJ0mAfdcCOMW16GPfIjYr/PI1xUM1bHdxL6IsOJIp5KQi5ZxiTQ==}
     engines: {bun: '>=1.2.0', deno: '>=2.3.0', node: '>=20.0.0'}
 
-  '@optique/run@1.0.0-dev.438':
-    resolution: {integrity: sha512-Z80O2uvOeRc2lFaXO5Rd/+idC0W81Z5KjMoHrSQTimYiMlBbPhfd9hydLb7Ao1dxRowXjV1/ltlJHspK5G77xQ==}
+  '@optique/core@1.0.0-dev.566':
+    resolution: {integrity: sha512-m2DhdYYcoHiV7HNSPf+TQdGGGvPaaWkFQs194R9qiWhqC93u6h21bP7M+20pxPDKF3AfzIe1LRDmCmMqxOmbFg==}
+    engines: {bun: '>=1.2.0', deno: '>=2.3.0', node: '>=20.0.0'}
+
+  '@optique/run@1.0.0-dev.566':
+    resolution: {integrity: sha512-ReXpPdlzcZBaYtZg4IDjttNSV+dZT1ODeA2/1DcTJUqDARDsFpsg8anof2J/EXcw4JoSQlleLEZ9ELrHsxL3kA==}
     engines: {bun: '>=1.2.0', deno: '>=2.3.0', node: '>=20.0.0'}
 
   '@oslojs/encoding@1.1.0':
@@ -5124,9 +5128,11 @@ snapshots:
 
   '@optique/core@1.0.0-dev.438': {}
 
-  '@optique/run@1.0.0-dev.438':
+  '@optique/core@1.0.0-dev.566': {}
+
+  '@optique/run@1.0.0-dev.566':
     dependencies:
-      '@optique/core': 1.0.0-dev.438
+      '@optique/core': 1.0.0-dev.566
 
   '@oslojs/encoding@1.1.0': {}
 
