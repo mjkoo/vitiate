@@ -2,6 +2,7 @@
 import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
 import starlightThemeRapide from "starlight-theme-rapide";
+import starlightLlmsTxt from "starlight-llms-txt";
 
 // https://astro.build/config
 export default defineConfig({
@@ -9,7 +10,44 @@ export default defineConfig({
   base: "/vitiate",
   integrations: [
     starlight({
-      plugins: [starlightThemeRapide()],
+      plugins: [
+        starlightThemeRapide(),
+        starlightLlmsTxt({
+          description:
+            "Vitiate is a coverage-guided JavaScript/TypeScript fuzzer built as a Vitest plugin. " +
+            "Uses SWC for compile-time instrumentation and LibAFL for mutation-driven fuzzing.",
+          // Order pages to match the natural reading flow: overview and
+          // getting-started first, concepts and guides in the middle,
+          // reference material last.
+          promote: [
+            "index",
+            "**/introduction",
+            "getting-started/**",
+            "concepts/**",
+          ],
+          demote: ["reference/**", "**/troubleshooting"],
+          customSets: [
+            {
+              label: "Getting started and concepts",
+              description:
+                "introduction, quickstart, tutorial, and core concepts",
+              paths: ["getting-started/**", "concepts/**"],
+            },
+            {
+              label: "Guides",
+              description:
+                "practical guides for structure-aware fuzzing, detectors, CI integration, and more",
+              paths: ["guides/**"],
+            },
+            {
+              label: "API and configuration reference",
+              description:
+                "fuzz() API, FuzzedDataProvider, plugin options, CLI flags, and environment variables",
+              paths: ["reference/**"],
+            },
+          ],
+        }),
+      ],
       title: "Vitiate",
       customCss: ["./src/styles/custom.css"],
       social: [
