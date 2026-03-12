@@ -113,20 +113,20 @@ If `-dict` is not provided in CLI mode, the system SHALL NOT attempt convention-
 
 #### Scenario: Dictionary loaded via CLI flag
 
-- **WHEN** `npx vitiate ./test.ts -dict=./my.dict` is executed
+- **WHEN** `npx vitiate libfuzzer ./test.ts -dict=./my.dict` is executed
 - **AND** `./my.dict` exists and contains valid entries
 - **THEN** the tokens from the file SHALL be loaded into `Tokens` metadata before the fuzz loop starts
 
 #### Scenario: CLI dictionary file not found
 
-- **WHEN** `npx vitiate ./test.ts -dict=./missing.dict` is executed
+- **WHEN** `npx vitiate libfuzzer ./test.ts -dict=./missing.dict` is executed
 - **AND** `./missing.dict` does not exist
 - **THEN** the system SHALL print an error message and exit with a non-zero exit code
 - **AND** the fuzzer SHALL NOT start
 
 #### Scenario: No dictionary flag in CLI mode
 
-- **WHEN** `npx vitiate ./test.ts` is executed without `-dict`
+- **WHEN** `npx vitiate libfuzzer ./test.ts` is executed without `-dict`
 - **THEN** no dictionary file SHALL be loaded
 - **AND** the system SHALL NOT search for a `.dict` file by convention
 

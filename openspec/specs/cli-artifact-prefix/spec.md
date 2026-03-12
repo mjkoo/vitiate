@@ -20,31 +20,31 @@ The artifact prefix SHALL be passed to both the fuzz loop (for JS-detected crash
 
 #### Scenario: Artifact prefix to directory
 
-- **WHEN** `npx vitiate ./test.ts -artifact_prefix=./findings/` is executed
+- **WHEN** `npx vitiate libfuzzer ./test.ts -artifact_prefix=./findings/` is executed
 - **AND** the target crashes
 - **THEN** the crash artifact is written to `./findings/crash-{hash}`
 
 #### Scenario: Artifact prefix without trailing slash
 
-- **WHEN** `npx vitiate ./test.ts -artifact_prefix=bug-` is executed
+- **WHEN** `npx vitiate libfuzzer ./test.ts -artifact_prefix=bug-` is executed
 - **AND** the target crashes
 - **THEN** the crash artifact is written to `bug-crash-{hash}` in the current directory
 
 #### Scenario: Default artifact location (no prefix)
 
-- **WHEN** `npx vitiate ./test.ts` is executed without `-artifact_prefix`
+- **WHEN** `npx vitiate libfuzzer ./test.ts` is executed without `-artifact_prefix`
 - **AND** the target crashes
 - **THEN** the crash artifact is written to `./crash-{hash}` in the current working directory
 
 #### Scenario: Timeout artifact with prefix
 
-- **WHEN** `npx vitiate ./test.ts -artifact_prefix=./out/ -timeout=5` is executed
+- **WHEN** `npx vitiate libfuzzer ./test.ts -artifact_prefix=./out/ -timeout=5` is executed
 - **AND** the target times out
 - **THEN** the timeout artifact is written to `./out/timeout-{hash}`
 
 #### Scenario: Native crash with artifact prefix
 
-- **WHEN** `npx vitiate ./test.ts -artifact_prefix=./out/` is executed
+- **WHEN** `npx vitiate libfuzzer ./test.ts -artifact_prefix=./out/` is executed
 - **AND** the child process is killed by SIGSEGV
 - **THEN** the parent supervisor writes the crash artifact to `./out/crash-{hash}`
 

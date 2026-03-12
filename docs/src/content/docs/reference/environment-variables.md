@@ -32,7 +32,19 @@ These are set by Vitiate internally. Do not set them manually unless building a 
 
 ## Precedence
 
+### `fuzz`, `regression`, and `optimize` subcommands
+
 Configuration is resolved in this order (highest priority first):
+
+1. CLI flags (`--fuzz-time`, `--fuzz-execs`, `--max-crashes`)
+2. Environment variables (`VITIATE_FUZZ_TIME`, `VITIATE_FUZZ_EXECS`, `VITIATE_MAX_CRASHES`)
+3. Per-test `FuzzOptions` in code
+4. Plugin-level `fuzz` defaults
+5. Built-in defaults
+
+### `libfuzzer` subcommand
+
+For the libFuzzer-compatible CLI, environment variables take highest priority to match libFuzzer conventions:
 
 1. Environment variables (`VITIATE_FUZZ_TIME`, `VITIATE_FUZZ_EXECS`)
 2. CLI flags (`-max_total_time`, `-runs`)

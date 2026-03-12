@@ -1,4 +1,12 @@
-import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  afterEach,
+  beforeEach,
+  vi,
+  type MockInstance,
+} from "vitest";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -527,71 +535,119 @@ describe("CLI env var forwarding", () => {
   });
 });
 
-describe("subcommand dispatch", () => {
+function setupCliDispatchTest() {
   let savedArgv: string[];
   let savedExitCode: typeof process.exitCode;
+  let exitSpy: MockInstance;
 
   beforeEach(() => {
     savedArgv = [...process.argv];
     savedExitCode = process.exitCode;
+    exitSpy = vi.spyOn(process, "exit").mockImplementation(((code: number) => {
+      process.exitCode = code;
+      throw new Error(`process.exit(${code})`);
+    }) as typeof process.exit);
   });
 
   afterEach(() => {
     process.argv = savedArgv;
     process.exitCode = savedExitCode;
+    exitSpy.mockRestore();
+    vi.mocked(spawnSync).mockReset();
   });
 
-  it("prints usage and exits 0 when no subcommand given", async () => {
+  return { getExitSpy: () => exitSpy };
+}
+
+function mockSpawnSuccess() {
+  vi.mocked(spawnSync).mockReturnValue({
+    status: 0,
+    signal: null,
+    output: [],
+    pid: 0,
+    stdout: Buffer.alloc(0),
+    stderr: Buffer.alloc(0),
+  });
+}
+
+describe("subcommand dispatch", () => {
+  setupCliDispatchTest();
+
+  it("shows help and exits 0 when no subcommand given", async () => {
     process.argv = ["node", "vitiate"];
-    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-    try {
-      await main();
-      expect(process.exitCode).toBe(0);
-      expect(stderrSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Usage: vitiate"),
-      );
-      // All subcommands should be listed
-      expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining("init"));
-      expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining("fuzz"));
-      expect(stderrSpy).toHaveBeenCalledWith(
-        expect.stringContaining("libfuzzer"),
-      );
-    } finally {
-      stderrSpy.mockRestore();
-    }
-  });
-
-  it("prints error and exits 1 for unknown subcommand", async () => {
-    process.argv = ["node", "vitiate", "bogus"];
-    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-    try {
-      await main();
-      expect(process.exitCode).toBe(1);
-      expect(stderrSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Unknown subcommand: bogus"),
-      );
-    } finally {
-      stderrSpy.mockRestore();
-    }
-  });
-
-  it("usage lists all known subcommands", async () => {
-    process.argv = ["node", "vitiate"];
-    const calls: string[] = [];
-    const stderrSpy = vi
-      .spyOn(process.stderr, "write")
+    const stdoutCalls: string[] = [];
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
       .mockImplementation((chunk) => {
-        calls.push(String(chunk));
+        stdoutCalls.push(String(chunk));
         return true;
       });
     try {
-      await main();
-      const output = calls.join("");
-      expect(output).toContain("init");
+      await expect(main()).rejects.toThrow("process.exit(0)");
+      const output = stdoutCalls.join("");
+      // All subcommands should be listed in help
       expect(output).toContain("fuzz");
       expect(output).toContain("regression");
       expect(output).toContain("optimize");
+      expect(output).toContain("init");
       expect(output).toContain("libfuzzer");
+    } finally {
+      stdoutSpy.mockRestore();
+    }
+  });
+
+  it("--help shows help and exits 0", async () => {
+    process.argv = ["node", "vitiate", "--help"];
+    const stdoutCalls: string[] = [];
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation((chunk) => {
+        stdoutCalls.push(String(chunk));
+        return true;
+      });
+    try {
+      await expect(main()).rejects.toThrow("process.exit(0)");
+      const output = stdoutCalls.join("");
+      expect(output).toContain("fuzz");
+      expect(output).toContain("libfuzzer");
+    } finally {
+      stdoutSpy.mockRestore();
+    }
+  });
+
+  it("exits 1 for unknown subcommand", async () => {
+    process.argv = ["node", "vitiate", "bogus"];
+    const stderrCalls: string[] = [];
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk) => {
+        stderrCalls.push(String(chunk));
+        return true;
+      });
+    try {
+      await expect(main()).rejects.toThrow("process.exit(1)");
+      const output = stderrCalls.join("");
+      expect(output).toContain("bogus");
+    } finally {
+      stderrSpy.mockRestore();
+    }
+  });
+
+  it("suggests similar subcommand for typo", async () => {
+    process.argv = ["node", "vitiate", "fuz"];
+    const stderrCalls: string[] = [];
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk) => {
+        stderrCalls.push(String(chunk));
+        return true;
+      });
+    try {
+      await expect(main()).rejects.toThrow("process.exit(1)");
+      const output = stderrCalls.join("");
+      expect(output).toContain("fuz");
+      // optique should suggest "fuzz"
+      expect(output.toLowerCase()).toContain("fuzz");
     } finally {
       stderrSpy.mockRestore();
     }
@@ -599,29 +655,380 @@ describe("subcommand dispatch", () => {
 
   it("fuzz subcommand passes .fuzz.ts as a positional filter to vitest", async () => {
     process.argv = ["node", "vitiate", "fuzz", "--reporter", "verbose"];
+    mockSpawnSuccess();
+    await main();
     const mockSpawnSync = vi.mocked(spawnSync);
-    mockSpawnSync.mockReturnValue({
-      status: 0,
-      signal: null,
-      output: [],
-      pid: 0,
-      stdout: Buffer.alloc(0),
-      stderr: Buffer.alloc(0),
-    });
+    expect(mockSpawnSync).toHaveBeenCalledOnce();
+    const [, args] = mockSpawnSync.mock.calls[0]!;
+    const argsList = args as string[];
+    // Should contain "run", ".fuzz.ts" as positional filter, and forwarded args
+    expect(argsList).toContain("run");
+    expect(argsList).toContain(".fuzz.ts");
+    expect(argsList).toContain("--reporter");
+    expect(argsList).toContain("verbose");
+    expect(argsList).not.toContain("--include");
+  });
+
+  it("libfuzzer subcommand dispatches to libfuzzer handler", async () => {
+    // Invoke with no args after "libfuzzer" so the libfuzzer parser
+    // reports a missing-argument error mentioning TEST_FILE - this
+    // proves main() routed to the real libfuzzer handler.
+    process.argv = ["node", "vitiate", "libfuzzer"];
+    const stderrCalls: string[] = [];
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk) => {
+        stderrCalls.push(String(chunk));
+        return true;
+      });
+    const stdoutCalls: string[] = [];
+    const stdoutSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation((chunk) => {
+        stdoutCalls.push(String(chunk));
+        return true;
+      });
+    try {
+      await expect(main()).rejects.toThrow("process.exit(1)");
+      const output = stderrCalls.join("") + stdoutCalls.join("");
+      expect(output).toContain("TEST_FILE");
+    } finally {
+      stderrSpy.mockRestore();
+      stdoutSpy.mockRestore();
+    }
+  });
+});
+
+describe("fuzz subcommand flags", () => {
+  setupCliDispatchTest();
+
+  it("--fuzz-time sets VITIATE_FUZZ_TIME env var", async () => {
+    process.argv = ["node", "vitiate", "fuzz", "--fuzz-time", "60"];
+    mockSpawnSuccess();
+    await main();
+    const mockSpawnSync = vi.mocked(spawnSync);
+    expect(mockSpawnSync).toHaveBeenCalledOnce();
+    const [, , options] = mockSpawnSync.mock.calls[0]!;
+    const env = (options as { env: Record<string, string> }).env;
+    expect(env["VITIATE_FUZZ_TIME"]).toBe("60");
+    expect(env["VITIATE_FUZZ"]).toBe("1");
+  });
+
+  it("--fuzz-execs sets VITIATE_FUZZ_EXECS env var", async () => {
+    process.argv = ["node", "vitiate", "fuzz", "--fuzz-execs", "100000"];
+    mockSpawnSuccess();
+    await main();
+    const mockSpawnSync = vi.mocked(spawnSync);
+    expect(mockSpawnSync).toHaveBeenCalledOnce();
+    const [, , options] = mockSpawnSync.mock.calls[0]!;
+    const env = (options as { env: Record<string, string> }).env;
+    expect(env["VITIATE_FUZZ_EXECS"]).toBe("100000");
+  });
+
+  it("--max-crashes sets VITIATE_MAX_CRASHES env var", async () => {
+    process.argv = ["node", "vitiate", "fuzz", "--max-crashes", "5"];
+    mockSpawnSuccess();
+    await main();
+    const mockSpawnSync = vi.mocked(spawnSync);
+    expect(mockSpawnSync).toHaveBeenCalledOnce();
+    const [, , options] = mockSpawnSync.mock.calls[0]!;
+    const env = (options as { env: Record<string, string> }).env;
+    expect(env["VITIATE_MAX_CRASHES"]).toBe("5");
+  });
+
+  it("CLI flag overrides environment variable", async () => {
+    const prev = process.env["VITIATE_FUZZ_TIME"];
+    process.env["VITIATE_FUZZ_TIME"] = "120";
+    process.argv = ["node", "vitiate", "fuzz", "--fuzz-time", "60"];
+    mockSpawnSuccess();
     try {
       await main();
+      const mockSpawnSync = vi.mocked(spawnSync);
       expect(mockSpawnSync).toHaveBeenCalledOnce();
-      const [, args] = mockSpawnSync.mock.calls[0]!;
-      const argsList = args as string[];
-      // Should contain "run", ".fuzz.ts" as positional filter, and forwarded args
-      expect(argsList).toContain("run");
-      expect(argsList).toContain(".fuzz.ts");
-      expect(argsList).toContain("--reporter");
-      expect(argsList).toContain("verbose");
-      // Should NOT use --include (not a valid vitest CLI flag)
-      expect(argsList).not.toContain("--include");
+      const [, , options] = mockSpawnSync.mock.calls[0]!;
+      const env = (options as { env: Record<string, string> }).env;
+      // CLI flag should override env var
+      expect(env["VITIATE_FUZZ_TIME"]).toBe("60");
     } finally {
-      mockSpawnSync.mockRestore();
+      if (prev === undefined) {
+        delete process.env["VITIATE_FUZZ_TIME"];
+      } else {
+        process.env["VITIATE_FUZZ_TIME"] = prev;
+      }
     }
+  });
+
+  it("multiple flags combined set all env vars", async () => {
+    process.argv = [
+      "node",
+      "vitiate",
+      "fuzz",
+      "--fuzz-time",
+      "60",
+      "--fuzz-execs",
+      "100000",
+      "--max-crashes",
+      "3",
+    ];
+    mockSpawnSuccess();
+    await main();
+    const mockSpawnSync = vi.mocked(spawnSync);
+    expect(mockSpawnSync).toHaveBeenCalledOnce();
+    const [, , options] = mockSpawnSync.mock.calls[0]!;
+    const env = (options as { env: Record<string, string> }).env;
+    expect(env["VITIATE_FUZZ_TIME"]).toBe("60");
+    expect(env["VITIATE_FUZZ_EXECS"]).toBe("100000");
+    expect(env["VITIATE_MAX_CRASHES"]).toBe("3");
+  });
+
+  it("invalid flag value rejects with exit 1", async () => {
+    process.argv = ["node", "vitiate", "fuzz", "--fuzz-time", "0"];
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      await expect(main()).rejects.toThrow("process.exit(1)");
+    } finally {
+      stderrSpy.mockRestore();
+    }
+  });
+});
+
+describe("fuzz --detectors flag", () => {
+  setupCliDispatchTest();
+
+  it("--detectors serializes to VITIATE_FUZZ_OPTIONS env var", async () => {
+    process.argv = [
+      "node",
+      "vitiate",
+      "fuzz",
+      "--detectors",
+      "prototypePollution,pathTraversal",
+    ];
+    mockSpawnSuccess();
+    await main();
+    const mockSpawnSync = vi.mocked(spawnSync);
+    expect(mockSpawnSync).toHaveBeenCalledOnce();
+    const [, , options] = mockSpawnSync.mock.calls[0]!;
+    const env = (options as { env: Record<string, string> }).env;
+    const fuzzOptions = JSON.parse(env["VITIATE_FUZZ_OPTIONS"]!);
+    expect(fuzzOptions.detectors.prototypePollution).toBe(true);
+    expect(fuzzOptions.detectors.pathTraversal).toBe(true);
+    expect(fuzzOptions.detectors.commandInjection).toBe(false);
+  });
+});
+
+describe("regression and optimize subcommand flags", () => {
+  setupCliDispatchTest();
+
+  it("regression --detectors sets VITIATE_FUZZ_OPTIONS", async () => {
+    process.argv = [
+      "node",
+      "vitiate",
+      "regression",
+      "--detectors",
+      "prototypePollution",
+    ];
+    mockSpawnSuccess();
+    await main();
+    const mockSpawnSync = vi.mocked(spawnSync);
+    expect(mockSpawnSync).toHaveBeenCalledOnce();
+    const [, , options] = mockSpawnSync.mock.calls[0]!;
+    const env = (options as { env: Record<string, string> }).env;
+    const fuzzOptions = JSON.parse(env["VITIATE_FUZZ_OPTIONS"]!);
+    expect(fuzzOptions.detectors.prototypePollution).toBe(true);
+    // regression should NOT set VITIATE_FUZZ or VITIATE_OPTIMIZE
+    expect(env["VITIATE_FUZZ"]).toBeUndefined();
+    expect(env["VITIATE_OPTIMIZE"]).toBeUndefined();
+  });
+
+  it("optimize --detectors sets VITIATE_FUZZ_OPTIONS and VITIATE_OPTIMIZE", async () => {
+    process.argv = [
+      "node",
+      "vitiate",
+      "optimize",
+      "--detectors",
+      "pathTraversal",
+    ];
+    mockSpawnSuccess();
+    await main();
+    const mockSpawnSync = vi.mocked(spawnSync);
+    expect(mockSpawnSync).toHaveBeenCalledOnce();
+    const [, , options] = mockSpawnSync.mock.calls[0]!;
+    const env = (options as { env: Record<string, string> }).env;
+    expect(env["VITIATE_OPTIMIZE"]).toBe("1");
+    const fuzzOptions = JSON.parse(env["VITIATE_FUZZ_OPTIONS"]!);
+    expect(fuzzOptions.detectors.pathTraversal).toBe(true);
+  });
+
+  it("regression forwards unknown flags to vitest", async () => {
+    process.argv = ["node", "vitiate", "regression", "--reporter", "dot"];
+    mockSpawnSuccess();
+    await main();
+    const mockSpawnSync = vi.mocked(spawnSync);
+    expect(mockSpawnSync).toHaveBeenCalledOnce();
+    const [, args] = mockSpawnSync.mock.calls[0]!;
+    const argsList = args as string[];
+    expect(argsList).toContain("--reporter");
+    expect(argsList).toContain("dot");
+  });
+});
+
+describe("passThrough forwarding", () => {
+  setupCliDispatchTest();
+
+  it("positional args are forwarded to vitest", async () => {
+    process.argv = ["node", "vitiate", "fuzz", "test/specific.fuzz.ts"];
+    mockSpawnSuccess();
+    await main();
+    const [, args] = vi.mocked(spawnSync).mock.calls[0]!;
+    expect(args as string[]).toContain("test/specific.fuzz.ts");
+  });
+
+  it("mixed positional and option args are all forwarded", async () => {
+    process.argv = [
+      "node",
+      "vitiate",
+      "fuzz",
+      "--fuzz-time",
+      "60",
+      "test/foo.fuzz.ts",
+      "--reporter",
+      "verbose",
+    ];
+    mockSpawnSuccess();
+    await main();
+    const [, args, options] = vi.mocked(spawnSync).mock.calls[0]!;
+    const argsList = args as string[];
+    const env = (options as { env: Record<string, string> }).env;
+    expect(env["VITIATE_FUZZ_TIME"]).toBe("60");
+    expect(argsList).toContain("test/foo.fuzz.ts");
+    expect(argsList).toContain("--reporter");
+    expect(argsList).toContain("verbose");
+    expect(argsList).not.toContain("--fuzz-time");
+  });
+
+  it("regression forwards positional args to vitest", async () => {
+    process.argv = ["node", "vitiate", "regression", "test/specific.fuzz.ts"];
+    mockSpawnSuccess();
+    await main();
+    const [, args] = vi.mocked(spawnSync).mock.calls[0]!;
+    expect(args as string[]).toContain("test/specific.fuzz.ts");
+  });
+
+  it("optimize forwards positional args to vitest", async () => {
+    process.argv = ["node", "vitiate", "optimize", "test/specific.fuzz.ts"];
+    mockSpawnSuccess();
+    await main();
+    const [, args] = vi.mocked(spawnSync).mock.calls[0]!;
+    expect(args as string[]).toContain("test/specific.fuzz.ts");
+  });
+
+  it("args after -- are forwarded even when they shadow vitiate flags", async () => {
+    process.argv = [
+      "node",
+      "vitiate",
+      "fuzz",
+      "--fuzz-time",
+      "60",
+      "--",
+      "--fuzz-time",
+      "999",
+      "--reporter",
+      "verbose",
+    ];
+    mockSpawnSuccess();
+    await main();
+    const [, args, options] = vi.mocked(spawnSync).mock.calls[0]!;
+    const argsList = args as string[];
+    const env = (options as { env: Record<string, string> }).env;
+    expect(env["VITIATE_FUZZ_TIME"]).toBe("60");
+    expect(argsList).toContain("--fuzz-time");
+    expect(argsList).toContain("999");
+    expect(argsList).toContain("--reporter");
+  });
+
+  it("unknown flags are forwarded to vitest", async () => {
+    process.argv = [
+      "node",
+      "vitiate",
+      "fuzz",
+      "--reporter",
+      "verbose",
+      "--bail",
+      "1",
+    ];
+    mockSpawnSuccess();
+    await main();
+    const mockSpawnSync = vi.mocked(spawnSync);
+    const [, args] = mockSpawnSync.mock.calls[0]!;
+    const argsList = args as string[];
+    expect(argsList).toContain("--reporter");
+    expect(argsList).toContain("verbose");
+    expect(argsList).toContain("--bail");
+    expect(argsList).toContain("1");
+  });
+
+  it("mixed vitiate and vitest flags work", async () => {
+    process.argv = [
+      "node",
+      "vitiate",
+      "fuzz",
+      "--fuzz-time",
+      "60",
+      "--reporter",
+      "verbose",
+    ];
+    mockSpawnSuccess();
+    await main();
+    const mockSpawnSync = vi.mocked(spawnSync);
+    const [, args, options] = mockSpawnSync.mock.calls[0]!;
+    const argsList = args as string[];
+    const env = (options as { env: Record<string, string> }).env;
+    // vitiate flag parsed as env var
+    expect(env["VITIATE_FUZZ_TIME"]).toBe("60");
+    // vitest flag forwarded in args
+    expect(argsList).toContain("--reporter");
+    expect(argsList).toContain("verbose");
+    // vitiate flag should NOT be in forwarded args
+    expect(argsList).not.toContain("--fuzz-time");
+    expect(argsList).not.toContain("60");
+  });
+
+  it("-- separator works", async () => {
+    process.argv = [
+      "node",
+      "vitiate",
+      "fuzz",
+      "--fuzz-time",
+      "60",
+      "--",
+      "--reporter",
+      "verbose",
+    ];
+    mockSpawnSuccess();
+    await main();
+    const mockSpawnSync = vi.mocked(spawnSync);
+    const [, args, options] = mockSpawnSync.mock.calls[0]!;
+    const argsList = args as string[];
+    const env = (options as { env: Record<string, string> }).env;
+    expect(env["VITIATE_FUZZ_TIME"]).toBe("60");
+    expect(argsList).toContain("--reporter");
+    expect(argsList).toContain("verbose");
+  });
+
+  it("no vitiate flags forwards everything", async () => {
+    process.argv = [
+      "node",
+      "vitiate",
+      "fuzz",
+      "--test-name-pattern",
+      "parses URLs",
+    ];
+    mockSpawnSuccess();
+    await main();
+    const mockSpawnSync = vi.mocked(spawnSync);
+    const [, args] = mockSpawnSync.mock.calls[0]!;
+    const argsList = args as string[];
+    expect(argsList).toContain("--test-name-pattern");
+    expect(argsList).toContain("parses URLs");
   });
 });

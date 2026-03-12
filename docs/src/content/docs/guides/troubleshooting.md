@@ -75,7 +75,7 @@ See [Corpus and Regression Testing](/vitiate/concepts/corpus/#corpus-minimizatio
 Set `VITIATE_DEBUG=1` to enable verbose diagnostic output:
 
 ```bash
-VITIATE_DEBUG=1 npx vitiate fuzz test/target.fuzz.ts
+VITIATE_DEBUG=1 npx vitiate fuzz
 ```
 
 This logs:

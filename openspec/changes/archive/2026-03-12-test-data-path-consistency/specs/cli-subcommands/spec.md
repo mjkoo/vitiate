@@ -8,7 +8,7 @@ If no subcommand is provided or the argument does not match a known subcommand, 
 
 #### Scenario: Known subcommand dispatched
 
-- **WHEN** `npx vitiate fuzz --include '*.fuzz.ts'` is executed
+- **WHEN** `npx vitiate fuzz .fuzz.ts` is executed
 - **THEN** the `fuzz` subcommand handler SHALL be invoked with the remaining arguments
 
 #### Scenario: No subcommand shows help
@@ -25,20 +25,20 @@ If no subcommand is provided or the argument does not match a known subcommand, 
 
 ### Requirement: fuzz subcommand
 
-The `vitiate fuzz` subcommand SHALL set `VITIATE_FUZZ=1` in the environment, then spawn `vitest run` with `--include '*.fuzz.ts'` prepended to the remaining arguments. All arguments after `fuzz` SHALL be forwarded verbatim to vitest.
+The `vitiate fuzz` subcommand SHALL set `VITIATE_FUZZ=1` in the environment, then spawn `vitest run` with `.fuzz.ts` as a positional filter followed by the remaining arguments. All arguments after `fuzz` SHALL be forwarded verbatim to vitest.
 
 The subcommand SHALL spawn vitest with inherited stdio and forward the exit code.
 
 #### Scenario: Basic fuzz invocation
 
 - **WHEN** `npx vitiate fuzz` is executed
-- **THEN** `vitest run --include '*.fuzz.ts'` SHALL be spawned with `VITIATE_FUZZ=1`
+- **THEN** `vitest run .fuzz.ts` SHALL be spawned with `VITIATE_FUZZ=1`
 - **AND** the exit code from vitest SHALL be forwarded
 
 #### Scenario: Fuzz with vitest arguments
 
 - **WHEN** `npx vitiate fuzz --reporter verbose --bail 1` is executed
-- **THEN** `vitest run --include '*.fuzz.ts' --reporter verbose --bail 1` SHALL be spawned with `VITIATE_FUZZ=1`
+- **THEN** `vitest run .fuzz.ts --reporter verbose --bail 1` SHALL be spawned with `VITIATE_FUZZ=1`
 
 #### Scenario: Fuzz with test name filter
 
@@ -47,29 +47,29 @@ The subcommand SHALL spawn vitest with inherited stdio and forward the exit code
 
 ### Requirement: regression subcommand
 
-The `vitiate regression` subcommand SHALL spawn `vitest run` with `--include '*.fuzz.ts'` prepended to the remaining arguments. No special environment variables SHALL be set (regression is vitest's default mode for fuzz tests).
+The `vitiate regression` subcommand SHALL spawn `vitest run` with `.fuzz.ts` as a positional filter followed by the remaining arguments. No special environment variables SHALL be set (regression is vitest's default mode for fuzz tests).
 
 All arguments after `regression` SHALL be forwarded verbatim to vitest.
 
 #### Scenario: Basic regression invocation
 
 - **WHEN** `npx vitiate regression` is executed
-- **THEN** `vitest run --include '*.fuzz.ts'` SHALL be spawned
+- **THEN** `vitest run .fuzz.ts` SHALL be spawned
 - **AND** no `VITIATE_FUZZ` or `VITIATE_OPTIMIZE` environment variable SHALL be set
 
 #### Scenario: Regression with vitest arguments
 
 - **WHEN** `npx vitiate regression --reporter dot` is executed
-- **THEN** `vitest run --include '*.fuzz.ts' --reporter dot` SHALL be spawned
+- **THEN** `vitest run .fuzz.ts --reporter dot` SHALL be spawned
 
 ### Requirement: optimize subcommand
 
-The `vitiate optimize` subcommand SHALL set `VITIATE_OPTIMIZE=1` in the environment, then spawn `vitest run` with `--include '*.fuzz.ts'` prepended to the remaining arguments. All arguments after `optimize` SHALL be forwarded verbatim to vitest.
+The `vitiate optimize` subcommand SHALL set `VITIATE_OPTIMIZE=1` in the environment, then spawn `vitest run` with `.fuzz.ts` as a positional filter followed by the remaining arguments. All arguments after `optimize` SHALL be forwarded verbatim to vitest.
 
 #### Scenario: Basic optimize invocation
 
 - **WHEN** `npx vitiate optimize` is executed
-- **THEN** `vitest run --include '*.fuzz.ts'` SHALL be spawned with `VITIATE_OPTIMIZE=1`
+- **THEN** `vitest run .fuzz.ts` SHALL be spawned with `VITIATE_OPTIMIZE=1`
 
 ### Requirement: libfuzzer subcommand
 
@@ -100,7 +100,7 @@ The `fuzz`, `regression`, and `optimize` subcommands SHALL resolve the `vitest` 
 The spawn SHALL:
 
 1. Use `process.execPath` (the current Node.js binary) as the executable.
-2. Pass the resolved vitest CLI path as the first argument, followed by `run`, then `--include`, `*.fuzz.ts`, then any forwarded arguments.
+2. Pass the resolved vitest CLI path as the first argument, followed by `run`, then `.fuzz.ts` as a positional filter, then any forwarded arguments.
 3. Inherit stdio (`stdio: 'inherit'`).
 4. Forward the child's exit code as the process exit code.
 

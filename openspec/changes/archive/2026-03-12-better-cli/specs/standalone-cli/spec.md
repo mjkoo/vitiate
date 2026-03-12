@@ -1,10 +1,4 @@
-# Standalone CLI
-
-## Purpose
-
-Defines the standalone CLI entry point, libFuzzer-compatible flags, corpus directory handling, and the `-detectors` flag for the `libfuzzer` subcommand.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: CLI entry point
 

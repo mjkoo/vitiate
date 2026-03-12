@@ -16,17 +16,21 @@ npx vitiate regression
 For additional confidence, run a **short fuzzing session** (30 seconds to a few minutes) after regression tests pass. This catches shallow bugs introduced by the change before they reach the main branch:
 
 ```bash
-VITIATE_FUZZ_TIME=300 npx vitiate fuzz
+npx vitiate fuzz --fuzz-time 300
 ```
 
-`VITIATE_FUZZ_TIME` sets the fuzzing duration in seconds per target. Keep it short enough that PRs are not blocked waiting for the fuzzer. The goal is fast feedback, not exhaustive exploration.
+`--fuzz-time` sets the fuzzing duration in seconds per target. Keep it short enough that PRs are not blocked waiting for the fuzzer. The goal is fast feedback, not exhaustive exploration. You can also use the `VITIATE_FUZZ_TIME` environment variable as an alternative:
+
+```bash
+VITIATE_FUZZ_TIME=300 npx vitiate fuzz
+```
 
 ## Main and Release Branches
 
 Run **long nightly fuzzing sessions** (minutes to hours) on main or release branches via a scheduled CI job. These sessions have time to exercise deep code paths and find bugs that short runs miss:
 
 ```bash
-VITIATE_FUZZ_TIME=3600 npx vitiate fuzz
+npx vitiate fuzz --fuzz-time 3600
 ```
 
 After a nightly session, optionally [minimize and checkpoint the corpus](/vitiate/concepts/corpus/#checkpointing-fuzzer-progress) to feed coverage gains back into the regression suite so that every subsequent PR benefits from the fuzzer's discoveries.
@@ -75,11 +79,11 @@ jobs:
       # Short fuzz on PRs, long fuzz on nightly schedule
       - name: Fuzz (short)
         if: github.event_name == 'pull_request'
-        run: VITIATE_FUZZ_TIME=300 npx vitiate fuzz
+        run: npx vitiate fuzz --fuzz-time 300
 
       - name: Fuzz (nightly)
         if: github.event_name == 'schedule'
-        run: VITIATE_FUZZ_TIME=3600 npx vitiate fuzz
+        run: npx vitiate fuzz --fuzz-time 3600
 
       - uses: actions/upload-artifact@v4
         if: failure()

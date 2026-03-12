@@ -55,13 +55,13 @@ fuzz("parse does not crash", (data: Buffer) => {
 Run the fuzzer:
 
 ```bash
-npx vitiate fuzz test/parser.fuzz.ts
+npx vitiate fuzz
 ```
 
 Or via Vitest directly:
 
 ```bash
-VITIATE_FUZZ=1 npx vitest run test/parser.fuzz.ts
+VITIATE_FUZZ=1 npx vitest run
 ```
 
 Crashes are saved to `.vitiate/testdata/<hashdir>/crashes/crash-<sha256>` (where `<hashdir>` is a Nix base32 encoded name like `vxr4kpqyb12fza1gv81bjj8k3i64mlqn-parse_does_not_crash`).

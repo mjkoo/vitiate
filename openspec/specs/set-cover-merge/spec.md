@@ -119,7 +119,7 @@ Merge mode SHALL NOT use the Rust fuzzing engine (`Fuzzer`), watchdog, or calibr
 
 #### Scenario: Basic merge reduces corpus
 
-- **WHEN** `npx vitiate ./test.ts -merge=1 ./corpus/ ./extra/` is executed
+- **WHEN** `npx vitiate libfuzzer ./test.ts -merge=1 ./corpus/ ./extra/` is executed
 - **AND** `./corpus/` contains 100 entries and `./extra/` contains 50 entries
 - **AND** the set cover selects 30 entries
 - **THEN** only the 30 surviving entries exist in `./corpus/` (non-survivors removed)
@@ -127,13 +127,13 @@ Merge mode SHALL NOT use the Rust fuzzing engine (`Fuzzer`), watchdog, or calibr
 
 #### Scenario: Merge with single directory
 
-- **WHEN** `npx vitiate ./test.ts -merge=1 ./corpus/` is executed
+- **WHEN** `npx vitiate libfuzzer ./test.ts -merge=1 ./corpus/` is executed
 - **THEN** inputs are loaded from `./corpus/`, replayed, minimized via set cover
 - **AND** `./corpus/` contains only the surviving entries after merge
 
 #### Scenario: Merge with empty corpus
 
-- **WHEN** `npx vitiate ./test.ts -merge=1 ./corpus/` is executed
+- **WHEN** `npx vitiate libfuzzer ./test.ts -merge=1 ./corpus/` is executed
 - **AND** `./corpus/` contains no files
 - **THEN** merge completes as a no-op
 - **AND** stderr reports: loaded 0 entries
@@ -153,7 +153,7 @@ Merge mode SHALL NOT use the Rust fuzzing engine (`Fuzzer`), watchdog, or calibr
 
 #### Scenario: No corpus directories provided with merge
 
-- **WHEN** `npx vitiate ./test.ts -merge=1` is executed with no corpus directories
+- **WHEN** `npx vitiate libfuzzer ./test.ts -merge=1` is executed with no corpus directories
 - **THEN** an error message is printed and the process exits with code 1
 
 ### Requirement: Vitest optimize mode

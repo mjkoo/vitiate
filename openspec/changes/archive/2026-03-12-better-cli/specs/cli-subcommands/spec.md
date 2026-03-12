@@ -1,10 +1,4 @@
-# CLI Subcommands
-
-## Purpose
-
-Defines the subcommand-based CLI dispatch for vitiate, providing `init`, `fuzz`, `regression`, `optimize`, and `libfuzzer` subcommands as the primary user interface.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Subcommand dispatch
 
@@ -46,7 +40,7 @@ If an unknown subcommand is provided, the CLI SHALL print an error message. If t
 
 ### Requirement: fuzz subcommand
 
-The `vitiate fuzz` subcommand SHALL parse vitiate-specific flags (`--fuzz-time`, `--fuzz-execs`, `--max-crashes`, `--detectors`) via an `@optique` parser. Parsed flags SHALL be converted to environment variables on the spawned vitest process (see `subcommand-flags` capability). Unrecognized arguments SHALL be forwarded to vitest via `passThrough()`. Both positional arguments (e.g. test file paths) and unrecognized option-like arguments SHALL be forwarded to vitest. The `--` separator SHALL force all subsequent tokens to be forwarded verbatim, even if they shadow vitiate flags.
+The `vitiate fuzz` subcommand SHALL parse vitiate-specific flags (`--fuzz-time`, `--fuzz-execs`, `--max-crashes`, `--detectors`) via an `@optique` parser. Parsed flags SHALL be converted to environment variables on the spawned vitest process (see `subcommand-flags` capability). Unrecognized arguments SHALL be forwarded to vitest via `passThrough()`.
 
 The subcommand SHALL set `VITIATE_FUZZ=1` in the environment, then spawn `vitest run` with `.fuzz.ts` prepended to the forwarded arguments.
 
@@ -64,36 +58,16 @@ The subcommand SHALL spawn vitest with inherited stdio and forward the exit code
 - **THEN** `--fuzz-time 60` SHALL be parsed by vitiate and set as `VITIATE_FUZZ_TIME=60`
 - **AND** `vitest run .fuzz.ts --reporter verbose --bail 1` SHALL be spawned
 
-#### Scenario: Fuzz with positional test file
-
-- **WHEN** `npx vitiate fuzz test/specific.fuzz.ts` is executed
-- **THEN** `vitest run .fuzz.ts test/specific.fuzz.ts` SHALL be spawned with `VITIATE_FUZZ=1`
-
-#### Scenario: Fuzz with mixed positional and option args
-
-- **WHEN** `npx vitiate fuzz --fuzz-time 60 test/foo.fuzz.ts --reporter verbose` is executed
-- **THEN** `VITIATE_FUZZ_TIME=60` SHALL be set in the environment
-- **AND** `test/foo.fuzz.ts`, `--reporter`, and `verbose` SHALL be forwarded to vitest
-- **AND** `--fuzz-time` SHALL NOT appear in the forwarded arguments
-
 #### Scenario: Fuzz with test name filter
 
 - **WHEN** `npx vitiate fuzz --test-name-pattern 'parses URLs'` is executed
 - **THEN** the vitest `--test-name-pattern` flag SHALL be forwarded, filtering within `*.fuzz.ts` files
-
-#### Scenario: Fuzz with -- separator shadowing vitiate flags
-
-- **WHEN** `npx vitiate fuzz --fuzz-time 60 -- --fuzz-time 999 --reporter verbose` is executed
-- **THEN** `VITIATE_FUZZ_TIME=60` SHALL be set from the pre-separator flag
-- **AND** `--fuzz-time`, `999`, `--reporter`, and `verbose` SHALL all be forwarded verbatim to vitest
 
 ### Requirement: regression subcommand
 
 The `vitiate regression` subcommand SHALL parse vitiate-specific flags (`--detectors`) via an `@optique` parser. Unrecognized arguments SHALL be forwarded to vitest via `passThrough()`.
 
 The subcommand SHALL spawn `vitest run` with `.fuzz.ts` prepended to the forwarded arguments. No special environment variables SHALL be set beyond those derived from parsed flags (regression is vitest's default mode for fuzz tests).
-
-Both positional arguments and unrecognized option-like arguments SHALL be forwarded to vitest. The `--` separator SHALL force all subsequent tokens to be forwarded verbatim.
 
 #### Scenario: Basic regression invocation
 
@@ -106,45 +80,16 @@ Both positional arguments and unrecognized option-like arguments SHALL be forwar
 - **WHEN** `npx vitiate regression --reporter dot` is executed
 - **THEN** `vitest run .fuzz.ts --reporter dot` SHALL be spawned
 
-#### Scenario: Regression with positional test file
-
-- **WHEN** `npx vitiate regression test/specific.fuzz.ts` is executed
-- **THEN** `vitest run .fuzz.ts test/specific.fuzz.ts` SHALL be spawned
-
 ### Requirement: optimize subcommand
 
 The `vitiate optimize` subcommand SHALL parse vitiate-specific flags (`--detectors`) via an `@optique` parser. Unrecognized arguments SHALL be forwarded to vitest via `passThrough()`.
 
 The subcommand SHALL set `VITIATE_OPTIMIZE=1` in the environment, then spawn `vitest run` with `.fuzz.ts` prepended to the forwarded arguments.
 
-Both positional arguments and unrecognized option-like arguments SHALL be forwarded to vitest. The `--` separator SHALL force all subsequent tokens to be forwarded verbatim.
-
 #### Scenario: Basic optimize invocation
 
 - **WHEN** `npx vitiate optimize` is executed
 - **THEN** `vitest run .fuzz.ts` SHALL be spawned with `VITIATE_OPTIMIZE=1`
-
-### Requirement: libfuzzer subcommand
-
-The `vitiate libfuzzer` subcommand SHALL provide all current standalone CLI functionality. The argument parsing, parent/child supervisor model, shmem management, libFuzzer-compatible flags, merge mode, and all other existing CLI behavior SHALL be preserved unchanged under this subcommand.
-
-Arguments after `libfuzzer` SHALL be parsed using the existing `@optique`-based parser with all current flags (`-max_len`, `-timeout`, `-runs`, `-seed`, `-max_total_time`, `-test`, `-artifact_prefix`, `-dict`, `-detectors`, `-fork`, `-jobs`, `-merge`, `-minimize_budget`, `-minimize_time_limit`).
-
-#### Scenario: libfuzzer mode invocation
-
-- **WHEN** `npx vitiate libfuzzer ./test.fuzz.ts -max_total_time=60` is executed
-- **THEN** the existing CLI behavior SHALL execute (parent spawns child, supervisor loop, shmem)
-- **AND** all libFuzzer-compatible flags SHALL be parsed and applied
-
-#### Scenario: libfuzzer merge mode
-
-- **WHEN** `npx vitiate libfuzzer ./test.fuzz.ts -merge=1 ./corpus/` is executed
-- **THEN** corpus merge mode SHALL execute using the existing merge implementation
-
-#### Scenario: OSS-Fuzz compatibility
-
-- **WHEN** an OSS-Fuzz build script invokes `npx vitiate libfuzzer ./target.fuzz.ts ./corpus/ -max_total_time=600`
-- **THEN** the fuzzer SHALL behave identically to the current `npx vitiate` invocation
 
 ### Requirement: Vitest wrapper execution
 

@@ -49,7 +49,7 @@ This is the simplest form: pass every input to the parser and let any uncaught e
 ## Step 3: Run the Fuzzer
 
 ```bash
-npx vitiate fuzz test/url-parser.fuzz.ts
+npx vitiate fuzz
 ```
 
 Watch the output. The `edges` counter shows how many unique code edges the fuzzer has reached. The `corpus` counter shows how many inputs have been kept because they found new coverage.

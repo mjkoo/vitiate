@@ -61,13 +61,13 @@ Catch expected errors (like `ParseError` above) and let unexpected ones propagat
 Use the `vitiate fuzz` command to activate fuzzing mode:
 
 ```bash
-npx vitiate fuzz test/parser.fuzz.ts
+npx vitiate fuzz
 ```
 
 Or set `VITIATE_FUZZ=1` directly:
 
 ```bash
-VITIATE_FUZZ=1 npx vitest run test/parser.fuzz.ts
+VITIATE_FUZZ=1 npx vitest run
 ```
 
 You will see a startup banner followed by periodic status updates showing execution count, corpus size, and coverage edges discovered:

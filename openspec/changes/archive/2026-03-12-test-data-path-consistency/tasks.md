@@ -38,9 +38,9 @@
 ## 5. CLI Subcommand Restructuring
 
 - [x] 5.1 Add subcommand dispatch to `main()` in `cli.ts`: check `process.argv[2]` against known subcommands, print help with subcommand descriptions if no match or unknown subcommand
-- [x] 5.2 Implement `fuzz` subcommand: set `VITIATE_FUZZ=1`, resolve vitest CLI, spawn `vitest run --include '*.fuzz.ts'` with forwarded args
-- [x] 5.3 Implement `regression` subcommand: spawn `vitest run --include '*.fuzz.ts'` with forwarded args (no special env vars)
-- [x] 5.4 Implement `optimize` subcommand: set `VITIATE_OPTIMIZE=1`, spawn `vitest run --include '*.fuzz.ts'` with forwarded args
+- [x] 5.2 Implement `fuzz` subcommand: set `VITIATE_FUZZ=1`, resolve vitest CLI, spawn `vitest run .fuzz.ts` with forwarded args
+- [x] 5.3 Implement `regression` subcommand: spawn `vitest run .fuzz.ts` with forwarded args (no special env vars)
+- [x] 5.4 Implement `optimize` subcommand: set `VITIATE_OPTIMIZE=1`, spawn `vitest run .fuzz.ts` with forwarded args
 - [x] 5.5 Move all existing CLI logic (parser, parent/child modes, merge) into a `libfuzzer` subcommand handler
 - [x] 5.6 Write tests for subcommand dispatch: known subcommand routing, unknown subcommand help, no-argument help
 

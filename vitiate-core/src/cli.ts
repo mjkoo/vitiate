@@ -22,8 +22,14 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { object } from "@optique/core/constructs";
-import { option, argument } from "@optique/core/primitives";
+import { object, or } from "@optique/core/constructs";
+import {
+  option,
+  argument,
+  command,
+  constant,
+  passThrough,
+} from "@optique/core/primitives";
 import { integer, string } from "@optique/core/valueparser";
 import { optional, multiple, withDefault } from "@optique/core/modifiers";
 import { type InferValue, parseSync } from "@optique/core/parser";
@@ -58,7 +64,7 @@ export interface CliArgs {
   forkExplicit?: boolean;
 }
 
-export const cliParser = object({
+export const libfuzzerParser = object({
   testFile: argument(string({ metavar: "TEST_FILE" })),
   corpusDirs: withDefault(
     multiple(argument(string({ metavar: "CORPUS_DIR", pattern: /^[^-]/ }))),
@@ -169,7 +175,137 @@ export const cliParser = object({
   ),
 });
 
-function warnUnsupportedFlags(parsed: InferValue<typeof cliParser>): void {
+const detectorsDescription = [
+  text(
+    "Comma-separated list of bug detectors to enable. " +
+      "When specified, all defaults are disabled and only listed " +
+      "detectors are enabled. Pass an empty string to disable all.",
+  ),
+  lineBreak(),
+  text(`Detectors: ${[...KNOWN_DETECTOR_KEYS].join(", ")}`),
+  lineBreak(),
+  text("Syntax: name to enable, name.key=value to set options."),
+  lineBreak(),
+  text("Examples: --detectors prototypePollution,pathTraversal"),
+];
+
+const vitestForwardingDescription = [
+  text("Unrecognized flags are forwarded to vitest."),
+];
+
+export const fuzzParser = object({
+  subcommand: constant("fuzz" as const),
+  fuzzTime: optional(
+    option("--fuzz-time", integer({ min: 1 }), {
+      description: [text("Total fuzzing time limit in seconds")],
+    }),
+  ),
+  fuzzExecs: optional(
+    option("--fuzz-execs", integer({ min: 1 }), {
+      description: [text("Total number of fuzzing iterations")],
+    }),
+  ),
+  maxCrashes: optional(
+    option("--max-crashes", integer({ min: 1 }), {
+      description: [text("Maximum crashes to collect")],
+    }),
+  ),
+  detectors: optional(
+    option("--detectors", string(), {
+      description: detectorsDescription,
+    }),
+  ),
+  positionalArgs: withDefault(
+    multiple(argument(string({ metavar: "VITEST_ARG" }))),
+    [],
+  ),
+  vitestArgs: passThrough({
+    format: "nextToken",
+    description: vitestForwardingDescription,
+  }),
+});
+
+export const regressionParser = object({
+  subcommand: constant("regression" as const),
+  detectors: optional(
+    option("--detectors", string(), {
+      description: detectorsDescription,
+    }),
+  ),
+  positionalArgs: withDefault(
+    multiple(argument(string({ metavar: "VITEST_ARG" }))),
+    [],
+  ),
+  vitestArgs: passThrough({
+    format: "nextToken",
+    description: vitestForwardingDescription,
+  }),
+});
+
+export const optimizeParser = object({
+  subcommand: constant("optimize" as const),
+  detectors: optional(
+    option("--detectors", string(), {
+      description: detectorsDescription,
+    }),
+  ),
+  positionalArgs: withDefault(
+    multiple(argument(string({ metavar: "VITEST_ARG" }))),
+    [],
+  ),
+  vitestArgs: passThrough({
+    format: "nextToken",
+    description: vitestForwardingDescription,
+  }),
+});
+
+const initParser = object({
+  subcommand: constant("init" as const),
+});
+
+const cli = or(
+  command("fuzz", fuzzParser, {
+    brief: [text("Run fuzz tests")],
+    description: [
+      text(
+        "Runs fuzz tests via vitest. Unrecognized flags are forwarded to vitest.",
+      ),
+    ],
+  }),
+  command("regression", regressionParser, {
+    brief: [text("Run regression tests against saved corpus")],
+    description: [
+      text(
+        "Runs regression tests via vitest. Unrecognized flags are forwarded to vitest.",
+      ),
+    ],
+  }),
+  command("optimize", optimizeParser, {
+    brief: [text("Minimize cached corpus via set cover")],
+    description: [
+      text(
+        "Minimizes corpus via vitest. Unrecognized flags are forwarded to vitest.",
+      ),
+    ],
+  }),
+  command(
+    "libfuzzer",
+    object({
+      subcommand: constant("libfuzzer" as const),
+      rest: passThrough({ format: "greedy" }),
+    }),
+    {
+      brief: [text("Run in libFuzzer-compatible mode")],
+    },
+  ),
+  command("init", initParser, {
+    brief: [text("Discover fuzz tests and create seed directories")],
+  }),
+);
+
+function warnUnsupportedFlags(
+  parsed: InferValue<typeof libfuzzerParser>,
+): void {
   if (parsed.fork !== undefined && parsed.fork !== 1) {
     if (parsed.fork === 0) {
       process.stderr.write(
@@ -265,7 +401,7 @@ export function parseDetectorsFlag(spec: string): FuzzOptions["detectors"] {
   return detectors as FuzzOptions["detectors"];
 }
 
-function toCliArgs(parsed: InferValue<typeof cliParser>): CliArgs {
+function toCliArgs(parsed: InferValue<typeof libfuzzerParser>): CliArgs {
   warnUnsupportedFlags(parsed);
   const {
     testFile,
@@ -324,7 +460,7 @@ function toCliArgs(parsed: InferValue<typeof cliParser>): CliArgs {
 }
 
 export function parseArgs(argv: string[]): CliArgs {
-  const result = parseSync(cliParser, argv.slice(2));
+  const result = parseSync(libfuzzerParser, argv.slice(2));
   if (!result.success) {
     throw new Error(formatMessage(result.error));
   }
@@ -530,7 +666,7 @@ async function runChildMode(
 /**
  * libfuzzer subcommand handler: all existing CLI behavior.
  */
-async function runLibfuzzerSubcommand(): Promise<void> {
+async function runLibfuzzerSubcommand(args: readonly string[]): Promise<void> {
   const {
     testFile,
     corpusDirs,
@@ -541,8 +677,9 @@ async function runLibfuzzerSubcommand(): Promise<void> {
     fuzzOptions,
     forkExplicit,
   } = toCliArgs(
-    runSync(cliParser, {
+    runSync(libfuzzerParser, {
       programName: "vitiate libfuzzer",
+      args,
       brief: [text("Coverage-guided JavaScript fuzzer (libFuzzer-compatible)")],
       description: [
         text(
@@ -592,7 +729,10 @@ async function runLibfuzzerSubcommand(): Promise<void> {
  * Spawn vitest with the given env vars and forwarded args.
  * Used by the fuzz, regression, and optimize subcommands.
  */
-function spawnVitestWrapper(env: Record<string, string>): void {
+function spawnVitestWrapper(
+  env: Record<string, string>,
+  forwardedArgs: readonly string[],
+): void {
   let vitestCli: string;
   try {
     vitestCli = resolveVitestCli();
@@ -603,7 +743,6 @@ function spawnVitestWrapper(env: Record<string, string>): void {
     process.exitCode = 1;
     return;
   }
-  const forwardedArgs = process.argv.slice(3); // args after the subcommand
   const args = [vitestCli, "run", ".fuzz.ts", ...forwardedArgs];
 
   const result = spawnSync(process.execPath, args, {
@@ -710,54 +849,94 @@ async function runInitSubcommand(): Promise<void> {
   }
 }
 
-const SUBCOMMANDS: Record<string, string> = {
-  init: "Discover fuzz tests and create seed directories",
-  fuzz: "Run fuzz tests (sets VITIATE_FUZZ=1)",
-  regression: "Run regression tests against saved corpus",
-  optimize: "Minimize cached corpus via set cover (sets VITIATE_OPTIMIZE=1)",
-  libfuzzer: "Run in libFuzzer-compatible mode",
-};
+/**
+ * Build env vars for detectors flag, shared by fuzz/regression/optimize.
+ */
+function buildDetectorsEnv(
+  detectorsSpec: string | undefined,
+): Record<string, string> {
+  if (detectorsSpec === undefined) return {};
+  const detectors = parseDetectorsFlag(detectorsSpec);
+  return { VITIATE_FUZZ_OPTIONS: JSON.stringify({ detectors }) };
+}
 
-function printUsage(exitCode: number): void {
-  process.stderr.write("Usage: vitiate <subcommand> [args...]\n\n");
-  process.stderr.write("Subcommands:\n");
-  for (const [name, description] of Object.entries(SUBCOMMANDS)) {
-    process.stderr.write(`  ${name.padEnd(12)} ${description}\n`);
+/**
+ * Handle the fuzz subcommand: parse flags, build env vars, spawn vitest.
+ */
+function runFuzzSubcommand(parsed: InferValue<typeof fuzzParser>): void {
+  const env: Record<string, string> = { VITIATE_FUZZ: "1" };
+
+  if (parsed.fuzzTime !== undefined) {
+    env["VITIATE_FUZZ_TIME"] = String(parsed.fuzzTime);
   }
-  process.stderr.write("\n");
-  process.exitCode = exitCode;
+  if (parsed.fuzzExecs !== undefined) {
+    env["VITIATE_FUZZ_EXECS"] = String(parsed.fuzzExecs);
+  }
+  if (parsed.maxCrashes !== undefined) {
+    env["VITIATE_MAX_CRASHES"] = String(parsed.maxCrashes);
+  }
+
+  // Detectors: merge into VITIATE_FUZZ_OPTIONS
+  Object.assign(env, buildDetectorsEnv(parsed.detectors));
+
+  spawnVitestWrapper(env, [...parsed.vitestArgs, ...parsed.positionalArgs]);
+}
+
+/**
+ * Handle the regression subcommand.
+ */
+function runRegressionSubcommand(
+  parsed: InferValue<typeof regressionParser>,
+): void {
+  const env: Record<string, string> = {};
+  Object.assign(env, buildDetectorsEnv(parsed.detectors));
+  spawnVitestWrapper(env, [...parsed.vitestArgs, ...parsed.positionalArgs]);
+}
+
+/**
+ * Handle the optimize subcommand.
+ */
+function runOptimizeSubcommand(
+  parsed: InferValue<typeof optimizeParser>,
+): void {
+  const env: Record<string, string> = { VITIATE_OPTIMIZE: "1" };
+  Object.assign(env, buildDetectorsEnv(parsed.detectors));
+  spawnVitestWrapper(env, [...parsed.vitestArgs, ...parsed.positionalArgs]);
 }
 
 export async function main(): Promise<void> {
-  const subcommand = process.argv[2];
+  const rawArgs = process.argv.slice(2);
 
-  if (!subcommand) {
-    printUsage(0);
-    return;
+  // Show help and exit 0 when no subcommand is given
+  if (rawArgs.length === 0) {
+    rawArgs.push("--help");
   }
 
-  switch (subcommand) {
+  const result = runSync(cli, {
+    programName: "vitiate",
+    args: rawArgs,
+    brief: [text("Coverage-guided JavaScript fuzzer")],
+    help: "option",
+  } satisfies RunOptions);
+
+  switch (result.subcommand) {
+    case "fuzz":
+      runFuzzSubcommand(result);
+      return;
+    case "regression":
+      runRegressionSubcommand(result);
+      return;
+    case "optimize":
+      runOptimizeSubcommand(result);
+      return;
+    case "libfuzzer":
+      await runLibfuzzerSubcommand(result.rest);
+      return;
     case "init":
       await runInitSubcommand();
       return;
-    case "fuzz":
-      spawnVitestWrapper({ VITIATE_FUZZ: "1" });
-      return;
-    case "regression":
-      spawnVitestWrapper({});
-      return;
-    case "optimize":
-      spawnVitestWrapper({ VITIATE_OPTIMIZE: "1" });
-      return;
-    case "libfuzzer":
-      // Shift argv so @optique sees args after "libfuzzer"
-      process.argv.splice(2, 1);
-      await runLibfuzzerSubcommand();
-      return;
     default:
-      process.stderr.write(`Unknown subcommand: ${subcommand}\n\n`);
-      printUsage(1);
-      return;
+      result satisfies never;
   }
 }
 

@@ -98,12 +98,12 @@ The main entry point checks `process.argv[2]` against known subcommand names. If
 | Subcommand | Implementation |
 |---|---|
 | `init` | Own arg parser. Boots Vitest via `createVitest()` to discover `*.fuzz.ts` files, walks the test tree to extract test names, computes paths, creates directories. |
-| `fuzz` | Sets `VITIATE_FUZZ=1`, execs `vitest run` with `--include '*.fuzz.ts'` plus forwarded args. |
-| `regression` | Execs `vitest run` with `--include '*.fuzz.ts'` plus forwarded args. No special env vars. |
-| `optimize` | Sets `VITIATE_OPTIMIZE=1`, execs `vitest run` with `--include '*.fuzz.ts'` plus forwarded args. |
+| `fuzz` | Sets `VITIATE_FUZZ=1`, execs `vitest run .fuzz.ts` plus forwarded args. |
+| `regression` | Execs `vitest run .fuzz.ts` plus forwarded args. No special env vars. |
+| `optimize` | Sets `VITIATE_OPTIMIZE=1`, execs `vitest run .fuzz.ts` plus forwarded args. |
 | `libfuzzer` | All current `cli.ts` logic: `@optique` parser, parent/child supervisor, shmem, libFuzzer flags. |
 
-**`fuzz`, `regression`, `optimize` implementation:** These are thin exec wrappers. They do not parse vitest args - they set env vars and `execFileSync` (or `spawn` with inherited stdio) `vitest run` with the remaining argv. The `--include` filter ensures only `*.fuzz.ts` files are considered.
+**`fuzz`, `regression`, `optimize` implementation:** These are thin exec wrappers. They do not parse vitest args - they set env vars and `execFileSync` (or `spawn` with inherited stdio) `vitest run` with the remaining argv. The `.fuzz.ts` positional filter ensures only `*.fuzz.ts` files are considered.
 
 **`init` implementation:** Uses Vitest's `createVitest()` from `vitest/node` which creates an instance without running tests or validating packages. Then:
 1. Call `await vitest.globTestSpecs()` or equivalent to collect test file paths
