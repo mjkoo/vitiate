@@ -5,7 +5,7 @@ Coverage-guided fuzzing for JavaScript and TypeScript, built as a Vitest plugin.
 Vitiate uses [SWC](https://swc.rs/) for compile-time instrumentation and [LibAFL](https://github.com/AFLplusplus/LibAFL) for mutation-driven fuzzing.
 Write fuzz tests alongside your unit tests in Vitest, or use the standalone CLI for libFuzzer-compatible workflows.
 
-**[Documentation](https://mjkoo.github.io/vitiate/)**
+**[Documentation](https://vitiate.js.org)**
 
 ## Quickstart
 
@@ -64,7 +64,7 @@ Or via Vitest directly:
 VITIATE_FUZZ=1 npx vitest run
 ```
 
-Crashes are saved to `.vitiate/testdata/<hashdir>/crashes/crash-<sha256>` (where `<hashdir>` is a Nix base32 encoded name like `vxr4kpqyb12fza1gv81bjj8k3i64mlqn-parse_does_not_crash`).
+Crashes are saved to `.vitiate/testdata/<hashdir>/crashes/crash-<sha256>` (where `<hashdir>` is a base32 encoded name like `vxr4kpqyb12fza1gv81bjj8k3i64mlqn-parse_does_not_crash`).
 Run your test suite normally and they are replayed as regression tests automatically.
 
 ## How It Works
@@ -78,9 +78,9 @@ Run your test suite normally and they are replayed as regression tests automatic
 
 Prebuilt native binaries are provided for:
 
-- Linux: x86_64 (glibc, musl), aarch64 (glibc, musl), armv7 (gnueabihf)
+- Linux: x86\_64 (glibc, musl), aarch64 (glibc, musl), armv7 (gnueabihf)
 - macOS: aarch64 (Apple Silicon)
-- Windows: x86_64
+- Windows: x86\_64
 
 Requires Node.js 18 or later, Vite 6+, and Vitest 3.1+.
 

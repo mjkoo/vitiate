@@ -123,7 +123,8 @@ export function hashTestPath(
   relativeTestFilePath: string,
   testName: string,
 ): string {
-  const input = `${relativeTestFilePath}::${testName}`;
+  const normalizedPath = relativeTestFilePath.replaceAll("\\", "/");
+  const input = `${normalizedPath}::${testName}`;
   const sha256 = createHash("sha256").update(input).digest();
   const compressed = compressHash(sha256);
   const hash = toNixBase32(compressed);

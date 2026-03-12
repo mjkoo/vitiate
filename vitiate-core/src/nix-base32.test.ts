@@ -126,6 +126,12 @@ describe("compressHash", () => {
 });
 
 describe("hashTestPath", () => {
+  it("normalizes backslash separators to match forward-slash hashes", () => {
+    const forward = hashTestPath("test/url-parser.fuzz.ts", "parse-url");
+    const back = hashTestPath("test\\url-parser.fuzz.ts", "parse-url");
+    expect(back).toBe(forward);
+  });
+
   it("produces deterministic output", () => {
     const result1 = hashTestPath("src/parser.fuzz.ts", "parses URLs");
     const result2 = hashTestPath("src/parser.fuzz.ts", "parses URLs");
