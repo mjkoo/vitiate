@@ -1,6 +1,6 @@
 {
   "vitiate-core": "0.1.0",
-  "vitiate-engine": "0.1.0",
+  "vitiate-engine": "0.1.1",
   "vitiate-engine/npm/darwin-arm64": "0.1.0",
   "vitiate-engine/npm/linux-arm64-gnu": "0.1.0",
   "vitiate-engine/npm/linux-x64-gnu": "0.1.0",
