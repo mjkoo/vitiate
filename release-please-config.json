@@ -17,80 +17,76 @@
     { "type": "ci", "section": "Continuous Integration", "hidden": true }
   ],
   "packages": {
-    "vitiate-core": {
+    ".": {
       "release-type": "node",
-      "component": "@vitiate/core"
-    },
-    "vitiate-engine": {
-      "release-type": "node",
-      "component": "@vitiate/engine",
+      "component": "vitiate",
       "extra-files": [
         {
+          "type": "json",
+          "path": "vitiate-core/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "vitiate-engine/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "vitiate-engine/npm/darwin-arm64/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "vitiate-engine/npm/linux-arm64-gnu/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "vitiate-engine/npm/linux-arm64-musl/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "vitiate-engine/npm/linux-arm-gnueabihf/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "vitiate-engine/npm/linux-x64-gnu/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "vitiate-engine/npm/linux-x64-musl/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "vitiate-engine/npm/win32-x64-msvc/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "vitiate-swc-plugin/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "vitiate-fuzzed-data-provider/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "vitiate/package.json",
+          "jsonpath": "$.version"
+        },
+        {
           "type": "toml",
-          "path": "/Cargo.toml",
+          "path": "Cargo.toml",
           "jsonpath": "$.workspace.package.version"
         }
       ]
-    },
-    "vitiate-engine/npm/darwin-arm64": {
-      "release-type": "node",
-      "component": "@vitiate/engine-darwin-arm64"
-    },
-    "vitiate-engine/npm/linux-arm64-gnu": {
-      "release-type": "node",
-      "component": "@vitiate/engine-linux-arm64-gnu"
-    },
-    "vitiate-engine/npm/linux-x64-gnu": {
-      "release-type": "node",
-      "component": "@vitiate/engine-linux-x64-gnu"
-    },
-    "vitiate-engine/npm/linux-x64-musl": {
-      "release-type": "node",
-      "component": "@vitiate/engine-linux-x64-musl"
-    },
-    "vitiate-engine/npm/win32-x64-msvc": {
-      "release-type": "node",
-      "component": "@vitiate/engine-win32-x64-msvc"
-    },
-    "vitiate-engine/npm/linux-arm64-musl": {
-      "release-type": "node",
-      "component": "@vitiate/engine-linux-arm64-musl"
-    },
-    "vitiate-engine/npm/linux-arm-gnueabihf": {
-      "release-type": "node",
-      "component": "@vitiate/engine-linux-arm-gnueabihf"
-    },
-    "vitiate-swc-plugin": {
-      "release-type": "node",
-      "component": "@vitiate/swc-plugin"
-    },
-    "vitiate-fuzzed-data-provider": {
-      "release-type": "node",
-      "component": "@vitiate/fuzzed-data-provider"
-    },
-    "vitiate": {
-      "release-type": "node",
-      "component": "vitiate"
     }
-  },
-  "plugins": [
-    {
-      "type": "linked-versions",
-      "groupName": "vitiate",
-      "components": [
-        "@vitiate/core",
-        "@vitiate/engine",
-        "@vitiate/engine-darwin-arm64",
-        "@vitiate/engine-linux-arm64-gnu",
-        "@vitiate/engine-linux-x64-gnu",
-        "@vitiate/engine-linux-x64-musl",
-        "@vitiate/engine-win32-x64-msvc",
-        "@vitiate/engine-linux-arm64-musl",
-        "@vitiate/engine-linux-arm-gnueabihf",
-        "@vitiate/swc-plugin",
-        "@vitiate/fuzzed-data-provider",
-        "vitiate"
-      ]
-    }
-  ]
+  }
 }
