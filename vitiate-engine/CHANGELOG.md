@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/mjkoo/vitiate/compare/v0.1.0...v0.1.1) (2026-03-12)
+
+
+### Bug Fixes
+
+* fix publish pipeline ([9d30796](https://github.com/mjkoo/vitiate/commit/9d3079622ef75bb21d20017d549b5545238c8aa7))
+
 ## 0.1.0 (2026-03-12)
 
 
