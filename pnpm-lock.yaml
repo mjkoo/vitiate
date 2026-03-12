@@ -104,8 +104,8 @@ importers:
   vitiate-core:
     dependencies:
       '@optique/core':
-        specifier: 1.0.0-dev.438+923a6492
-        version: 1.0.0-dev.438
+        specifier: 1.0.0-dev.566+923a6492
+        version: 1.0.0-dev.566
       '@optique/run':
         specifier: 1.0.0-dev.438+923a6492
         version: 1.0.0-dev.438
@@ -1449,6 +1449,10 @@ packages:
 
   '@optique/core@1.0.0-dev.438':
     resolution: {integrity: sha512-1pB14tKTG5D0qi0gGP+PAElHAWBFe/vTli5dJ0mAfdcCOMW16GPfIjYr/PI1xUM1bHdxL6IsOJIp5KQi5ZxiTQ==}
+    engines: {bun: '>=1.2.0', deno: '>=2.3.0', node: '>=20.0.0'}
+
+  '@optique/core@1.0.0-dev.566':
+    resolution: {integrity: sha512-m2DhdYYcoHiV7HNSPf+TQdGGGvPaaWkFQs194R9qiWhqC93u6h21bP7M+20pxPDKF3AfzIe1LRDmCmMqxOmbFg==}
     engines: {bun: '>=1.2.0', deno: '>=2.3.0', node: '>=20.0.0'}
 
   '@optique/run@1.0.0-dev.438':
@@ -5123,6 +5127,8 @@ snapshots:
       '@octokit/openapi-types': 27.0.0
 
   '@optique/core@1.0.0-dev.438': {}
+
+  '@optique/core@1.0.0-dev.566': {}
 
   '@optique/run@1.0.0-dev.438':
     dependencies:
