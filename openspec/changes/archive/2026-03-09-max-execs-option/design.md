@@ -1,6 +1,6 @@
 ## Context
 
-The fuzz loop currently uses `FuzzOptions.runs` as the iteration budget, with `0` meaning unlimited. The naming is inconsistent with `fuzzTimeMs` (the wall-clock budget) and ambiguous — "runs" could mean test runs, calibration runs, or main-loop iterations. The CLI exposes this via the libFuzzer-compatible `-runs=N` flag, and there is no dedicated environment variable override (unlike `VITIATE_FUZZ_TIME` for `fuzzTimeMs`).
+The fuzz loop currently uses `FuzzOptions.runs` as the iteration budget, with `0` meaning unlimited. The naming is inconsistent with `fuzzTimeMs` (the wall-clock budget) and ambiguous - "runs" could mean test runs, calibration runs, or main-loop iterations. The CLI exposes this via the libFuzzer-compatible `-runs=N` flag, and there is no dedicated environment variable override (unlike `VITIATE_FUZZ_TIME` for `fuzzTimeMs`).
 
 ## Goals / Non-Goals
 
@@ -15,17 +15,17 @@ The fuzz loop currently uses `FuzzOptions.runs` as the iteration budget, with `0
 
 - Changing what counts as an "exec" (calibration, minimization, and stage executions remain uncounted).
 - Adding new CLI flags (the existing `-max_total_time` and `-runs` flags already cover wall-clock and iteration budgets respectively).
-- Making the overshoot behavior more precise — calibration/minimization/stage work after the last qualifying iteration is acceptable.
+- Making the overshoot behavior more precise - calibration/minimization/stage work after the last qualifying iteration is acceptable.
 
 ## Decisions
 
 ### Decision 1: Field name `fuzzExecs` (not `fuzzIterations`, `maxExecs`, etc.)
 
-`fuzzExecs` parallels `fuzzTimeMs` — both use the `fuzz` prefix to indicate they are campaign-level budgets, distinguishing them from per-execution settings like `timeoutMs`. "Execs" is the standard term in fuzzing literature (AFL, libFuzzer both report "execs/sec").
+`fuzzExecs` parallels `fuzzTimeMs` - both use the `fuzz` prefix to indicate they are campaign-level budgets, distinguishing them from per-execution settings like `timeoutMs`. "Execs" is the standard term in fuzzing literature (AFL, libFuzzer both report "execs/sec").
 
 Alternatives considered:
 - `fuzzIterations`: More precise but longer; "execs" is the established fuzzing term.
-- `maxExecs`: Breaks the naming pattern — `fuzzTimeMs` is not called `maxTimeMs`.
+- `maxExecs`: Breaks the naming pattern - `fuzzTimeMs` is not called `maxTimeMs`.
 - `executions`: Unnecessarily verbose.
 
 ### Decision 2: `VITIATE_FUZZ_EXECS` as a plain integer (no unit conversion)
@@ -43,4 +43,4 @@ The `-runs` flag is part of the libFuzzer CLI contract required for OSS-Fuzz com
 ## Risks / Trade-offs
 
 - **[Breaking change]** → No external users yet; internal references are fully enumerable via grep. Low risk.
-- **[Overshoot on termination]** → If the iteration count hits `fuzzExecs` but calibration, stage execution (I2S, Generalization, Grimoire), or minimization is in-flight, those operations complete before the loop checks the condition again. This is by design — interrupting these operations mid-flight would corrupt internal state. The overshoot is bounded by calibration iterations (3–7) plus stage executions (variable, depends on CmpLog data) plus minimization budget (default 10,000, but that's a separate budget with its own limit).
+- **[Overshoot on termination]** → If the iteration count hits `fuzzExecs` but calibration, stage execution (I2S, Generalization, Grimoire), or minimization is in-flight, those operations complete before the loop checks the condition again. This is by design - interrupting these operations mid-flight would corrupt internal state. The overshoot is bounded by calibration iterations (3-7) plus stage executions (variable, depends on CmpLog data) plus minimization budget (default 10,000, but that's a separate budget with its own limit).

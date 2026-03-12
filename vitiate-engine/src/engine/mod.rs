@@ -148,7 +148,7 @@ pub struct Fuzzer {
     solution_count: u32,
     start_time: Instant,
     last_input: Option<BytesInput>,
-    /// Corpus ID selected by the most recent `get_next_input()` — parent for depth tracking.
+    /// Corpus ID selected by the most recent `get_next_input()` - parent for depth tracking.
     last_corpus_id: Option<CorpusId>,
     /// Calibration lifecycle state (populated between calibrate_run / calibrate_finish).
     calibration: CalibrationState,
@@ -225,7 +225,7 @@ impl Fuzzer {
         let mut timeout_objective = TimeoutFeedback::new();
 
         let rand = match seed {
-            // Negative i64 seeds intentionally wrap to u64 — JS has no native u64,
+            // Negative i64 seeds intentionally wrap to u64 - JS has no native u64,
             // so callers pass i64 and we reinterpret the bits.
             Some(s) => StdRand::with_seed(s as u64),
             None => StdRand::new(),
@@ -319,7 +319,7 @@ impl Fuzzer {
             if !state.has_metadata::<Tokens>() {
                 state.add_metadata(Tokens::default());
             }
-            // PANIC: Tokens metadata is guaranteed to exist — inserted above if absent.
+            // PANIC: Tokens metadata is guaranteed to exist - inserted above if absent.
             let tokens = state.metadata_mut::<Tokens>().unwrap();
             for bytes in dt {
                 tokens.add_token(bytes);
@@ -383,10 +383,10 @@ impl Fuzzer {
             {
                 // Either user-provided seeds all failed, or auto-seeds already
                 // tried and all failed. No seed produced any coverage or
-                // crashes — this indicates instrumentation is not active.
+                // crashes - this indicates instrumentation is not active.
                 return Err(Error::from_reason(
                     "All seeds evaluated but none produced coverage. \
-                     This usually means instrumentation is not active — \
+                     This usually means instrumentation is not active - \
                      check that the vitiate plugin is loaded and \
                      globalThis.__vitiate_cov is initialized. If instrumentation \
                      is active, ensure at least one seed exercises a code path \
@@ -394,7 +394,7 @@ impl Fuzzer {
                 ));
             }
             if self.features.auto_seed_count == 0 {
-                // No auto-seeds tried yet — push default seeds to populate
+                // No auto-seeds tried yet - push default seeds to populate
                 // the corpus. This covers both the initial case (no user seeds)
                 // and the case where user seeds all crashed (solutions found
                 // but corpus still empty).
@@ -405,7 +405,7 @@ impl Fuzzer {
             }
         }
 
-        // All seeds crashed but none produced coverage — the corpus is empty
+        // All seeds crashed but none produced coverage - the corpus is empty
         // and no seeds remain to evaluate. Provide a clear error instead of
         // falling through to the scheduler which would produce a confusing
         // "Scheduler failed" error on an empty corpus.
@@ -414,7 +414,7 @@ impl Fuzzer {
             && self.solution_count > 0
         {
             return Err(Error::from_reason(
-                "No seed produced coverage and the corpus is empty — the fuzzer \
+                "No seed produced coverage and the corpus is empty - the fuzzer \
                  cannot continue without at least one non-crashing seed that \
                  exercises instrumented code.",
             ));
@@ -423,10 +423,10 @@ impl Fuzzer {
         // Drain unevaluated seeds first: return verbatim (no mutation).
         // This mirrors libFuzzer's initial seed evaluation phase, ensuring
         // seeds are executed with their original content before mutation begins.
-        // Seeds are not in the corpus yet — evaluate_coverage will add them
+        // Seeds are not in the corpus yet - evaluate_coverage will add them
         // if they produce novel coverage.
         if let Some(seed_input) = self.unevaluated_seeds.pop_front() {
-            // No last_corpus_id — seed isn't in corpus yet.
+            // No last_corpus_id - seed isn't in corpus yet.
             // evaluate_coverage treats None as root depth (1).
             self.last_corpus_id = None;
             let mut bytes: Vec<u8> = seed_input.into();
@@ -516,7 +516,7 @@ impl Fuzzer {
             IterationResult::Solution
         } else if eval.is_interesting {
             // Panic justification: `evaluate_coverage` guarantees `corpus_id` is `Some`
-            // when `is_interesting` is `true` — it is set in the same code path that
+            // when `is_interesting` is `true` - it is set in the same code path that
             // sets `is_interesting`.
             let corpus_id = eval.corpus_id.unwrap();
             let exec_time = Duration::from_nanos(exec_time_ns as u64);
@@ -524,7 +524,7 @@ impl Fuzzer {
             // Prepare calibration state for upcoming calibrate_run() calls.
             self.calibration.begin(corpus_id, exec_time);
 
-            // Store for beginStage() — consumed after calibration completes.
+            // Store for beginStage() - consumed after calibration completes.
             self.last_interesting_corpus_id = Some(corpus_id);
 
             // Deferred detection: count interesting inputs from the main loop

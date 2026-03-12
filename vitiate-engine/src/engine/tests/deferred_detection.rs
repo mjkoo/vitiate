@@ -279,7 +279,7 @@ fn test_grimoire_deferred_ignores_stage_found_entries() {
     }
     let _advance = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
 
-    // Deferred count must still be 1 — stage-found entries don't count.
+    // Deferred count must still be 1 - stage-found entries don't count.
     assert_eq!(
         fuzzer.features.deferred_detection_count,
         Some(1),

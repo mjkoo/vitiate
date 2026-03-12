@@ -74,8 +74,8 @@ The strategy SHALL be implemented as a function that accepts a `testCandidate` c
 
 The minimizer SHALL enforce two limits, whichever is reached first:
 
-1. **Iteration cap** — maximum number of target re-executions. Default: 10,000.
-2. **Wall-clock time limit** — maximum elapsed real time for the entire minimization phase. Default: 5 seconds.
+1. **Iteration cap** - maximum number of target re-executions. Default: 10,000.
+2. **Wall-clock time limit** - maximum elapsed real time for the entire minimization phase. Default: 5 seconds.
 
 The minimizer SHALL check both limits before each candidate test. When either limit is reached, minimization SHALL stop and write the best (smallest) crashing input found so far.
 

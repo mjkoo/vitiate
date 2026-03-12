@@ -9,7 +9,7 @@ The system SHALL define a `Detector` interface with the following lifecycle hook
 - `getTokens()`: Returns an array of `Uint8Array` tokens to pre-seed in the mutation dictionary.
 - `setup()`: Called once before fuzzing begins. Installs module hooks or initializes state.
 - `beforeIteration()`: Called before each target execution. Captures baseline state for snapshot-based detectors.
-- `afterIteration()`: Called after target execution completes without throwing. Checks for violations and throws `VulnerabilityError` if a condition is met. SHALL NOT be called when the target crashed or timed out. SHALL NOT perform state restoration — that is the responsibility of `resetIteration()`.
+- `afterIteration()`: Called after target execution completes without throwing. Checks for violations and throws `VulnerabilityError` if a condition is met. SHALL NOT be called when the target crashed or timed out. SHALL NOT perform state restoration - that is the responsibility of `resetIteration()`.
 - `resetIteration()`: Called after every iteration regardless of exit kind. Restores any per-iteration state captured by `beforeIteration()` (e.g., prototype restoration). SHALL NOT throw. If restoration fails, the detector SHALL make a best-effort attempt and continue silently.
 - `teardown()`: Called after fuzzing ends. Restores any patched modules.
 

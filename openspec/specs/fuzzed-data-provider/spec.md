@@ -537,7 +537,7 @@ The system SHALL provide a `consumeStringArray(maxArrayLength: number, maxString
 
 ### Requirement: Input validation
 
-All methods that accept length, count, or byte-width parameters SHALL validate that these parameters are integers (using `Number.isInteger`) and throw `TypeError` if they are not. All methods that accept `min`/`max` range parameters SHALL throw `RangeError` if `min > max`. Methods SHALL use standard `TypeError` and `RangeError` — not custom error classes.
+All methods that accept length, count, or byte-width parameters SHALL validate that these parameters are integers (using `Number.isInteger`) and throw `TypeError` if they are not. All methods that accept `min`/`max` range parameters SHALL throw `RangeError` if `min > max`. Methods SHALL use standard `TypeError` and `RangeError` - not custom error classes.
 
 #### Scenario: TypeError for non-integer length
 

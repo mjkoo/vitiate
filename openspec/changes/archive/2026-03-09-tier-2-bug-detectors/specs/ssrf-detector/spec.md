@@ -69,7 +69,7 @@ Policy evaluation for a request hostname SHALL proceed in priority order:
 
 ### Requirement: Built-in blocklist
 
-The SSRF detector SHALL include a built-in blocklist of private and reserved IP ranges that is always active. This list is not configurable away — user `blockedHosts` extend it, user `allowedHosts` can carve exceptions from it.
+The SSRF detector SHALL include a built-in blocklist of private and reserved IP ranges that is always active. This list is not configurable away - user `blockedHosts` extend it, user `allowedHosts` can carve exceptions from it.
 
 The built-in blocklist SHALL include:
 
@@ -200,7 +200,7 @@ The detector SHALL hook the following APIs in `setup()`:
 - `https.get()` via `installHook("https", "get", ...)`
 - `globalThis.fetch` via direct replacement on `globalThis` (since `fetch` is not a module export in all Node versions)
 
-All four `http`/`https` hooks require separate `installHook` calls because Node's `http.get()` calls a closure-captured local `request` function, not `module.exports.request` — patching the `request` export alone would not intercept `http.get()` calls. The separate hooks do not cause double-firing for the same reason: `http.get()` internally calls the original unpatched `request`, not the export.
+All four `http`/`https` hooks require separate `installHook` calls because Node's `http.get()` calls a closure-captured local `request` function, not `module.exports.request` - patching the `request` export alone would not intercept `http.get()` calls. The separate hooks do not cause double-firing for the same reason: `http.get()` internally calls the original unpatched `request`, not the export.
 
 The `fetch` wrapper SHALL use the module-hook stash helper (`stashAndRethrow`) when throwing a `VulnerabilityError`, so that findings swallowed by target try/catch are recoverable by `DetectorManager.endIteration()`. The `http`/`https` hooks use `installHook`, which handles stashing automatically.
 
@@ -211,7 +211,7 @@ Each hook SHALL extract the target hostname from the first argument, which can b
 
 For `http.request()` and `https.request()`, the first argument MAY be a URL (string or URL object) and the second argument MAY be an options object. If both are present, the options object fields override the URL fields (matching Node.js semantics). The hook SHALL resolve the effective hostname from the combined arguments.
 
-If hostname extraction fails (no recognizable URL or options argument), the hook SHALL pass through without checking — malformed arguments will fail at the original function. If URL parsing throws (e.g., `new URL()` on a malformed string), the hook SHALL catch the parsing error and pass through to the original function without checking — the original function will produce its own error for invalid input.
+If hostname extraction fails (no recognizable URL or options argument), the hook SHALL pass through without checking - malformed arguments will fail at the original function. If URL parsing throws (e.g., `new URL()` on a malformed string), the hook SHALL catch the parsing error and pass through to the original function without checking - the original function will produce its own error for invalid input.
 
 `teardown()` SHALL restore all hooked functions to their originals.
 

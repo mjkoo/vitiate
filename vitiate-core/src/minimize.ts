@@ -54,7 +54,7 @@ export async function minimize(
     return testCandidate(candidate);
   }
 
-  // Pass 1: Truncation — binary search on input prefix length.
+  // Pass 1: Truncation - binary search on input prefix length.
   // lo is the shortest known-bad length, hi is the longest known-good length.
   // We converge on the minimal prefix that still crashes.
   if (best.length > 0 && !budgetExhausted()) {
@@ -65,10 +65,10 @@ export async function minimize(
       const mid = lo + Math.floor((hi - lo) / 2);
       const candidate = best.subarray(0, mid);
       if (await tryCandidate(candidate)) {
-        // Prefix of length mid still crashes — try shorter
+        // Prefix of length mid still crashes - try shorter
         hi = mid;
       } else {
-        // Too short — need more bytes
+        // Too short - need more bytes
         lo = mid + 1;
       }
     }
@@ -80,7 +80,7 @@ export async function minimize(
     }
   }
 
-  // Pass 2: Byte deletion — walk and remove one byte at each position
+  // Pass 2: Byte deletion - walk and remove one byte at each position
   if (best.length > 0 && !budgetExhausted()) {
     let pos = 0;
     while (pos < best.length && !budgetExhausted()) {
@@ -91,11 +91,11 @@ export async function minimize(
       ]);
 
       if (await tryCandidate(candidate)) {
-        // Deletion succeeded — keep it, stay at same position
+        // Deletion succeeded - keep it, stay at same position
         // (next byte now occupies this index)
         best = candidate;
       } else {
-        // Deletion failed — restore and advance
+        // Deletion failed - restore and advance
         pos++;
       }
     }

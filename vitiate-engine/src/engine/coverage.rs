@@ -38,7 +38,7 @@ impl Fuzzer {
             .get::<MapFeedbackMetadata<u8>>(EDGES_OBSERVER_NAME);
 
         let Some(history_meta) = history else {
-            // No history yet — every nonzero map entry is novel.
+            // No history yet - every nonzero map entry is novel.
             // SAFETY: map_ptr is valid for map_len bytes.
             let map = unsafe { std::slice::from_raw_parts(self.map_ptr, self.map_len) };
             return map
@@ -201,12 +201,12 @@ impl Fuzzer {
                                 let parent_tc = entry.borrow();
                                 match parent_tc.metadata::<SchedulerTestcaseMetadata>() {
                                     Ok(meta) => meta.depth() + 1,
-                                    Err(_) => 1 + 1, // parent exists but has no metadata — default parent depth to 1
+                                    Err(_) => 1 + 1, // parent exists but has no metadata - default parent depth to 1
                                 }
                             }
-                            Err(_) => 1, // parent not found — treat as root
+                            Err(_) => 1, // parent not found - treat as root
                         },
-                        None => 1, // no parent (seed evaluation) — root depth
+                        None => 1, // no parent (seed evaluation) - root depth
                     };
 
                     // Create per-testcase scheduler metadata.
@@ -246,7 +246,7 @@ impl Fuzzer {
         // Zero the coverage map in place for the next iteration.
         // SAFETY: Same pointer validity invariants as the observer construction
         // above. `write_bytes` zeroes `self.map_len` bytes starting at
-        // `self.map_ptr`. The observer is guaranteed dropped — either explicitly
+        // `self.map_ptr`. The observer is guaranteed dropped - either explicitly
         // in the is_interesting branch (before bitmap_size read) or implicitly
         // at the scope-block exit (for solution/not-interesting paths).
         unsafe {

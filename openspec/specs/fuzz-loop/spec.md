@@ -15,7 +15,7 @@ The fuzz loop SHALL integrate detector lifecycle hooks around target execution. 
 9. If `reportResult` returns `Interesting`, run calibration and then run stages (I2S, Generalization, Grimoire). Detector lifecycle hooks SHALL also wrap target execution during calibration re-runs and stage executions (see requirements below).
 10. Every 1 000 iterations, yield to the event loop.
 
-The shmem stash (step 2) SHALL occur whenever the `VITIATE_SUPERVISOR` environment variable is set, regardless of whether the supervisor was spawned by the CLI entry point or by the `fuzz()` test callback. The fuzz loop does not need to know which entry point spawned the supervisor — the `VITIATE_SUPERVISOR` env var is the sole indicator.
+The shmem stash (step 2) SHALL occur whenever the `VITIATE_SUPERVISOR` environment variable is set, regardless of whether the supervisor was spawned by the CLI entry point or by the `fuzz()` test callback. The fuzz loop does not need to know which entry point spawned the supervisor - the `VITIATE_SUPERVISOR` env var is the sole indicator.
 
 The loop SHALL terminate when any of these conditions is met:
 
@@ -108,7 +108,7 @@ The fuzz loop SHALL NOT import or call `setDetectorActive()` directly. All detec
 - **THEN** no artifact SHALL be written
 - **AND** the `duplicateCrashesSkipped` counter SHALL be incremented
 - **AND** the crash counter SHALL NOT be incremented (suppressed crashes do not count toward `maxCrashes`)
-- **AND** the loop continues to the next iteration (regardless of `stopOnCrash` — a suppressed duplicate is not a "new" crash)
+- **AND** the loop continues to the next iteration (regardless of `stopOnCrash` - a suppressed duplicate is not a "new" crash)
 
 #### Scenario: Duplicate crash with smaller input replaces artifact
 
@@ -223,12 +223,12 @@ When `reportResult()` returns `Interesting`, the fuzz loop SHALL enter a calibra
 5. If the target crashes or times out during a calibration run, break out of the loop immediately.
 6. Call `fuzzer.calibrateFinish()` after the loop completes (whether normally or interrupted).
 
-The calibration loop SHALL use the same watchdog and timeout configuration as the main iteration cycle. The calibration re-runs SHALL be identical to the normal target invocation — same input buffer, same timeout, same watchdog protection.
+The calibration loop SHALL use the same watchdog and timeout configuration as the main iteration cycle. The calibration re-runs SHALL be identical to the normal target invocation - same input buffer, same timeout, same watchdog protection.
 
 #### Scenario: Calibration runs after interesting result
 
 - **WHEN** `reportResult()` returns `Interesting`
-- **THEN** the fuzz loop SHALL re-run the target 3–7 additional times for calibration
+- **THEN** the fuzz loop SHALL re-run the target 3-7 additional times for calibration
 - **AND** `calibrateRun()` SHALL be called after each re-run
 - **AND** `calibrateFinish()` SHALL be called after the loop completes
 - **AND** the next normal iteration SHALL not begin until calibration is complete
@@ -320,9 +320,9 @@ The stage loop SHALL:
 5. After the stage loop completes (normally or via abort), resume the main fuzz iteration cycle.
 
 The stage execution loop SHALL use the same three-branch target execution pattern used by the main iteration cycle and the calibration loop:
-- **Branch 1 — Watchdog sync**: `watchdog.runTarget()` returns non-zero `exitKind` (sync crash/timeout).
-- **Branch 2 — Watchdog async**: `watchdog.runTarget()` returns a Promise in `result`. Re-arm watchdog before `await`. On rejection, check `watchdog.didFire` to distinguish timeout from crash.
-- **Branch 3 — No watchdog**: Direct `target(input)` call with try/catch, checking for Promise return.
+- **Branch 1 - Watchdog sync**: `watchdog.runTarget()` returns non-zero `exitKind` (sync crash/timeout).
+- **Branch 2 - Watchdog async**: `watchdog.runTarget()` returns a Promise in `result`. Re-arm watchdog before `await`. On rejection, check `watchdog.didFire` to distinguish timeout from crash.
+- **Branch 3 - No watchdog**: Direct `target(input)` call with try/catch, checking for Promise return.
 
 #### Scenario: Crash during stage aborts and writes artifact
 
@@ -436,7 +436,7 @@ The detector lifecycle hooks SHALL wrap target execution during crash input mini
 
 1. Call `detectorManager.beforeIteration()` before executing the target with the candidate input.
 2. Execute the target.
-3. Call `detectorManager.endIteration(exitKind === ExitKind.Ok)`. If this returns a `VulnerabilityError`, the candidate still triggers the finding — the minimization succeeded for this candidate.
+3. Call `detectorManager.endIteration(exitKind === ExitKind.Ok)`. If this returns a `VulnerabilityError`, the candidate still triggers the finding - the minimization succeeded for this candidate.
 4. Determine whether the candidate reproduces the original crash (same error type / `VulnerabilityError`). If so, the candidate replaces the current best; if not, the candidate is discarded.
 
 Minimization re-executes the target potentially many times with progressively smaller inputs. The detector lifecycle must be active on each attempt so that:
@@ -525,7 +525,7 @@ If no seeds are available, the fuzzer's auto-seed mechanism provides default sta
 
 ### Requirement: Async target support
 
-The fuzz loop SHALL support async target functions. If the target returns a Promise, the loop SHALL await it before disarming the watchdog and calling `reportResult()`. The watchdog enforces timeouts for both sync and async targets uniformly — there SHALL be no separate async-specific timeout mechanism.
+The fuzz loop SHALL support async target functions. If the target returns a Promise, the loop SHALL await it before disarming the watchdog and calling `reportResult()`. The watchdog enforces timeouts for both sync and async targets uniformly - there SHALL be no separate async-specific timeout mechanism.
 
 #### Scenario: Async target completes normally
 
@@ -582,7 +582,7 @@ When `reportResult()` returns `Interesting`, the system SHALL persist the input 
 
 The `VITIATE_FUZZ_EXECS` environment variable SHALL override `FuzzOptions.fuzzExecs` when set. It accepts a non-negative integer value (plain count, no unit conversion). Invalid values (non-integer, negative, non-finite) SHALL produce a warning on stderr and be ignored, matching the `VITIATE_FUZZ_TIME` / `getFuzzTime()` error handling pattern.
 
-The override SHALL be applied in `getCliOptions()` after parsing `VITIATE_FUZZ_OPTIONS`, following the same pattern as `getFuzzTime()` overriding `fuzzTimeMs`. This applies universally — both CLI and Vitest modes.
+The override SHALL be applied in `getCliOptions()` after parsing `VITIATE_FUZZ_OPTIONS`, following the same pattern as `getFuzzTime()` overriding `fuzzTimeMs`. This applies universally - both CLI and Vitest modes.
 
 `VITIATE_FUZZ_EXECS` SHALL be added to the `KNOWN_VITIATE_ENV_VARS` set so that it does not trigger the unknown-env-var warning.
 

@@ -44,7 +44,7 @@ The auto-detection follows the same three-channel logic as Grimoire:
 2. **Immediate detection**: If the corpus is non-empty at initialization, scan all entries (excluding auto-seeds). Enable if `utf8_count > non_utf8_count`.
 3. **Deferred detection**: If the corpus is empty at initialization, defer detection until 10 interesting inputs have been found via the main loop. Then scan the corpus (excluding auto-seeds) and enable if UTF-8 majority.
 
-The deferred detection threshold and auto-seed exclusion logic SHALL be shared with Grimoire — a single scan resolves both Grimoire and unicode enable states.
+The deferred detection threshold and auto-seed exclusion logic SHALL be shared with Grimoire - a single scan resolves both Grimoire and unicode enable states.
 
 #### Scenario: Both Grimoire and unicode auto-enabled from UTF-8 corpus
 

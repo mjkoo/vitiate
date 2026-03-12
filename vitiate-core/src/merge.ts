@@ -151,7 +151,7 @@ export function readControlFile(
       const parsed = JSON.parse(trimmed) as ControlRecord;
       records.push({ path: parsed.path, edges: new Set(parsed.edges) });
     } catch {
-      // Partial line from crash — discard
+      // Partial line from crash - discard
     }
   }
   return records;

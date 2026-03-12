@@ -118,7 +118,7 @@ The parent SHALL interpret the child's exit status according to this protocol:
 
 - **WHEN** the child exits with code 77
 - **THEN** the parent recognizes this as a watchdog timeout
-- **AND** the parent reads the stashed input from shmem (backup recovery — the watchdog may have already written an artifact)
+- **AND** the parent reads the stashed input from shmem (backup recovery - the watchdog may have already written an artifact)
 - **AND** the parent resets the shmem generation counter
 - **AND** the parent respawns the child (subject to respawn limit)
 

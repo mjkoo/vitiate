@@ -153,7 +153,7 @@ fn test_no_novelty_metadata_for_non_interesting_input() {
     // No novel coverage written to the map.
     let result = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
     assert!(matches!(result, IterationResult::None));
-    // Corpus should be empty — seeds are not in corpus until they produce
+    // Corpus should be empty - seeds are not in corpus until they produce
     // novel coverage, and this input had none.
     assert_eq!(
         fuzzer.state.corpus().count(),

@@ -102,7 +102,7 @@ export declare class Watchdog {
    * - `shmem`: Optional shared memory handle for input capture before `_exit`.
    *   When running under the supervisor, pass the shmem handle so the watchdog
    *   can read the current input from shmem before calling `_exit`. When running
-   *   without the supervisor (Vitest integration), pass `null` — the `_exit`
+   *   without the supervisor (Vitest integration), pass `null` - the `_exit`
    *   fallback still fires but without writing a timeout artifact.
    */
   constructor(artifactPrefix: string, shmem?: ShmemHandle | undefined | null)
@@ -122,7 +122,7 @@ export declare class Watchdog {
    * Deterministically shut down the watchdog thread.
    *
    * Signals the background thread to exit, wakes it via condvar, and joins
-   * it. Safe to call multiple times — subsequent calls are no-ops.
+   * it. Safe to call multiple times - subsequent calls are no-ops.
    * Also called automatically by `Drop`, but calling explicitly allows JS
    * callers to release the thread without waiting for GC.
    */
@@ -206,7 +206,7 @@ export interface FuzzerStats {
  *   exit signal (SIGSEGV, SIGBUS, SIGABRT, etc.) using Node's `child.on('exit')`
  *   signal property.
  *
- * Safe to call multiple times — subsequent calls are no-ops.
+ * Safe to call multiple times - subsequent calls are no-ops.
  *
  * - `artifact_prefix`: Prefix for crash artifact paths (e.g., `./`, `./out/`, `bug-`).
  *   The artifact filename (`crash-{hash}`) is appended directly to the prefix.

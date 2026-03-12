@@ -45,7 +45,7 @@ The system SHALL provide a unicode subcategory random replacement mutator that o
 2. It expands to the contiguous range of characters sharing the same subcategory.
 3. It generates replacement characters from the same subcategory.
 
-Subcategory mutations are finer-grained than category mutations — they preserve properties like case (uppercase→uppercase) and number type (decimal→decimal).
+Subcategory mutations are finer-grained than category mutations - they preserve properties like case (uppercase→uppercase) and number type (decimal→decimal).
 
 #### Scenario: Uppercase replaced with uppercase
 
@@ -56,7 +56,7 @@ Subcategory mutations are finer-grained than category mutations — they preserv
 
 - **WHEN** the input is `"ABC123def"` and the mutator selects position within `"ABC"`
 - **THEN** only the `"ABC"` range (Uppercase_Letter) SHALL be selected for replacement
-- **AND** `"def"` (Lowercase_Letter — different subcategory) SHALL NOT be included
+- **AND** `"def"` (Lowercase_Letter - different subcategory) SHALL NOT be included
 
 ### Requirement: Unicode category token replacement mutator
 
@@ -159,7 +159,7 @@ The unicode stage SHALL select a random iteration count between 1 and 128 (inclu
 
 ### Requirement: Unicode mutations are non-cumulative
 
-Each unicode stage iteration SHALL clone the original corpus entry and its `UnicodeIdentificationMetadata`, apply a fresh mutation, and evaluate coverage. Mutations SHALL NOT accumulate across iterations — each iteration starts from the unmodified corpus entry.
+Each unicode stage iteration SHALL clone the original corpus entry and its `UnicodeIdentificationMetadata`, apply a fresh mutation, and evaluate coverage. Mutations SHALL NOT accumulate across iterations - each iteration starts from the unmodified corpus entry.
 
 #### Scenario: Each iteration starts fresh
 

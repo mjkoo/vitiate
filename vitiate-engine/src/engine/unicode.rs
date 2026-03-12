@@ -60,7 +60,7 @@ impl Fuzzer {
                 _ => return Ok(None),
             };
 
-        // Drain CmpLog (discard — unicode doesn't use CmpLog data).
+        // Drain CmpLog (discard - unicode doesn't use CmpLog data).
         let _ = crate::cmplog::drain();
 
         // stage_state is already StageState::None (set by mem::replace above).
@@ -71,7 +71,7 @@ impl Fuzzer {
             .take()
             .ok_or_else(|| Error::from_reason("advanceUnicode: no stashed stage input"))?;
 
-        // The target was invoked — count the execution before the fallible
+        // The target was invoked - count the execution before the fallible
         // evaluate_coverage call so counters stay accurate on error.
         self.total_execs += 1;
         *self.state.executions_mut() += 1;
@@ -85,7 +85,7 @@ impl Fuzzer {
 
         let next_iteration = iteration + 1;
         if next_iteration >= max_iterations {
-            // Unicode stage complete — pipeline done.
+            // Unicode stage complete - pipeline done.
             return Ok(None);
         }
 

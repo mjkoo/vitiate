@@ -32,7 +32,7 @@ function createMockShmem(
       mock.resetGenerationCount++;
     },
     resetGenerationCount: 0,
-    // Satisfy class type — unused by supervisor
+    // Satisfy class type - unused by supervisor
     stashInput: () => {},
   };
   return mock as unknown as ShmemHandle & { resetGenerationCount: number };

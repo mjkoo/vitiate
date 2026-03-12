@@ -4,7 +4,7 @@ import http from "node:http";
 
 // Safety: The fuzzer generates arbitrary data, so we gate each dangerous
 // operation on exactly the patterns the detectors look for. This ensures
-// arbitrary fuzzed bytes never reach syscalls or mutate prototypes — only
+// arbitrary fuzzed bytes never reach syscalls or mutate prototypes - only
 // the specific sentinel values that trigger detection pass through.
 //
 // Each gate uses strict `===` equality so that CmpLog (trace_cmp) can

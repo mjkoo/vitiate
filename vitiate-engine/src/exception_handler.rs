@@ -4,7 +4,7 @@
 //! information (exception code, crashing input) to shmem and writes a crash
 //! artifact before continuing the exception chain.
 //!
-//! On Unix, this module provides a no-op stub — the parent supervisor
+//! On Unix, this module provides a no-op stub - the parent supervisor
 //! observes crashes via `waitpid` signal detection instead.
 
 use std::sync::Once;
@@ -29,7 +29,7 @@ static INSTALL_ONCE: Once = Once::new();
 ///   exit signal (SIGSEGV, SIGBUS, SIGABRT, etc.) using Node's `child.on('exit')`
 ///   signal property.
 ///
-/// Safe to call multiple times — subsequent calls are no-ops.
+/// Safe to call multiple times - subsequent calls are no-ops.
 ///
 /// - `artifact_prefix`: Prefix for crash artifact paths (e.g., `./`, `./out/`, `bug-`).
 ///   The artifact filename (`crash-{hash}`) is appended directly to the prefix.
@@ -44,7 +44,7 @@ pub fn install_exception_handler(shmem: &ShmemHandle, artifact_prefix: String) {
         {
             install_seh_handler(shmem, artifact_prefix);
         }
-        // Unix: no-op — parent observes crashes via waitpid/signal
+        // Unix: no-op - parent observes crashes via waitpid/signal
     });
 }
 

@@ -6,7 +6,7 @@ description: Get from zero to your first fuzz-discovered bug in five minutes.
 ## 1. Install
 
 ```bash
-npm install --save-dev @vitiate/core @vitiate/engine @vitiate/swc-plugin
+npm install --save-dev @vitiate/core
 ```
 
 ## 2. Configure Vitest
@@ -28,7 +28,7 @@ export default defineConfig({
 });
 ```
 
-The `vitiatePlugin()` call registers the SWC instrumentation plugin with Vite and automatically configures the setup file that initializes coverage map and comparison tracing globals. The two test projects keep your unit tests and fuzz tests separate — Vitest runs them in different contexts.
+The `vitiatePlugin()` call registers the SWC instrumentation plugin with Vite and automatically configures the setup file that initializes coverage map and comparison tracing globals. The two test projects keep your unit tests and fuzz tests separate - Vitest runs them in different contexts.
 
 ## 3. Write a Fuzz Test
 
@@ -51,12 +51,14 @@ fuzz("parse does not crash", (data: Buffer) => {
 
 The `fuzz()` function works like Vitest's `test()`. It receives a name, a target function that takes a `Buffer`, and optional configuration. The fuzzer will call your target with thousands of generated inputs, looking for uncaught exceptions.
 
-Catch expected errors (like `ParseError` above) and let unexpected ones propagate — those are the bugs you want to find.
+Catch expected errors (like `ParseError` above) and let unexpected ones propagate - those are the bugs you want to find.
 
 ## 4. Run the Fuzzer
 
+Set `VITIATE_FUZZ=1` to activate fuzzing mode:
+
 ```bash
-npx vitiate test/parser.fuzz.ts
+VITIATE_FUZZ=1 npx vitest run test/parser.fuzz.ts
 ```
 
 You will see a startup banner followed by periodic status updates showing execution count, corpus size, and coverage edges discovered:
@@ -70,20 +72,20 @@ When the fuzzer finds a crash, it prints the error, minimizes the input, and sav
 
 ```
 fuzz: CRASH FOUND: TypeError: Cannot read properties of undefined (reading 'length')
-fuzz: crash artifact written to: testdata/fuzz/a1b2c3d4-parse_does_not_crash/crash-e5f6...
+fuzz: crash artifact written to: test/testdata/fuzz/a1b2c3d4-parse_does_not_crash/crash-e5f6...
 ```
 
 Press `Ctrl+C` to stop fuzzing at any time.
 
 ## 5. Replay as Regression Tests
 
-Run your test suite normally:
+Run your test suite normally (without `VITIATE_FUZZ`):
 
 ```bash
-npm test
+npx vitest run
 ```
 
-Vitiate automatically replays saved crash artifacts and corpus entries in regression mode. The crash you just found is now a permanent regression test — no extra code needed.
+Vitiate automatically replays saved crash artifacts and corpus entries in regression mode. The crash you just found is now a permanent regression test - no extra code needed.
 
 ## Next Steps
 

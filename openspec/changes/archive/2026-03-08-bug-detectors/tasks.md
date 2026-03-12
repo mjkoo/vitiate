@@ -29,7 +29,7 @@
 
 ## 5. Artifact Handling
 
-- [x] 5.1 Verify that `VulnerabilityError` throws produce standard `crash-{hash}` artifacts through the existing crash path (no code change expected — confirm behavior)
+- [x] 5.1 Verify that `VulnerabilityError` throws produce standard `crash-{hash}` artifacts through the existing crash path (no code change expected - confirm behavior)
 
 ## 6. Reporter
 
@@ -67,4 +67,4 @@
 - [x] 10.7 Unit tests for `-detectors` CLI flag parsing (enable, disable, `none`, dotted options, invalid name error)
 - [x] 10.8 Unit tests for `FuzzOptions.detectors` schema validation (boolean, options object, empty object, absent)
 - [x] 10.9 Unit tests confirming `VulnerabilityError` crashes produce standard `crash-{hash}` artifacts
-- [x] 10.10 Integration test: fuzz loop with prototype pollution detector finds planted bug in a target that does `obj[key] = value` on untrusted input. This is a fuzz-pipeline test — use a large safety margin (obvious bug, short timeout) to ensure deterministic pass.
+- [x] 10.10 Integration test: fuzz loop with prototype pollution detector finds planted bug in a target that does `obj[key] = value` on untrusted input. This is a fuzz-pipeline test - use a large safety margin (obvious bug, short timeout) to ensure deterministic pass.

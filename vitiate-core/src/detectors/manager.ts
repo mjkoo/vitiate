@@ -235,7 +235,7 @@ export class DetectorManager {
 //
 // The canonical call site is setup.ts (Vitest's setup file, which runs
 // before test modules are imported). runFuzzLoop() also calls
-// installDetectorModuleHooks() as an idempotent safety net — if setup.ts
+// installDetectorModuleHooks() as an idempotent safety net - if setup.ts
 // already ran, the second call is a no-op.
 
 let _manager: DetectorManager | null = null;
@@ -248,7 +248,7 @@ let _installedConfig: DetectorConfig | undefined;
  * Called from setup.ts (early, before ESM imports) and from
  * runFuzzLoop()/fuzz() (safety net). If already installed with the same
  * config, this is a no-op. If called with a different config, the old
- * manager is torn down and replaced — this allows per-test detector
+ * manager is torn down and replaced - this allows per-test detector
  * configuration in regression mode (where setup.ts installs with default
  * config, then fuzz() overrides with user-specified config).
  */

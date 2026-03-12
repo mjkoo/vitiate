@@ -24,7 +24,7 @@ npx vitiate <test-file> [corpus-dirs...] [flags]
 |------|------|---------|-------------|
 | `-max_len <N>` | integer | `4096` | Maximum input length in bytes |
 | `-seed <N>` | integer | random | RNG seed for reproducible fuzzing |
-| `-dict <path>` | string | — | Path to dictionary file (AFL/libFuzzer format) |
+| `-dict <path>` | string | - | Path to dictionary file (AFL/libFuzzer format) |
 
 ### Execution
 
@@ -33,7 +33,7 @@ npx vitiate <test-file> [corpus-dirs...] [flags]
 | `-timeout <N>` | integer | `0` | Per-execution timeout in seconds (0 = disabled) |
 | `-runs <N>` | integer | `0` | Total fuzzing iterations (0 = unlimited) |
 | `-max_total_time <N>` | integer | `0` | Total fuzzing time limit in seconds (0 = unlimited) |
-| `-test <name>` | string | — | Run only the named fuzz test |
+| `-test <name>` | string | - | Run only the named fuzz test |
 
 ### Output
 
@@ -75,5 +75,5 @@ These flags are parsed for compatibility but ignored:
 
 | Flag | Behavior |
 |------|----------|
-| `-fork <N>` | Parsed, ignored (always 1 — Vitiate always uses a single supervised worker) |
-| `-jobs <N>` | Parsed, ignored (always 1 — Vitiate runs a single job at a time) |
+| `-fork <N>` | Parsed, ignored (always 1 - Vitiate always uses a single supervised worker) |
+| `-jobs <N>` | Parsed, ignored (always 1 - Vitiate runs a single job at a time) |

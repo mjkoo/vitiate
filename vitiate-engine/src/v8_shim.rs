@@ -39,7 +39,7 @@ pub(crate) fn v8_init() -> bool {
 }
 
 /// Call `v8::Isolate::TerminateExecution()` on the cached isolate.
-/// Thread-safe — designed to be called from the watchdog thread.
+/// Thread-safe - designed to be called from the watchdog thread.
 /// Returns `true` if the call succeeded.
 pub(crate) fn v8_terminate() -> bool {
     // SAFETY: `TerminateExecution` is documented as thread-safe in V8.

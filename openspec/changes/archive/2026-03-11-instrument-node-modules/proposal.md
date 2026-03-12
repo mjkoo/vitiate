@@ -1,6 +1,6 @@
 ## Why
 
-Users who want coverage-guided fuzzing of their dependencies (e.g., finding bugs in libraries they consume) cannot opt in. Three independent exclusion layers prevent node_modules instrumentation — a configurable `createFilter` exclude pattern in the instrument plugin, a hardcoded bail-out in the hooks plugin, and Vitest's default externalization of node_modules — and there is no single configuration point to override all three.
+Users who want coverage-guided fuzzing of their dependencies (e.g., finding bugs in libraries they consume) cannot opt in. Three independent exclusion layers prevent node_modules instrumentation - a configurable `createFilter` exclude pattern in the instrument plugin, a hardcoded bail-out in the hooks plugin, and Vitest's default externalization of node_modules - and there is no single configuration point to override all three.
 
 ## What Changes
 
@@ -22,4 +22,4 @@ _(none)_
 
 - `vitiate-core/src/plugin.ts`: Remove hardcoded node_modules check in hooks plugin transform; replace with filter-aware check. Add `server.deps.inline` configuration in instrument plugin's `config()` hook.
 - `vitiate-core/src/config.ts`: Possibly extend `resolveInstrumentOptions` to expose whether node_modules are excluded (for the inline deps logic).
-- Existing behavior unchanged for default configuration — the default exclude already contains `**/node_modules/**`.
+- Existing behavior unchanged for default configuration - the default exclude already contains `**/node_modules/**`.

@@ -39,12 +39,12 @@ pub(super) struct TokenTracker {
     pub(super) candidates: HashMap<Vec<u8>, usize>,
     /// Tokens already promoted to the mutation dictionary. Checked before
     /// inserting into `candidates` to prevent re-promotion cycles.
-    /// Bounded by `MAX_DICTIONARY_SIZE` — the cap is enforced on this set's
+    /// Bounded by `MAX_DICTIONARY_SIZE` - the cap is enforced on this set's
     /// length minus `pre_seeded_count`, so user-provided dictionary tokens
     /// and detector tokens are exempt from the cap.
     pub(super) promoted: HashSet<Vec<u8>>,
     /// Number of tokens pre-seeded into `promoted` (e.g. detector tokens).
-    /// These are exempt from `MAX_DICTIONARY_SIZE` — the cap only applies
+    /// These are exempt from `MAX_DICTIONARY_SIZE` - the cap only applies
     /// to auto-discovered CmpLog tokens.
     pub(super) pre_seeded_count: usize,
 }
@@ -93,7 +93,7 @@ impl TokenTracker {
         for token in &newly_promoted {
             self.candidates.remove(token);
             self.promoted.insert(token.clone());
-            // PANIC: Tokens metadata is guaranteed to exist — inserted at the
+            // PANIC: Tokens metadata is guaranteed to exist - inserted at the
             // top of process() if absent, or by Fuzzer::new() when a user dictionary is loaded.
             let tokens = state.metadata_mut::<Tokens>().unwrap();
             tokens.add_token(token);

@@ -6,7 +6,7 @@ The `rewriteHookedImports` function SHALL perform a quick bail-out check before 
 
 The bail-out check for each hooked module SHALL use patterns that match how the module appears in import or require statements, not bare substring matching. For `child_process`, `code.includes("child_process")` is sufficiently specific. For `fs`, the check SHALL use patterns that avoid matching unrelated occurrences of the substring "fs" (e.g., in identifiers like `offset`, function names, or comments). Suitable patterns include checking for `'"fs"'`, `"'fs'"`, `'"fs/'`, or `"'fs/"`.
 
-The bail-out is a performance optimization only — false positives (proceeding to parse when no hooked imports exist) are acceptable, but false negatives (skipping a file that does contain hooked imports) are not.
+The bail-out is a performance optimization only - false positives (proceeding to parse when no hooked imports exist) are acceptable, but false negatives (skipping a file that does contain hooked imports) are not.
 
 #### Scenario: File without fs or child_process imports skips parsing
 

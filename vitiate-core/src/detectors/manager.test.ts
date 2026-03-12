@@ -307,7 +307,7 @@ describe("prototype pollution restored without afterIteration", () => {
     manager.beforeIteration();
     (Object.prototype as Record<string, unknown>)["pollutedProp"] = "malicious";
 
-    // Simulate a crash exit — endIteration(false) skips afterIteration but runs resetIteration
+    // Simulate a crash exit - endIteration(false) skips afterIteration but runs resetIteration
     const result = manager.endIteration(false);
     expect(result).toBeUndefined();
 
@@ -717,7 +717,7 @@ describe("installDetectorModuleHooks", () => {
     resetDetectorHooks();
     expect(getDetectorManager()).toBeNull();
 
-    // Hooks are torn down — no VulnerabilityError thrown
+    // Hooks are torn down - no VulnerabilityError thrown
     setDetectorActive(true);
     const childProcess = require("child_process");
     const fn = () => {

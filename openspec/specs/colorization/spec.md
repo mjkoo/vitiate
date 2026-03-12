@@ -40,11 +40,11 @@ The colorization stage SHALL use a binary search algorithm to identify free byte
 2. The first `advance_colorization()` call computes the coverage hash from the coverage map left by the baseline execution as the `original_hash`. It then zeros the coverage map, copies the changed bytes for the first pending range into the candidate, and yields it for execution. Note: the baseline execution's coverage is only hashed (not evaluated via `evaluate_coverage()`), matching the generalization Verify phase pattern.
 3. Each subsequent `advance_colorization()` call processes one step of the binary search:
    a. Compute the coverage hash of the last execution and compare it to `original_hash`.
-   b. If the hash matches the baseline: the range is free — record it as a taint range.
+   b. If the hash matches the baseline: the range is free - record it as a taint range.
    c. If the hash differs: revert the bytes, split the range in half, and push both halves as new pending ranges. Ranges of length 1 that differ are discarded (the byte is not free).
    d. Zero the coverage map.
    e. Pop the next pending range (largest first), copy the corresponding bytes from the changed input into the candidate, and yield it for execution.
-4. When all pending ranges are processed or `max_executions` (2 * input_len) is reached: merge adjacent taint ranges. The `max_executions` cap applies only to the binary search phase; the dual trace always runs regardless. `TaintMetadata` is NOT stored at this point — it is deferred until the dual trace completes successfully (see the Dual CmpLog trace requirement).
+4. When all pending ranges are processed or `max_executions` (2 * input_len) is reached: merge adjacent taint ranges. The `max_executions` cap applies only to the binary search phase; the dual trace always runs regardless. `TaintMetadata` is NOT stored at this point - it is deferred until the dual trace completes successfully (see the Dual CmpLog trace requirement).
 
 #### Scenario: Entire input is free
 
@@ -87,10 +87,10 @@ The system SHALL provide a `type_replace()` function that produces a copy of the
 
 - `0x00` → `0x01` (deterministic).
 - `0x01` → `0x00` (deterministic). `0xFF` → `0x00` (deterministic).
-- `'0'` ↔ `'1'` swap deterministically. Digits `'2'`–`'9'` are replaced with a random digit from `'3'`–`'9'` (excluding the original).
-- Hex letters (`'A'`–`'F'`, `'a'`–`'f'`) are replaced with a random hex letter of the same case (excluding the original).
-- Non-hex uppercase letters (`'G'`–`'Z'`) are replaced with a random uppercase letter from the full `'A'`–`'Z'` range (excluding the original).
-- Non-hex lowercase letters (`'g'`–`'z'`) are replaced with a random lowercase letter from the full `'a'`–`'z'` range (excluding the original).
+- `'0'` ↔ `'1'` swap deterministically. Digits `'2'`-`'9'` are replaced with a random digit from `'3'`-`'9'` (excluding the original).
+- Hex letters (`'A'`-`'F'`, `'a'`-`'f'`) are replaced with a random hex letter of the same case (excluding the original).
+- Non-hex uppercase letters (`'G'`-`'Z'`) are replaced with a random uppercase letter from the full `'A'`-`'Z'` range (excluding the original).
+- Non-hex lowercase letters (`'g'`-`'z'`) are replaced with a random lowercase letter from the full `'a'`-`'z'` range (excluding the original).
 - Whitespace pairs swap deterministically: tab (`0x09`) ↔ space (`0x20`), CR (`0x0D`) ↔ LF (`0x0A`).
 - `'+'` ↔ `'/'` swap deterministically.
 - Low bytes (`< 0x20`, excluding the special cases above) are replaced via `XOR 0x1F`.
@@ -107,7 +107,7 @@ The key invariant is: **every byte SHALL be replaced with a value that differs f
 #### Scenario: Lowercase letter replaced with lowercase letter
 
 - **WHEN** `type_replace()` processes a byte with value `0x61` (ASCII 'a')
-- **THEN** the replacement byte SHALL be a lowercase hex letter (`'a'`–`'f'`, excluding `'a'`)
+- **THEN** the replacement byte SHALL be a lowercase hex letter (`'a'`-`'f'`, excluding `'a'`)
 
 #### Scenario: Null byte replaced deterministically
 
@@ -143,8 +143,8 @@ The system SHALL provide a `coverage_hash()` function that computes a fast u64 h
 
 After the dual trace completes successfully, the system SHALL store a `TaintMetadata` instance on the **fuzzer state** (via `state.metadata_map_mut()`) containing:
 
-- `ranges: Vec<Range<usize>>` — the merged free byte ranges identified by the binary search.
-- `input_vec: Vec<u8>` — the colorized input (all taint ranges filled with type-replaced bytes).
+- `ranges: Vec<Range<usize>>` - the merged free byte ranges identified by the binary search.
+- `input_vec: Vec<u8>` - the colorized input (all taint ranges filled with type-replaced bytes).
 
 This metadata SHALL be readable by the REDQUEEN mutation stage (which reads both `TaintMetadata` and `AflppCmpValuesMetadata` from `state.metadata_map()`).
 

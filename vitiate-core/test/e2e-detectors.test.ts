@@ -6,7 +6,7 @@
  * **Regression mode** (deterministic): Replays seed corpus through the target
  * with the detector lifecycle active. Seed files contain exact trigger inputs
  * that fire each detector type on every replay. This is the primary
- * correctness signal — if detectors intercept the right calls and the
+ * correctness signal - if detectors intercept the right calls and the
  * snapshot-diff catches prototype mutations, the regression test fails.
  *
  * **Fuzz mode**: Runs the full fuzzer pipeline with detector-guided seeds.
@@ -103,7 +103,7 @@ describe("detector pipeline: regression mode (deterministic)", () => {
 
   // Regression replays seeds with detector lifecycle active.
   // The seed files contain exact trigger inputs, so detectors fire
-  // deterministically on every replay — no fuzzer discovery needed.
+  // deterministically on every replay - no fuzzer discovery needed.
   beforeAll(async () => {
     result = await runVitest("vitest.config.ts", {}, 60_000);
   }, 60_000);

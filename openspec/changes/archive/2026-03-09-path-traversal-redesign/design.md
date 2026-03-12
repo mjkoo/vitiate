@@ -1,6 +1,6 @@
 ## Context
 
-The path traversal detector currently uses a single `sandboxRoot` (default: `process.cwd()`) to define the boundary. Any resolved path outside this root is flagged. This has two problems: (1) `cwd` as default produces false positives when targets legitimately read files outside the project directory, and (2) there's no way to express "allow `/tmp` but deny `/tmp/secrets`" — you get a single boundary with no overrides.
+The path traversal detector currently uses a single `sandboxRoot` (default: `process.cwd()`) to define the boundary. Any resolved path outside this root is flagged. This has two problems: (1) `cwd` as default produces false positives when targets legitimately read files outside the project directory, and (2) there's no way to express "allow `/tmp` but deny `/tmp/secrets`" - you get a single boundary with no overrides.
 
 The token set is also coupled to the sandbox path (includes the root itself and a depth-computed `../` chain), which seeds the dictionary with environment-specific strings rather than generic attack payloads.
 
@@ -18,7 +18,7 @@ Additionally, `fs/promises` is not hooked, so `import { readFile } from "fs/prom
 
 **Non-Goals:**
 - SSRF detector implementation (will follow a similar pattern later)
-- Separately hooking `fs.promises.*` property chain (unnecessary — `fs.promises` is the same object as `require("fs/promises")`, so hooking the latter covers both)
+- Separately hooking `fs.promises.*` property chain (unnecessary - `fs.promises` is the same object as `require("fs/promises")`, so hooking the latter covers both)
 - Detecting accessor-based prototype pollution (documented trade-off, not part of this change)
 - Addressing the module-hook try/catch swallowing limitation (fundamental to the approach)
 
@@ -31,17 +31,17 @@ The check resolves the path to an absolute path, then evaluates in priority orde
 2. Matches any `allowedPaths` entry (separator-aware prefix) → **allow** (pass through)
 3. Otherwise → **deny**
 
-`sandboxRoot` is dropped entirely — it is equivalent to a single `allowedPaths` entry and adds a redundant concept. The default `allowedPaths: ["/"]` provides the same "allow everything" semantics that `sandboxRoot: "/"` would have.
+`sandboxRoot` is dropped entirely - it is equivalent to a single `allowedPaths` entry and adds a redundant concept. The default `allowedPaths: ["/"]` provides the same "allow everything" semantics that `sandboxRoot: "/"` would have.
 
-Two flat lists with deny > allow priority cover all realistic fuzzer policies: strict sandbox (`allowedPaths: ["/var/www"]`), sandbox with exceptions (`allowedPaths: ["/var/www", "/tmp"]`, `deniedPaths: ["/tmp/secrets"]`), and the default open-with-sentinels policy. The one limitation — you can't re-allow under a denied prefix — is a theoretical concern for firewall-style rule sets, not fuzzer detectors.
+Two flat lists with deny > allow priority cover all realistic fuzzer policies: strict sandbox (`allowedPaths: ["/var/www"]`), sandbox with exceptions (`allowedPaths: ["/var/www", "/tmp"]`, `deniedPaths: ["/tmp/secrets"]`), and the default open-with-sentinels policy. The one limitation - you can't re-allow under a denied prefix - is a theoretical concern for firewall-style rule sets, not fuzzer detectors.
 
 ### 2. Defaults: allowedPaths: ["/"], deniedPaths: ["/etc/passwd"]
 
-With `allowedPaths: ["/"]`, the default policy allows all paths except those explicitly denied. The default `deniedPaths: ["/etc/passwd"]` catches the canonical path traversal payload with essentially zero false positive risk — no legitimate application reads `/etc/passwd`.
+With `allowedPaths: ["/"]`, the default policy allows all paths except those explicitly denied. The default `deniedPaths: ["/etc/passwd"]` catches the canonical path traversal payload with essentially zero false positive risk - no legitimate application reads `/etc/passwd`.
 
 **Why not cwd:** `cwd` as default means any target that reads a config file from `/etc/`, a temp file from `/tmp/`, or a system library produces a false positive. The fuzzer should detect *exploitable* traversals, not every out-of-project read.
 
-**Why `/etc/passwd` specifically:** It's the canonical path traversal target across security tooling. The fuzzer needs to construct a path that resolves there, which requires actual traversal sequences — not just any random path.
+**Why `/etc/passwd` specifically:** It's the canonical path traversal target across security tooling. The fuzzer needs to construct a path that resolves there, which requires actual traversal sequences - not just any random path.
 
 ### 3. Separator-aware prefix matching on resolved absolute paths
 
@@ -55,7 +55,7 @@ Tokens:
 
 Pre-chained traversal tokens (`../../`, `../../../`) are included alongside the single `../` because byte-level mutation is unlikely to splice two `../` tokens at exactly the right byte boundary. Having depth 2-3 as single tokens dramatically improves time-to-first-finding, and the dictionary cost is negligible.
 
-**Why remove sandbox-dependent tokens:** The depth-computed `../` chain (e.g., `../../../../etc/passwd` for a 4-deep sandbox) couples the dictionary to the fuzzer's environment. The mutator should discover the right chain length through composition of `../` tokens — that's what coverage-guided mutation is for.
+**Why remove sandbox-dependent tokens:** The depth-computed `../` chain (e.g., `../../../../etc/passwd` for a 4-deep sandbox) couples the dictionary to the fuzzer's environment. The mutator should discover the right chain length through composition of `../` tokens - that's what coverage-guided mutation is for.
 
 ### 5. Hook `fs/promises` via the same `installHook` mechanism
 

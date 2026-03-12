@@ -69,7 +69,7 @@ describe("parseArgs", () => {
       try {
         const result = parseArgs(argv("./test.ts", "-fork=1"));
         expect(result.testFile).toBe("./test.ts");
-        // -fork=1 is our default — no warning
+        // -fork=1 is our default - no warning
         expect(stderrSpy).not.toHaveBeenCalled();
       } finally {
         stderrSpy.mockRestore();

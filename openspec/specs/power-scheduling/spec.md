@@ -13,7 +13,7 @@ The scheduler SHALL weight corpus entry selection using `CorpusPowerTestcaseScor
 - **Mutation depth**: Deeper entries (more parent-child hops from the original seed) SHALL receive higher scores, up to 5x at depth 25+.
 - **Handicap**: Entries added when `queue_cycles` is high (i.e., added recently relative to the campaign's progress) SHALL receive a boost.
 - **Fuzz count**: Entries that have been selected many times SHALL be deprioritized using the FAST schedule (logarithmic decay based on path frequency).
-- **Favored status**: Entries marked with `IsFavoredMetadata` by the corpus minimizer SHALL receive a 1.15x boost. (This boost is pre-existing behavior in `CorpusPowerTestcaseScore` — it was always in the LibAFL implementation but previously inert because `IsFavoredMetadata` was never populated. The minimizer now activates it.)
+- **Favored status**: Entries marked with `IsFavoredMetadata` by the corpus minimizer SHALL receive a 1.15x boost. (This boost is pre-existing behavior in `CorpusPowerTestcaseScore` - it was always in the LibAFL implementation but previously inert because `IsFavoredMetadata` was never populated. The minimizer now activates it.)
 
 The scheduler SHALL use `PowerSchedule::fast()` exclusively. There SHALL be no user-configurable schedule strategy.
 
@@ -59,7 +59,7 @@ The engine SHALL initialize `SchedulerMetadata` with `PowerSchedule::fast()` dur
 
 Global averages (used by `CorpusPowerTestcaseScore`) are derived from these running totals: `avg_exec_time = exec_time / cycles`, `avg_bitmap_size = bitmap_size / bitmap_entries`.
 
-`calibrateFinish()` SHALL update these running totals with the calibrated entry's values. The totals SHALL only reflect calibrated data — preliminary values from `reportResult()` SHALL NOT be added to the global metadata.
+`calibrateFinish()` SHALL update these running totals with the calibrated entry's values. The totals SHALL only reflect calibrated data - preliminary values from `reportResult()` SHALL NOT be added to the global metadata.
 
 #### Scenario: Metadata present after construction
 
@@ -169,7 +169,7 @@ The first `calibrateRun()` call SHALL capture the coverage map as the baseline s
 
 During calibration, each run's coverage map SHALL be compared against the first calibration run's coverage map (the baseline). Any coverage map index where the value differs between the baseline and a subsequent run SHALL be recorded as unstable.
 
-The set of unstable indices discovered during a single entry's calibration SHALL be merged into the fuzzer's unstable entries set when `calibrateFinish()` is called. The unstable set SHALL only grow — edges SHALL never be removed from it.
+The set of unstable indices discovered during a single entry's calibration SHALL be merged into the fuzzer's unstable entries set when `calibrateFinish()` is called. The unstable set SHALL only grow - edges SHALL never be removed from it.
 
 #### Scenario: Stable edges not flagged
 
@@ -250,7 +250,7 @@ The engine SHALL track the corpus ID selected by `getNextInput()` as the "last c
 
 ### Requirement: Seed scheduler metadata
 
-All seeds — both explicit seeds added via `addSeed()` and auto-seeds added on empty corpus — SHALL receive `SchedulerTestcaseMetadata` with:
+All seeds - both explicit seeds added via `addSeed()` and auto-seeds added on empty corpus - SHALL receive `SchedulerTestcaseMetadata` with:
 
 - `depth`: 0
 - `exec_time`: 1ms (nominal value)

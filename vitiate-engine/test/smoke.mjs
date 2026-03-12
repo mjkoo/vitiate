@@ -409,7 +409,7 @@ console.log("traceCmp tests passed!");
   } else if (!isMusl) {
     // On glibc Linux and macOS, Node.js exports V8 symbols and dlsym
     // should resolve them. If this fails, the watchdog silently degrades
-    // to _exit-only mode — this assertion catches that.
+    // to _exit-only mode - this assertion catches that.
     assert.equal(
       available,
       true,
@@ -418,7 +418,7 @@ console.log("traceCmp tests passed!");
   }
   // On musl Linux, V8 symbol availability depends on how Node.js was built.
   // Some musl builds (e.g. node:22-alpine) export V8 symbols; others don't.
-  // Either value is acceptable — just log it.
+  // Either value is acceptable - just log it.
   console.log("V8 shim availability test passed!");
 }
 

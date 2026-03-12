@@ -18,9 +18,9 @@ The stage loop SHALL:
 5. After the stage loop completes (normally or via abort), resume the main fuzz iteration cycle.
 
 The stage execution loop SHALL use the same three-branch target execution pattern used by the main iteration cycle and the calibration loop:
-- **Branch 1 — Watchdog sync**: `watchdog.runTarget()` returns non-zero `exitKind` (sync crash/timeout).
-- **Branch 2 — Watchdog async**: `watchdog.runTarget()` returns a Promise in `result`. Re-arm watchdog before `await`. On rejection, check `watchdog.didFire` to distinguish timeout from crash.
-- **Branch 3 — No watchdog**: Direct `target(input)` call with try/catch, checking for Promise return.
+- **Branch 1 - Watchdog sync**: `watchdog.runTarget()` returns non-zero `exitKind` (sync crash/timeout).
+- **Branch 2 - Watchdog async**: `watchdog.runTarget()` returns a Promise in `result`. Re-arm watchdog before `await`. On rejection, check `watchdog.didFire` to distinguish timeout from crash.
+- **Branch 3 - No watchdog**: Direct `target(input)` call with try/catch, checking for Promise return.
 
 #### Scenario: Stage loop runs after calibration when CmpLog data available
 
@@ -116,7 +116,7 @@ The fuzz loop SHALL implement the following cycle for each iteration:
 9. If `reportResult` returns `Interesting`: enter the calibration loop (see Requirement: Calibration loop in fuzz loop). If calibration completes normally, enter the stage execution loop (see Requirement: Stage execution loop after calibration). If the stage execution loop encounters a crash or timeout, the stage loop calls `abortStage()` and falls through to step 10 using the stage input and error.
 10. If a crash or timeout needs artifact writing (either from `reportResult` returning `Solution` at step 8, or from a stage crash/timeout at step 9): for normal-iteration crashes where `reportResult` returned `Solution` and `exitKind` is `Crash`, attempt in-process crash minimization before writing the artifact. For stage-discovered crashes, skip minimization and write the raw stage input as the artifact. For timeouts (normal or stage), write the input as a timeout artifact without minimization. After writing the artifact, the loop terminates.
 
-The shmem stash (step 2) SHALL occur whenever the `VITIATE_SUPERVISOR` environment variable is set, regardless of whether the supervisor was spawned by the CLI entry point or by the `fuzz()` test callback. The fuzz loop does not need to know which entry point spawned the supervisor — the `VITIATE_SUPERVISOR` env var is the sole indicator.
+The shmem stash (step 2) SHALL occur whenever the `VITIATE_SUPERVISOR` environment variable is set, regardless of whether the supervisor was spawned by the CLI entry point or by the `fuzz()` test callback. The fuzz loop does not need to know which entry point spawned the supervisor - the `VITIATE_SUPERVISOR` env var is the sole indicator.
 
 The loop SHALL terminate when any of these conditions is met:
 

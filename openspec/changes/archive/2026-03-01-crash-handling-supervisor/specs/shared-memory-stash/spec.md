@@ -30,10 +30,10 @@ The shared memory region SHALL use a fixed-size layout with atomic fields for lo
 | Offset | Field | Type | Writer | Reader |
 |---|---|---|---|---|
 | 0 | `magic` | `u32` | Parent (once) | Child (validates on attach) |
-| 4 | (padding) | `[u8; 4]` | — | — |
+| 4 | (padding) | `[u8; 4]` | - | - |
 | 8 | `generation` | `u64` (atomic) | Child (per iteration) | Parent (after child death), Watchdog (before `_exit`) |
 | 16 | `input_len` | `u32` (atomic) | Child (per iteration) | Parent (after child death), Watchdog (before `_exit`) |
-| 20 | (padding) | `[u8; 4]` | — | — |
+| 20 | (padding) | `[u8; 4]` | - | - |
 | 24 | `input_buf` | `[u8; N]` | Child (per iteration) | Parent (after child death), Watchdog (before `_exit`) |
 
 Total header size: 24 bytes (`HEADER_SIZE`). Total region size: `24 + MAX_INPUT_LEN` bytes (default MAX_INPUT_LEN = 4096, total = 4120 bytes). The padding after `magic` ensures `generation` is 8-byte aligned for correct atomic u64 access on all platforms. The trailing padding after `input_len` is inserted by `repr(C)` to maintain the struct's 8-byte alignment.
@@ -73,11 +73,11 @@ The `memcpy` for `input_buf` SHALL be the only hot-path overhead added by the su
 
 ### Requirement: Parent-side shmem read
 
-After the child dies, the parent SHALL read the crashing input from the shmem region. The parent SHALL read `generation` with acquire semantics, then read `input_len` and `input_buf`. Since the parent only reads after `waitpid` returns (child is dead), there is no concurrent writer — the acquire/release semantics provide ordering guarantees against the child's last write.
+After the child dies, the parent SHALL read the crashing input from the shmem region. The parent SHALL read `generation` with acquire semantics, then read `input_len` and `input_buf`. Since the parent only reads after `waitpid` returns (child is dead), there is no concurrent writer - the acquire/release semantics provide ordering guarantees against the child's last write.
 
 The read SHALL return empty when:
-- `generation == 0` (no input was ever stashed — fresh allocation or after `reset_generation()`)
-- `generation` is odd (child died mid-write — torn data, not safe to read)
+- `generation == 0` (no input was ever stashed - fresh allocation or after `reset_generation()`)
+- `generation` is odd (child died mid-write - torn data, not safe to read)
 
 #### Scenario: Parent reads crashing input
 
@@ -98,11 +98,11 @@ The read SHALL return empty when:
 The watchdog thread (running in the child process) SHALL read the current input from the shmem region before calling `_exit()` to write timeout artifacts. The watchdog SHALL use a generation-counter consistency check (seqlock protocol): read generation before and after copying the input, and verify they match.
 
 The read SHALL return `None` (no artifact written) when:
-- `generation == 0` (no input was ever stashed — prevents phantom timeout artifacts)
-- `generation` is odd (write in progress — seqlock torn read)
+- `generation == 0` (no input was ever stashed - prevents phantom timeout artifacts)
+- `generation` is odd (write in progress - seqlock torn read)
 - `generation` changed between the two reads (concurrent write detected)
 
-The watchdog SHALL also skip writing the artifact when the read succeeds but the input is empty (zero-length genuine input — avoids writing 0-byte artifacts).
+The watchdog SHALL also skip writing the artifact when the read succeeds but the input is empty (zero-length genuine input - avoids writing 0-byte artifacts).
 
 #### Scenario: Watchdog reads from shmem before _exit
 

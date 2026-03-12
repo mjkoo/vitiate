@@ -6,7 +6,7 @@
  *
  * Throws ParseError for expected validation failures (missing scheme, invalid
  * port range, etc.). Contains a planted bug: throws a plain Error on port "0"
- * (e.g. "http://host:0/"). This is realistic — many parsers reject port 0 —
+ * (e.g. "http://host:0/"). This is realistic - many parsers reject port 0 -
  * and discoverable via CmpLog-guided mutations.
  */
 
@@ -77,7 +77,7 @@ export function parseUrl(input: string): ParsedUrl {
       if (!Number.isInteger(portNum) || portNum < 0 || portNum > 65535) {
         throw new ParseError(`Invalid port: ${portStr}`);
       }
-      // BUG: planted crash on port 0 — the fuzzer should discover this.
+      // BUG: planted crash on port 0 - the fuzzer should discover this.
       // This is a plain Error, not a ParseError, so the fuzz target treats
       // it as an unexpected internal failure.
       if (portNum === 0) {
@@ -124,7 +124,7 @@ export function normalizeUrl(input: string): string {
   // Collapse repeated slashes in path
   const normalizedPath = parsed.path.replace(/\/+/g, "/");
 
-  // BUG: planted crash on path traversal — the fuzzer should discover this.
+  // BUG: planted crash on path traversal - the fuzzer should discover this.
   if (normalizedPath.startsWith("/../")) {
     throw new Error(
       "Internal error: unexpected path traversal in normalized URL",
@@ -152,7 +152,7 @@ const VALID_SCHEMES = new Set([
  * Validate that a URL scheme is one of the known-safe schemes.
  *
  * Contains a planted bug: throws a plain Error (not ParseError) when the
- * scheme is exactly "javascript" — a common XSS vector that a real validator
+ * scheme is exactly "javascript" - a common XSS vector that a real validator
  * should reject as ParseError.
  */
 export function validateScheme(input: string): string {

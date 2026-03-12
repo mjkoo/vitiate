@@ -603,7 +603,7 @@ describe("corpus", () => {
       const corpusDir = path.join(tmpDir, "testdata", "fuzz", dirName);
       mkdirSync(corpusDir, { recursive: true });
       writeFileSync(path.join(corpusDir, "seed1"), "data");
-      // No .dict file — only the corpus directory exists.
+      // No .dict file - only the corpus directory exists.
 
       const result = getDictionaryPath(tmpDir, "my-test");
       expect(result).toBeUndefined();

@@ -34,7 +34,7 @@ instrument?: {
 - `include`: all `.js`, `.ts`, `.jsx`, `.tsx` files
 - `exclude`: `**/node_modules/**`
 
-Instrument only the code you are fuzzing — excluding test files and dependencies improves performance and reduces noise in coverage feedback.
+Instrument only the code you are fuzzing - excluding test files and dependencies improves performance and reduces noise in coverage feedback.
 
 #### Instrumenting node_modules
 
@@ -54,7 +54,7 @@ Vitiate's own packages (`@vitiate/core`, `@vitiate/engine`, `@vitiate/swc-plugin
 
 **Performance considerations:**
 
-- **Build time**: Instrumenting node_modules significantly increases build time because every dependency file passes through SWC.
+- **Transform time**: Instrumenting node_modules significantly increases startup time because every dependency file passes through SWC during Vite's module transform.
 - **Coverage map saturation**: Large dependency trees produce many coverage edges, which can exhaust slots in the coverage map. If the fuzzer stops finding new coverage despite exercising new code paths, increase `coverageMapSize`.
 - **Feedback quality**: When the coverage map is saturated, hash collisions reduce the fuzzer's ability to distinguish interesting inputs. Narrow your `include` patterns to instrument only the specific packages you are investigating, or increase `coverageMapSize`.
 

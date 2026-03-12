@@ -21,7 +21,7 @@
 
 ## 4. Verification
 
-- [x] 4.1 Run full test suite (`pnpm test`) — no regressions
+- [x] 4.1 Run full test suite (`pnpm test`) - no regressions
 - [x] 4.2 Run lints and checks (clippy, eslint, prettier, cargo fmt, cargo deny)
-- [x] 4.3 Verify fuzzer finds validate-scheme planted bug — found "javascript" scheme crash in ~28.5K execs (0.6s)
-- [x] 4.4 Run fuzz-pipeline e2e test (`pnpm test:e2e`) — both fuzz targets pass
+- [x] 4.3 Verify fuzzer finds validate-scheme planted bug - found "javascript" scheme crash in ~28.5K execs (0.6s)
+- [x] 4.4 Run fuzz-pipeline e2e test (`pnpm test:e2e`) - both fuzz targets pass

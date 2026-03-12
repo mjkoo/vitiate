@@ -188,7 +188,7 @@ function warnUnsupportedFlags(parsed: InferValue<typeof cliParser>): void {
  * - `name.key=value` → enable with option
  */
 export function parseDetectorsFlag(spec: string): FuzzOptions["detectors"] {
-  // Start with all detectors disabled — the flag overrides all defaults.
+  // Start with all detectors disabled - the flag overrides all defaults.
   const detectors: Record<string, unknown> = {};
   for (const name of KNOWN_DETECTOR_KEYS) {
     detectors[name] = false;
@@ -407,7 +407,7 @@ async function runMergeParentMode(
   try {
     unlinkSync(controlFilePath);
   } catch {
-    // Ignore — may not exist if merge had no entries
+    // Ignore - may not exist if merge had no entries
   }
 
   process.exitCode = result.exitCode ?? 0;

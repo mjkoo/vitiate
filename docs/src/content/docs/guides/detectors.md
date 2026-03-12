@@ -52,7 +52,7 @@ fuzz("process user input", handler, {
     // Explicitly enable a Tier 2 detector
     ssrf: true,
 
-    // Disable a Tier 1 detector
+    // Disable a Tier 2 detector
     redos: false,
 
     // Configure detector options
@@ -64,7 +64,9 @@ fuzz("process user input", handler, {
 });
 ```
 
-### CLI Configuration
+### Standalone CLI Configuration
+
+When using the [standalone CLI](/vitiate/guides/cli/), you can configure detectors via flags:
 
 ```bash
 # Enable specific detectors (disables all defaults)

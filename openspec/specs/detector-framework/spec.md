@@ -13,7 +13,7 @@ The system SHALL define a `Detector` interface with the following lifecycle hook
 - `getTokens()`: Returns an array of `Uint8Array` tokens to pre-seed in the mutation dictionary.
 - `setup()`: Called once before fuzzing begins. Installs module hooks or initializes state.
 - `beforeIteration()`: Called before each target execution. Captures baseline state for snapshot-based detectors.
-- `afterIteration()`: Called after target execution completes without throwing. Checks for violations and throws `VulnerabilityError` if a condition is met. SHALL NOT be called when the target crashed or timed out. SHALL NOT perform state restoration — that is the responsibility of `resetIteration()`.
+- `afterIteration()`: Called after target execution completes without throwing. Checks for violations and throws `VulnerabilityError` if a condition is met. SHALL NOT be called when the target crashed or timed out. SHALL NOT perform state restoration - that is the responsibility of `resetIteration()`.
 - `resetIteration()`: Called after every iteration regardless of exit kind. Restores any per-iteration state captured by `beforeIteration()` (e.g., prototype restoration). SHALL NOT throw. If restoration fails, the detector SHALL make a best-effort attempt and continue silently.
 - `teardown()`: Called after fuzzing ends. Restores any patched modules.
 
@@ -226,9 +226,9 @@ The system SHALL provide a utility for safely monkey-patching Node built-in modu
 - Restore the original function when `restore()` is called.
 - Support hooking the same function from multiple detectors (hooks compose as a chain).
 
-The hook wrapper SHALL wrap the `check()` call in a try/catch. When the caught exception is a `VulnerabilityError`, the wrapper SHALL write it to a module-level stash slot (first-write-wins — if the slot is already occupied, the new error is discarded) and then re-throw the original error. The stash preserves the `VulnerabilityError` with its detection-site stack trace as a backup for cases where the target catches the thrown error. Non-`VulnerabilityError` exceptions from the `check` callback SHALL be re-thrown without stashing (these indicate detector bugs, not findings).
+The hook wrapper SHALL wrap the `check()` call in a try/catch. When the caught exception is a `VulnerabilityError`, the wrapper SHALL write it to a module-level stash slot (first-write-wins - if the slot is already occupied, the new error is discarded) and then re-throw the original error. The stash preserves the `VulnerabilityError` with its detection-site stack trace as a backup for cases where the target catches the thrown error. Non-`VulnerabilityError` exceptions from the `check` callback SHALL be re-thrown without stashing (these indicate detector bugs, not findings).
 
-The module SHALL export a `drainStashedVulnerabilityError()` function that returns the stashed `VulnerabilityError` (or `undefined` if none) and clears the slot. `DetectorManager` SHALL be the only caller — it drains in `endIteration()`, `beforeIteration()` (defensive discard), and `teardown()` (defensive cleanup).
+The module SHALL export a `drainStashedVulnerabilityError()` function that returns the stashed `VulnerabilityError` (or `undefined` if none) and clears the slot. `DetectorManager` SHALL be the only caller - it drains in `endIteration()`, `beforeIteration()` (defensive discard), and `teardown()` (defensive cleanup).
 
 #### Scenario: Hook intercepts function call
 
@@ -294,7 +294,7 @@ The following detector fields SHALL be defined for Tier 1 detectors:
 
 - `prototypePollution?: boolean`
 - `commandInjection?: boolean`
-- `pathTraversal?: boolean | { allowedPaths?: string[]; deniedPaths?: string[] }` — Tier 1 on Unix/macOS, Tier 2 on Windows (the default allowed-path policy cannot reliably cover cross-drive access, UNC paths, or junctions on Windows, making false positives likely without explicit user configuration).
+- `pathTraversal?: boolean | { allowedPaths?: string[]; deniedPaths?: string[] }` - Tier 1 on Unix/macOS, Tier 2 on Windows (the default allowed-path policy cannot reliably cover cross-drive access, UNC paths, or junctions on Windows, making false positives likely without explicit user configuration).
 
 The following detector fields SHALL be defined for Tier 2 detectors:
 
@@ -392,12 +392,12 @@ The schema SHALL accept and silently ignore unknown keys within the `detectors` 
 
 The module-hook utility SHALL export a `stashAndRethrow(error: unknown): never` helper function (or equivalent) that replicates the stash-and-rethrow behavior used internally by `installHook`. The helper SHALL:
 
-1. If `error` is a `VulnerabilityError`, write it to the module-level stash slot (first-write-wins — if the slot is already occupied, the new error is discarded).
+1. If `error` is a `VulnerabilityError`, write it to the module-level stash slot (first-write-wins - if the slot is already occupied, the new error is discarded).
 2. Re-throw the original error unconditionally.
 
 This helper is intended for detectors that wrap globals or prototype methods directly (not via `installHook`) but still need their findings recoverable by `DetectorManager.endIteration()` when the target swallows the thrown error.
 
-The calling convention for direct-replacement hooks differs from `installHook`. In `installHook`, the check callback throws a `VulnerabilityError` and the `installHook` wrapper catches it, stashes, and re-throws. With `stashAndRethrow`, the direct-replacement wrapper creates the `VulnerabilityError` and passes it to `stashAndRethrow` directly — `stashAndRethrow` stashes and throws in one step (it never returns). Example usage:
+The calling convention for direct-replacement hooks differs from `installHook`. In `installHook`, the check callback throws a `VulnerabilityError` and the `installHook` wrapper catches it, stashes, and re-throws. With `stashAndRethrow`, the direct-replacement wrapper creates the `VulnerabilityError` and passes it to `stashAndRethrow` directly - `stashAndRethrow` stashes and throws in one step (it never returns). Example usage:
 
 ```typescript
 // Inside a direct-replacement wrapper:

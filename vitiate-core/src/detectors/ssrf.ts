@@ -66,7 +66,7 @@ function extractHostname(
       hostnameFromUrl = parsed.hostname;
       urlString = first;
     } catch {
-      // Malformed URL — pass through
+      // Malformed URL - pass through
       return null;
     }
   } else if (first instanceof URL) {
@@ -78,7 +78,7 @@ function extractHostname(
     "url" in first &&
     typeof (first as Record<string, unknown>).url === "string"
   ) {
-    // Request object — extract URL from .url property (duck-typed to avoid
+    // Request object - extract URL from .url property (duck-typed to avoid
     // dependency on globalThis.Request which may not exist in all environments)
     try {
       const reqUrl = (first as Record<string, unknown>).url as string;
@@ -94,7 +94,7 @@ function extractHostname(
   // When both URL/string and options are provided (e.g. http.request(url, opts)),
   // use second arg as options. Otherwise, if first arg is a plain object (not a
   // URL), treat it as options (e.g. http.request({hostname: "..."})).
-  // Request-like objects (with .url property) are NOT treated as options here —
+  // Request-like objects (with .url property) are NOT treated as options here -
   // they were already handled above for URL extraction only.
   const options =
     typeof second === "object" && second !== null && !(second instanceof URL)
@@ -211,7 +211,7 @@ export class SsrfDetector implements Detector {
     );
     this.hooks.push(installHook("https", "get", checkArgs("https.get")));
 
-    // Hook http2.connect — the authority/hostname is the first argument.
+    // Hook http2.connect - the authority/hostname is the first argument.
     this.hooks.push(
       installHook("http2", "connect", (...args: unknown[]) => {
         const authority = args[0];
@@ -220,7 +220,7 @@ export class SsrfDetector implements Detector {
           const parsed = new URL(authority);
           this.checkHost(parsed.hostname, "http2.connect", authority);
         } catch {
-          // Malformed URL — pass through
+          // Malformed URL - pass through
         }
       }),
     );

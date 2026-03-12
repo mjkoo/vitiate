@@ -13,7 +13,7 @@ if (exitKind === ExitKind.Ok) {
 }
 ```
 
-This pattern is duplicated across 4 fuzz-mode call sites (main loop, calibration, stage, minimization) and implemented differently in regression mode. The `else` branch skips `afterIteration()`, which means snapshot-based detectors (prototype pollution) never get a chance to restore state. The prototype pollution detector's `afterIteration()` both detects pollution AND restores prototypes — skipping it leaves polluted prototypes as the new baseline.
+This pattern is duplicated across 4 fuzz-mode call sites (main loop, calibration, stage, minimization) and implemented differently in regression mode. The `else` branch skips `afterIteration()`, which means snapshot-based detectors (prototype pollution) never get a chance to restore state. The prototype pollution detector's `afterIteration()` both detects pollution AND restores prototypes - skipping it leaves polluted prototypes as the new baseline.
 
 Regression mode does not have this bug because it always calls `afterIteration()` regardless of whether the target threw.
 
@@ -24,7 +24,7 @@ Regression mode does not have this bug because it always calls `afterIteration()
 - Make it structurally impossible to skip detector cleanup by providing a single method that handles the full post-execution protocol.
 - Separate the "check for findings" concern from the "restore state" concern in the Detector interface so they can be invoked independently.
 - Unify fuzz-mode and regression-mode detector lifecycle into the same API call.
-- Remove `setDetectorActive()` from loop.ts's public surface — it should be an internal implementation detail of DetectorManager.
+- Remove `setDetectorActive()` from loop.ts's public surface - it should be an internal implementation detail of DetectorManager.
 
 **Non-Goals:**
 
@@ -44,7 +44,7 @@ The `Detector` interface gains a `resetIteration()` method that restores any sta
 
 **Rationale**: Separating check from cleanup makes the contract explicit. `afterIteration()` answers "did something bad happen?", `resetIteration()` answers "clean up whatever you captured in beforeIteration()". Module-hook detectors implement both as no-ops (they have no per-iteration state). Prototype pollution implements `afterIteration()` as snapshot diff + throw, and `resetIteration()` as prototype restoration.
 
-**Alternative considered**: A single `afterIteration(crashed: boolean)` that skips detection when crashed but always restores. Rejected because it conflates two concerns and makes the interface contract less clear — callers would need to understand the internal branching.
+**Alternative considered**: A single `afterIteration(crashed: boolean)` that skips detection when crashed but always restores. Rejected because it conflates two concerns and makes the interface contract less clear - callers would need to understand the internal branching.
 
 **Alternative considered**: Always call `afterIteration()` and discard detector errors when already crashed. Rejected because `afterIteration()` for snapshot-based detectors may detect transient state from a half-completed execution, producing false positives. The detection logic should only run when the target completed normally.
 
@@ -56,7 +56,7 @@ The `DetectorManager` gains a single `endIteration(targetCompletedOk: boolean)` 
 endIteration(targetCompletedOk: boolean): VulnerabilityError | undefined {
   try {
     if (targetCompletedOk) {
-      // Run checks — may throw VulnerabilityError
+      // Run checks - may throw VulnerabilityError
       return this.runChecks();
     }
     return undefined;
@@ -68,17 +68,17 @@ endIteration(targetCompletedOk: boolean): VulnerabilityError | undefined {
 }
 ```
 
-The parameter is `boolean` rather than `ExitKind` because the only branching is "Ok vs everything else" — importing `ExitKind` from `vitiate-napi` would couple the pure-TS detector framework to the native addon, which is unnecessary.
+The parameter is `boolean` rather than `ExitKind` because the only branching is "Ok vs everything else" - importing `ExitKind` from `vitiate-napi` would couple the pure-TS detector framework to the native addon, which is unnecessary.
 
 Key design choices:
 - Returns `VulnerabilityError | undefined` instead of throwing. This eliminates the try/catch at every call site and makes the "upgrade to crash" pattern explicit: `const detectorError = detectorManager.endIteration(exitKind === ExitKind.Ok)`.
 - The `finally` block guarantees `resetIteration()` and `setDetectorActive(false)` always run, even if a check throws an unexpected (non-VulnerabilityError) error.
 - Non-VulnerabilityError exceptions from `afterIteration()` are re-thrown (they indicate a bug in the detector, not a finding).
-- `afterIteration()` becomes an internal method on `DetectorManager` — only `endIteration()` calls it. This prevents callers from bypassing the guaranteed cleanup by calling `afterIteration()` directly.
+- `afterIteration()` becomes an internal method on `DetectorManager` - only `endIteration()` calls it. This prevents callers from bypassing the guaranteed cleanup by calling `afterIteration()` directly.
 
 **Rationale**: A single method eliminates the manual branching that caused the bug. Callers cannot forget cleanup because it's unconditional inside the method. Returning instead of throwing simplifies call sites from try/catch blocks to simple assignment + conditional.
 
-**Alternative considered**: Keep `afterIteration()` as the public API and add an internal `resetIteration()` call inside it. Rejected because this doesn't solve the problem — callers still wouldn't call `afterIteration()` for non-Ok exits, and the cleanup would still be skipped.
+**Alternative considered**: Keep `afterIteration()` as the public API and add an internal `resetIteration()` call inside it. Rejected because this doesn't solve the problem - callers still wouldn't call `afterIteration()` for non-Ok exits, and the cleanup would still be skipped.
 
 **Alternative considered**: Use `ExitKind` as the parameter type. Rejected because the detector framework has no dependency on `vitiate-napi` today, and the only branching is binary (target completed normally vs didn't). A boolean is simpler and avoids the coupling.
 
@@ -110,7 +110,7 @@ This replaces 4 different manually-branched patterns with one consistent 3-line 
 
 **[Risk] Prototype restoration runs on half-completed executions** → The `resetIteration()` method restores prototypes to the pre-iteration snapshot. If the target crashed partway through a legitimate prototype modification (not pollution), the restoration still runs. This is acceptable: the snapshot was captured before the iteration, so restoration returns to a known-good state. A half-completed legitimate modification would be non-deterministic anyway.
 
-**[Risk] Performance overhead of resetIteration** → For module-hook detectors, `resetIteration()` is a no-op. For prototype pollution, it walks `MONITORED_PROTOTYPES` and restores any changes. On non-Ok exits where no pollution occurred, this is a fast no-op (snapshot comparison finds no diffs). On Ok exits, both `afterIteration()` (detection pass) and `resetIteration()` (restoration pass) now walk all 25+ monitored prototypes — two passes instead of today's single combined pass. This is negligible compared to target execution time. If profiling shows otherwise, `resetIteration()` can be optimized to skip restoration when `afterIteration()` already restored (e.g., via an internal `dirty` flag), but this optimization is not included in the initial implementation.
+**[Risk] Performance overhead of resetIteration** → For module-hook detectors, `resetIteration()` is a no-op. For prototype pollution, it walks `MONITORED_PROTOTYPES` and restores any changes. On non-Ok exits where no pollution occurred, this is a fast no-op (snapshot comparison finds no diffs). On Ok exits, both `afterIteration()` (detection pass) and `resetIteration()` (restoration pass) now walk all 25+ monitored prototypes - two passes instead of today's single combined pass. This is negligible compared to target execution time. If profiling shows otherwise, `resetIteration()` can be optimized to skip restoration when `afterIteration()` already restored (e.g., via an internal `dirty` flag), but this optimization is not included in the initial implementation.
 
 **[Risk] Breaking change to Detector interface** → Adding `resetIteration()` to the interface is a breaking change for any external detector implementations. Since detectors are currently internal-only and not part of the public API, this is safe. If/when detectors become pluggable, the interface will need versioning.
 

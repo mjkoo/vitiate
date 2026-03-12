@@ -7,7 +7,7 @@
 ## 2. Build System and Rust Wrapper
 
 - [x] 2.1 Remove the `CARGO_CFG_UNIX` gate in `build.rs` so `v8_shim.cc` compiles on all targets. Add MSVC-compatible compiler flag (`/std:c++14`) alongside the existing `-std=c++14`
-- [x] 2.2 Remove `#[cfg(unix)]` / `#[cfg(not(unix))]` gates from `v8_shim.rs` — make all extern declarations and wrapper functions unconditional
+- [x] 2.2 Remove `#[cfg(unix)]` / `#[cfg(not(unix))]` gates from `v8_shim.rs` - make all extern declarations and wrapper functions unconditional
 - [x] 2.3 Remove the `v8_terminate_available()` function since the shim now compiles everywhere and availability is determined at runtime by `v8_init()`. Update the warning condition in `Watchdog::new()` from `!v8_ok && v8_shim::v8_terminate_available()` to `!v8_ok`
 
 ## 3. Dynamic Exit Timeout Multiplier

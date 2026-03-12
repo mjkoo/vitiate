@@ -2,7 +2,7 @@
 
 ### Requirement: MapIndexesMetadata collection
 
-When `evaluate_coverage()` determines that an input is interesting and adds it to the corpus, the engine SHALL also store `MapIndexesMetadata` on the testcase. `MapIndexesMetadata` SHALL contain the indices of all nonzero entries in the coverage map at the time of evaluation — not just the novel indices.
+When `evaluate_coverage()` determines that an input is interesting and adds it to the corpus, the engine SHALL also store `MapIndexesMetadata` on the testcase. `MapIndexesMetadata` SHALL contain the indices of all nonzero entries in the coverage map at the time of evaluation - not just the novel indices.
 
 The collection SHALL piggy-back on the existing coverage map iteration that computes `MapNoveltiesMetadata`. No additional coverage map pass SHALL be performed.
 
@@ -39,7 +39,7 @@ The engine SHALL maintain a `TopRatedsMetadata` state (initialized during `Fuzze
 
 When a new corpus entry is added and the scheduler's `on_add()` is invoked, the minimizer scheduler SHALL call `update_score` to update `TopRatedsMetadata`.
 
-All corpus entries — including seeds — SHALL have `MapIndexesMetadata` when `on_add()` is invoked. Seeds SHALL be given empty `MapIndexesMetadata` (containing no edge indices) in `addSeed()`, so that `update_score` succeeds without error. An empty `MapIndexesMetadata` means the entry covers no edges and cannot become favored.
+All corpus entries - including seeds - SHALL have `MapIndexesMetadata` when `on_add()` is invoked. Seeds SHALL be given empty `MapIndexesMetadata` (containing no edge indices) in `addSeed()`, so that `update_score` succeeds without error. An empty `MapIndexesMetadata` means the entry covers no edges and cannot become favored.
 
 For each edge index in the entry's `MapIndexesMetadata`:
 - If no existing entry is tracked for that edge: the new entry becomes the best.
@@ -78,9 +78,9 @@ When `calibrateFinish()` calls `scheduler.on_replace()`, the `MinimizerScheduler
 This means:
 - Edges the entry already owns are retained regardless of how calibration changed its penalty.
 - The entry may **gain** new edges if its calibrated penalty is now lower than the current best for those edges.
-- If calibration made the entry's penalty **worse**, it still retains its existing edges. Only a future `update_score` call from a **different** entry can displace it — and that comparison will use the calibrated (worse) penalty.
+- If calibration made the entry's penalty **worse**, it still retains its existing edges. Only a future `update_score` call from a **different** entry can displace it - and that comparison will use the calibrated (worse) penalty.
 
-The net effect is that calibrated penalties are reflected in `TopRatedsMetadata` comparisons, but only when different entries compete for the same edge — not when an entry is re-evaluated against itself.
+The net effect is that calibrated penalties are reflected in `TopRatedsMetadata` comparisons, but only when different entries compete for the same edge - not when an entry is re-evaluated against itself.
 
 #### Scenario: Calibrated entry retains existing edges unconditionally
 
@@ -133,7 +133,7 @@ During `next()`, after the base scheduler (power-weighted `ProbabilitySamplingSc
 - If favored: return the candidate immediately.
 - If non-favored: with 95% probability, reject the candidate and re-select from the base scheduler. With 5% probability, return the candidate anyway.
 
-The re-selection loop SHALL evaluate: if the candidate lacks `IsFavoredMetadata` AND a random coinflip returns true with 95% probability, reject and re-select. Otherwise, return the candidate. Specifically, the loop condition is `!is_favored && coinflip(0.95)` — both conditions must hold to skip.
+The re-selection loop SHALL evaluate: if the candidate lacks `IsFavoredMetadata` AND a random coinflip returns true with 95% probability, reject and re-select. Otherwise, return the candidate. Specifically, the loop condition is `!is_favored && coinflip(0.95)` - both conditions must hold to skip.
 
 This means:
 - Favored entries are always returned immediately (the `!is_favored` condition is false).
@@ -154,5 +154,5 @@ This means:
 #### Scenario: All entries non-favored (e.g., only seeds)
 
 - **WHEN** no corpus entries have `IsFavoredMetadata` (e.g., only seeds with empty `MapIndexesMetadata`)
-- **THEN** the minimizer SHALL still terminate — each re-selection attempt has a 5% chance of returning the non-favored candidate
+- **THEN** the minimizer SHALL still terminate - each re-selection attempt has a 5% chance of returning the non-favored candidate
 - **AND** the expected number of base scheduler calls before returning is 20

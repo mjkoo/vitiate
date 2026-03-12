@@ -330,7 +330,7 @@ fn test_pipeline_i2s_to_unicode_grimoire_disabled() {
     // Force I2S to single iteration.
     force_single_iteration(&mut fuzzer);
 
-    // Advance I2S — should transition to Unicode (grimoire disabled).
+    // Advance I2S - should transition to Unicode (grimoire disabled).
     let after_i2s = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
     assert!(
         after_i2s.is_some(),
@@ -341,7 +341,7 @@ fn test_pipeline_i2s_to_unicode_grimoire_disabled() {
         "stage should be Unicode after I2S completion"
     );
 
-    // Force unicode to single iteration and advance — should complete.
+    // Force unicode to single iteration and advance - should complete.
     force_single_iteration(&mut fuzzer);
 
     let after_unicode = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
@@ -368,7 +368,7 @@ fn test_pipeline_grimoire_to_unicode() {
     // Force Grimoire to single iteration.
     force_single_iteration(&mut fuzzer);
 
-    // Advance Grimoire — should transition to Unicode.
+    // Advance Grimoire - should transition to Unicode.
     let after_grimoire = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
     assert!(
         after_grimoire.is_some(),
@@ -558,7 +558,7 @@ fn test_finalize_generalization_falls_through_to_unicode() {
             }
             StageState::None if next.is_none() => {
                 panic!(
-                    "finalize_generalization returned None — should have fallen through to Unicode"
+                    "finalize_generalization returned None - should have fallen through to Unicode"
                 );
             }
             _ => {}
@@ -607,7 +607,7 @@ fn test_pipeline_full_four_stage_lifecycle() {
     // Force I2S to single iteration.
     force_single_iteration(&mut fuzzer);
 
-    // Advance I2S — should transition to Generalization.
+    // Advance I2S - should transition to Generalization.
     // Write expected coverage for generalization verification.
     unsafe {
         for &idx in &novelty_indices {
@@ -673,7 +673,7 @@ fn test_pipeline_full_four_stage_lifecycle() {
             assert!(after_unicode.is_none(), "pipeline should complete");
         }
         StageState::None => {
-            // Generalization may have failed (input unstable) — that's ok
+            // Generalization may have failed (input unstable) - that's ok
             // for this test; the key is that the pipeline didn't crash.
         }
         _ => panic!("unexpected stage state after generalization"),

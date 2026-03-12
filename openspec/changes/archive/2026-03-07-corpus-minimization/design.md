@@ -1,8 +1,8 @@
 ## Context
 
-Fuzzing campaigns accumulate corpus entries over time, many of which are redundant — covering the same edges as other entries. Vitiate currently has no way to reduce a corpus to its minimal representative subset. The CLI already parses `-merge=1` but prints a warning. LibFuzzer's set cover merge is the standard approach; OSS-Fuzz invokes it regularly.
+Fuzzing campaigns accumulate corpus entries over time, many of which are redundant - covering the same edges as other entries. Vitiate currently has no way to reduce a corpus to its minimal representative subset. The CLI already parses `-merge=1` but prints a warning. LibFuzzer's set cover merge is the standard approach; OSS-Fuzz invokes it regularly.
 
-The coverage map is a 65,536-byte `Buffer` at `globalThis.__vitiate_cov`, shared zero-copy with the Rust engine. The existing fuzz loop reads this map via the napi engine (`Fuzzer.reportResult`), but for merge we need to read it directly in TypeScript — the engine's feedback machinery (calibration, novelty tracking) is unnecessary for one-shot replay.
+The coverage map is a 65,536-byte `Buffer` at `globalThis.__vitiate_cov`, shared zero-copy with the Rust engine. The existing fuzz loop reads this map via the napi engine (`Fuzzer.reportResult`), but for merge we need to read it directly in TypeScript - the engine's feedback machinery (calibration, novelty tracking) is unnecessary for one-shot replay.
 
 ## Goals / Non-Goals
 
@@ -10,7 +10,7 @@ The coverage map is a 65,536-byte `Buffer` at `globalThis.__vitiate_cov`, shared
 - Implement set cover corpus minimization (greedy approximation) that selects the smallest subset covering all observed edges.
 - CLI `-merge=1` mode: replay inputs from corpus directories, run set cover, write survivors to output directory.
 - Vitest optimize mode (`VITIATE_OPTIMIZE=1`): replay seed + cached corpus, treat seeds as mandatory, prune non-surviving cached entries.
-- Coverage collection directly from the shared Buffer in TypeScript — no new napi API surface.
+- Coverage collection directly from the shared Buffer in TypeScript - no new napi API surface.
 
 **Non-Goals:**
 - Multi-worker parallel merge.
@@ -24,7 +24,7 @@ The coverage map is a 65,536-byte `Buffer` at `globalThis.__vitiate_cov`, shared
 
 **Choice:** Iterate the 65K `globalThis.__vitiate_cov` Buffer in TypeScript to collect nonzero indices after each replay execution.
 
-**Rationale:** The merge replay loop is simple: run target, read map, zero map, repeat. The Rust engine's `evaluate_coverage()` does calibration, novelty detection, and corpus management — none of which merge needs. Adding a napi method like `collectEdges()` would create API surface for a one-time operation that TypeScript handles trivially. Reading 65K bytes in a `for` loop is fast enough (sub-millisecond).
+**Rationale:** The merge replay loop is simple: run target, read map, zero map, repeat. The Rust engine's `evaluate_coverage()` does calibration, novelty detection, and corpus management - none of which merge needs. Adding a napi method like `collectEdges()` would create API surface for a one-time operation that TypeScript handles trivially. Reading 65K bytes in a `for` loop is fast enough (sub-millisecond).
 
 **Alternative considered:** Expose `collectEdges()` from the Rust engine. Rejected because it couples merge to the engine lifecycle and adds API surface we'd need to maintain.
 
@@ -36,11 +36,11 @@ The coverage map is a 65,536-byte `Buffer` at `globalThis.__vitiate_cov`, shared
 
 ### Decision 3: Replay uses the same target execution path as fuzzing
 
-**Choice:** Merge replay executes the fuzz target the same way the fuzz loop does — call the target function, then read the coverage map. No watchdog, no shmem stashing, no calibration.
+**Choice:** Merge replay executes the fuzz target the same way the fuzz loop does - call the target function, then read the coverage map. No watchdog, no shmem stashing, no calibration.
 
-**Rationale:** Merge only needs to know which edges an input covers. It doesn't need timeout enforcement (a hanging input during merge just stalls the process; the user can Ctrl+C). No calibration is needed — each input is replayed once. No shmem because we're not in the supervisor crash recovery path.
+**Rationale:** Merge only needs to know which edges an input covers. It doesn't need timeout enforcement (a hanging input during merge just stalls the process; the user can Ctrl+C). No calibration is needed - each input is replayed once. No shmem because we're not in the supervisor crash recovery path.
 
-**Trade-off:** Unstable edges (edges that appear nondeterministically) may cause the merged corpus to retain entries that only contribute flaky coverage. This is acceptable — the fuzz loop will re-calibrate when it loads the merged corpus and mask unstable edges as usual.
+**Trade-off:** Unstable edges (edges that appear nondeterministically) may cause the merged corpus to retain entries that only contribute flaky coverage. This is acceptable - the fuzz loop will re-calibrate when it loads the merged corpus and mask unstable edges as usual.
 
 ### Decision 4: CLI merge mode uses supervisor + control file for crash resilience
 
@@ -50,12 +50,12 @@ The coverage map is a 65,536-byte `Buffer` at `globalThis.__vitiate_cov`, shared
 
 - **Location:** Temp directory (`os.tmpdir()`). The parent creates the path before spawning the first child.
 - **Path communication:** Parent sets `VITIATE_MERGE_CONTROL_FILE=<path>` in the child's environment, alongside `VITIATE_MERGE=1` and `VITIATE_SUPERVISOR=1`.
-- **Format:** JSON-lines (one JSON object per line). Each line is `{"path": "<input-file-path>", "edges": [<edge-indices>]}`. Append-only — the child writes one line after each successful replay.
-- **Crash recovery:** On respawn, the child reads the control file, rebuilds the set of already-processed paths and their edges, and skips those inputs. The crashing input is the first unrecorded one — it will crash again on the next attempt, and the supervisor will respawn again, advancing past it.
+- **Format:** JSON-lines (one JSON object per line). Each line is `{"path": "<input-file-path>", "edges": [<edge-indices>]}`. Append-only - the child writes one line after each successful replay.
+- **Crash recovery:** On respawn, the child reads the control file, rebuilds the set of already-processed paths and their edges, and skips those inputs. The crashing input is the first unrecorded one - it will crash again on the next attempt, and the supervisor will respawn again, advancing past it.
 - **Lifecycle:** Parent creates the file path (not the file itself). Child creates and appends to it during replay. After the supervisor completes (child exits normally after finishing set cover + writing output), the parent deletes the control file.
-- **Respawn bound:** Each crash advances past exactly one input, so the maximum number of respawns equals the corpus size. This is a natural bound — no explicit respawn limit is needed.
+- **Respawn bound:** Each crash advances past exactly one input, so the maximum number of respawns equals the corpus size. This is a natural bound - no explicit respawn limit is needed.
 
-**Rationale:** The child process has instrumentation enabled (the Vite plugin is loaded, SWC has inserted coverage counters). Native crashes (SIGSEGV from instrumented code, OOM) are rare but possible during replay. Without a control file, a native crash loses all in-memory coverage data. The control file makes crash recovery incremental — only the crashing input is lost, and the supervisor's existing respawn mechanism handles the rest.
+**Rationale:** The child process has instrumentation enabled (the Vite plugin is loaded, SWC has inserted coverage counters). Native crashes (SIGSEGV from instrumented code, OOM) are rare but possible during replay. Without a control file, a native crash loses all in-memory coverage data. The control file makes crash recovery incremental - only the crashing input is lost, and the supervisor's existing respawn mechanism handles the rest.
 
 JS exceptions during replay are caught by try/catch and the input is skipped with a warning. Only native crashes require the supervisor respawn path.
 
@@ -63,7 +63,7 @@ JS exceptions during replay are caught by try/catch and the input is skipped wit
 
 ### Decision 5: Vitest optimize mode as a separate mode branch
 
-**Choice:** Add `VITIATE_OPTIMIZE=1` env var check in `config.ts` (via `isOptimizeMode()`). In `fuzz.ts`, the `fuzz()` function checks `isOptimizeMode()` before `isFuzzingMode()` and enters the optimize code path. If both `VITIATE_OPTIMIZE=1` and `VITIATE_FUZZ=1` are set, the system throws an error — the modes are mutually exclusive.
+**Choice:** Add `VITIATE_OPTIMIZE=1` env var check in `config.ts` (via `isOptimizeMode()`). In `fuzz.ts`, the `fuzz()` function checks `isOptimizeMode()` before `isFuzzingMode()` and enters the optimize code path. If both `VITIATE_OPTIMIZE=1` and `VITIATE_FUZZ=1` are set, the system throws an error - the modes are mutually exclusive.
 
 **Rationale:** Optimize mode needs the same instrumentation as fuzzing (coverage counters active) but different loop behavior (replay, not mutate). Using a separate env var keeps modes orthogonal: `VITIATE_FUZZ=1` for fuzzing, `VITIATE_OPTIMIZE=1` for corpus optimization. Both require the vitiate plugin for instrumentation. Setting both simultaneously is a configuration mistake and should fail loudly rather than silently picking one.
 

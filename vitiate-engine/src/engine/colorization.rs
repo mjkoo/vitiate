@@ -281,7 +281,7 @@ impl Fuzzer {
                 std::ptr::write_bytes(self.map_ptr, 0, self.map_len);
             }
 
-            // Colorization complete — transition to REDQUEEN.
+            // Colorization complete - transition to REDQUEEN.
             self.stage_state = super::StageState::None;
             return self.begin_redqueen(corpus_id);
         }
@@ -334,7 +334,7 @@ impl Fuzzer {
                 return Ok(Some(Buffer::from(candidate)));
             }
 
-            // Empty input — go straight to dual trace.
+            // Empty input - go straight to dual trace.
             return self.transition_to_dual_trace(
                 corpus_id,
                 original_hash,
@@ -365,10 +365,10 @@ impl Fuzzer {
         // Process the result of the last tested range.
         if let Some((start, end)) = testing_range {
             if current_hash == original_hash {
-                // The range is free — add to taint_ranges.
+                // The range is free - add to taint_ranges.
                 taint_ranges.push(start..end);
             } else {
-                // The range affects coverage — split and re-add.
+                // The range affects coverage - split and re-add.
                 let len = end - start;
                 if len > 1 {
                     let mid = start + len / 2;
@@ -462,7 +462,7 @@ impl Fuzzer {
         let has_taint_meta = self.state.metadata_map().get::<TaintMetadata>().is_some();
 
         if !has_cmp_meta || !has_taint_meta {
-            // Missing metadata — skip REDQUEEN and fall through.
+            // Missing metadata - skip REDQUEEN and fall through.
             return self.transition_after_redqueen(corpus_id);
         }
 
@@ -485,7 +485,7 @@ impl Fuzzer {
             .map_err(|e| Error::from_reason(format!("REDQUEEN multi_mutate failed: {e}")))?;
 
         if candidates.is_empty() {
-            // No candidates — fall through to subsequent stages.
+            // No candidates - fall through to subsequent stages.
             return self.transition_after_redqueen(corpus_id);
         }
 
@@ -507,7 +507,7 @@ impl Fuzzer {
     /// yield the next one. Transitions to subsequent stages when exhausted.
     ///
     /// `_exit_kind` exists for API consistency with other `advance_*` methods but
-    /// is currently unused — Redqueen candidates always evaluate coverage as `Ok`.
+    /// is currently unused - Redqueen candidates always evaluate coverage as `Ok`.
     pub(crate) fn advance_redqueen(
         &mut self,
         _exit_kind: super::ExitKind,
@@ -550,7 +550,7 @@ impl Fuzzer {
         // Move to the next candidate.
         let next_index = index + 1;
         if next_index >= candidates.len() {
-            // REDQUEEN exhausted — transition to subsequent stages.
+            // REDQUEEN exhausted - transition to subsequent stages.
             return self.transition_after_redqueen(corpus_id);
         }
 

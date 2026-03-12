@@ -9,7 +9,7 @@
 ## 2. Stash Helper for Direct-Replacement Hooks
 
 - [x] 2.1 Create an exported `stashAndRethrow(error: unknown): never` helper in `module-hook.ts` that: if `error` is a `VulnerabilityError`, writes it to the stash slot (first-write-wins); then unconditionally re-throws `error`
-- [x] 2.2 Refactor `installHook`'s catch block to call `stashAndRethrow(e)` instead of inline stash logic (the `throw e` after is unreachable since `stashAndRethrow` never returns — remove it). No behavior change.
+- [x] 2.2 Refactor `installHook`'s catch block to call `stashAndRethrow(e)` instead of inline stash logic (the `throw e` after is unreachable since `stashAndRethrow` never returns - remove it). No behavior change.
 - [x] 2.3 Write unit test: `stashAndRethrow` stashes VulnerabilityError and re-throws, preserves first-write-wins, re-throws non-VulnerabilityError without stashing
 
 ## 3. Host Matching Utility
@@ -55,7 +55,7 @@
 
 - [x] 7.1 Add three new entries to `DETECTOR_REGISTRY` in `manager.ts` with factory functions parsing options for each Tier 2 detector
 - [x] 7.2 Import the three new detector classes in `manager.ts`
-- [x] 7.3 Export `stashAndRethrow` from `module-hook.ts` (barrel re-export in `index.ts` omitted — all consumers are internal to `detectors/`)
+- [x] 7.3 Export `stashAndRethrow` from `module-hook.ts` (barrel re-export in `index.ts` omitted - all consumers are internal to `detectors/`)
 - [x] 7.4 Update the "Unknown detector keys" scenario example in tests (change `ssrf` to a genuinely unknown key)
 - [x] 7.5 Write integration tests: Tier 2 detectors disabled by default, enabled with `true`, enabled with options object, explicit `false` disables
 

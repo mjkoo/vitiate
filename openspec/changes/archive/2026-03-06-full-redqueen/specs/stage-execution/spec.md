@@ -6,9 +6,9 @@ The system SHALL provide `fuzzer.beginStage()` which initiates a stage execution
 
 1. Check that `StageState` is `None` (no stage currently active). If a stage is in progress, return `null`.
 2. Read `last_interesting_corpus_id`. If not set (no corpus entry was recently added via `reportResult()` returning `Interesting` with completed calibration), clear `last_interesting_corpus_id` and return `null`.
-3. Clear `last_interesting_corpus_id` (set to `None`) unconditionally — the ID is consumed regardless of whether the stage proceeds.
+3. Clear `last_interesting_corpus_id` (set to `None`) unconditionally - the ID is consumed regardless of whether the stage proceeds.
 4. If REDQUEEN is enabled AND the corpus entry is at most `MAX_COLORIZATION_LEN` bytes: begin the colorization stage (transition to `StageState::Colorization`). Set `redqueen_ran_for_entry = true`.
-5. If colorization was not started: attempt to start the I2S stage: read `CmpValuesMetadata` (populated by `reportResult()` alongside `AflppCmpValuesMetadata`). If the list is non-empty, begin the I2S stage (select 1–128 iterations, clone entry, apply `I2SSpliceReplace`, transition to `StageState::I2S`). Set `redqueen_ran_for_entry = false`.
+5. If colorization was not started: attempt to start the I2S stage: read `CmpValuesMetadata` (populated by `reportResult()` alongside `AflppCmpValuesMetadata`). If the list is non-empty, begin the I2S stage (select 1-128 iterations, clone entry, apply `I2SSpliceReplace`, transition to `StageState::I2S`). Set `redqueen_ran_for_entry = false`.
 6. If I2S was not started AND Grimoire is enabled AND the input qualifies for generalization: begin the generalization stage directly (transition to `StageState::Generalization`).
 7. If I2S was not started AND Grimoire is enabled AND the input does NOT qualify for generalization BUT already has `GeneralizedInputMetadata`: begin the Grimoire stage directly (transition to `StageState::Grimoire`).
 8. If I2S was not started AND Grimoire stages are not applicable AND unicode is enabled AND the corpus entry has valid UTF-8 regions: begin the unicode stage directly (transition to `StageState::Unicode`).
@@ -16,7 +16,7 @@ The system SHALL provide `fuzzer.beginStage()` which initiates a stage execution
 
 The pipeline ordering is: Colorization → REDQUEEN → I2S → Generalization → Grimoire → Unicode → None. `beginStage()` always attempts colorization first (if REDQUEEN enabled). If colorization is skipped, it falls through to I2S, then Grimoire stages (if enabled and applicable), then unicode (if enabled).
 
-It SHALL be valid to call `beginStage()` only after `calibrateFinish()` has completed for the current interesting input. This is a protocol-level contract enforced by the JS fuzz loop's calling order (calibration always runs before `beginStage()`), not a Rust-side check — the Rust-side precondition checks are `StageState::None` and `last_interesting_corpus_id` being set.
+It SHALL be valid to call `beginStage()` only after `calibrateFinish()` has completed for the current interesting input. This is a protocol-level contract enforced by the JS fuzz loop's calling order (calibration always runs before `beginStage()`), not a Rust-side check - the Rust-side precondition checks are `StageState::None` and `last_interesting_corpus_id` being set.
 
 #### Scenario: Stage begins with colorization when REDQUEEN enabled
 
@@ -111,7 +111,7 @@ The system SHALL provide `fuzzer.advanceStage(exitKind: ExitKind, execTimeNs: nu
 4. Increment `total_execs` and `state.executions`.
 5. Zero the coverage map after processing (via the shared evaluation helper or explicitly for generalization/colorization verification).
 
-The `exitKind` parameter SHALL only be `ExitKind.Ok` — crashes and timeouts are handled by `abortStage()`, not `advanceStage()`.
+The `exitKind` parameter SHALL only be `ExitKind.Ok` - crashes and timeouts are handled by `abortStage()`, not `advanceStage()`.
 
 #### Scenario: Colorization completes and transitions to REDQUEEN
 
@@ -248,9 +248,9 @@ The system SHALL provide `fuzzer.abortStage(exitKind: ExitKind)` which cleanly t
 1. Drain the CmpLog accumulator and discard all entries.
 2. Zero the coverage map (may contain partial/corrupt data from the crashed execution).
 3. Increment `total_execs` and `state.executions` (the aborted execution still counts as a target invocation).
-4. Transition `StageState` to `None` (regardless of which stage variant was active — Colorization, Redqueen, I2S, Generalization, Grimoire, or Unicode).
+4. Transition `StageState` to `None` (regardless of which stage variant was active - Colorization, Redqueen, I2S, Generalization, Grimoire, or Unicode).
 5. NOT evaluate coverage or add the crashed/timed-out input to the corpus.
-6. NOT add the crash/timeout to the solutions corpus — the crash artifact is written by the JS fuzz loop, but `solutionCount` is not incremented by `abortStage()`.
+6. NOT add the crash/timeout to the solutions corpus - the crash artifact is written by the JS fuzz loop, but `solutionCount` is not incremented by `abortStage()`.
 
 After `abortStage()` returns, the crash/timeout input and error are available in the JS fuzz loop for artifact writing via the existing crash-handling path. Stage-discovered crashes are NOT minimized inline. The aborted execution's timing is intentionally not reported since the execution was abnormal.
 
@@ -290,7 +290,7 @@ After `abortStage()` returns, the crash/timeout input and error are available in
 - **AND** `abortStage(ExitKind.Timeout)` is called
 - **THEN** `StageState` SHALL transition from `Grimoire` to `None`
 
-#### Scenario: Stage aborted on crash (I2S — unchanged)
+#### Scenario: Stage aborted on crash (I2S - unchanged)
 
 - **WHEN** the target throws during an I2S stage execution
 - **AND** `abortStage(ExitKind.Crash)` is called
@@ -390,9 +390,9 @@ State transitions:
 
 ### Requirement: I2S stage mutations use the original corpus entry
 
-Each I2S stage iteration SHALL clone the original corpus entry (identified by `corpus_id` in `StageState::I2S`) and apply a fresh `I2SSpliceReplace` mutation. The mutations SHALL NOT be cumulative — each iteration starts from the unmodified corpus entry, not from the previous iteration's mutated output.
+Each I2S stage iteration SHALL clone the original corpus entry (identified by `corpus_id` in `StageState::I2S`) and apply a fresh `I2SSpliceReplace` mutation. The mutations SHALL NOT be cumulative - each iteration starts from the unmodified corpus entry, not from the previous iteration's mutated output.
 
-The `I2SSpliceReplace` mutator reads `CmpValuesMetadata` from the fuzzer state. Since `reportResult()` stores both `AflppCmpValuesMetadata` and `CmpValuesMetadata` (flattened from `orig_cmpvals`), no runtime adapter is needed — I2S reads `CmpValuesMetadata` directly. Since `advanceStage()` does not update the metadata (it discards CmpLog entries for non-dual-trace executions), the mutations throughout the stage are driven by the CmpLog data from the original `reportResult()` call.
+The `I2SSpliceReplace` mutator reads `CmpValuesMetadata` from the fuzzer state. Since `reportResult()` stores both `AflppCmpValuesMetadata` and `CmpValuesMetadata` (flattened from `orig_cmpvals`), no runtime adapter is needed - I2S reads `CmpValuesMetadata` directly. Since `advanceStage()` does not update the metadata (it discards CmpLog entries for non-dual-trace executions), the mutations throughout the stage are driven by the CmpLog data from the original `reportResult()` call.
 
 #### Scenario: Each iteration mutates the original entry
 

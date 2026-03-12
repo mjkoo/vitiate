@@ -419,7 +419,7 @@ impl VisitMut for TransformVisitor {
         self.prepend_counter_to_block(&mut n.body, n.span);
     }
 
-    // Short-circuit assignment operators (&&=, ||=, ??=) — the RHS is
+    // Short-circuit assignment operators (&&=, ||=, ??=) - the RHS is
     // conditionally evaluated (like logical binary ops), but these are
     // AssignExpr nodes, not BinExpr. Wrap the RHS in a comma expression
     // with an edge counter so the fuzzer sees the branch.

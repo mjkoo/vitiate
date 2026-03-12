@@ -2,7 +2,7 @@
 
 ### Requirement: -detectors CLI flag
 
-The standalone CLI SHALL accept a `-detectors` flag (single-hyphen, consistent with the existing libFuzzer-compatible flag convention) that configures which bug detectors are active. When `-detectors` is specified, ALL detector defaults are disabled — only explicitly listed detectors are enabled. This makes the flag self-contained: you get exactly what you list.
+The standalone CLI SHALL accept a `-detectors` flag (single-hyphen, consistent with the existing libFuzzer-compatible flag convention) that configures which bug detectors are active. When `-detectors` is specified, ALL detector defaults are disabled - only explicitly listed detectors are enabled. This makes the flag self-contained: you get exactly what you list.
 
 The flag value SHALL be a comma-separated list of directives:
 

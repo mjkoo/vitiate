@@ -3,7 +3,7 @@
 - [x] 1.1 Remove `parseFuzzFlag()` function from `plugin.ts` and its call in the `config()` hook
 - [x] 1.2 Remove `VITIATE_FUZZ_PATTERN` handling from the `config()` hook in `plugin.ts`
 - [x] 1.3 Remove `getFuzzPattern()` and `shouldEnterFuzzLoop()` pattern logic from `config.ts`
-- [x] 1.4 Update `fuzz.ts` parent mode to remove pattern-based filtering — all fuzz tests enter the fuzz loop when `VITIATE_FUZZ=1`
+- [x] 1.4 Update `fuzz.ts` parent mode to remove pattern-based filtering - all fuzz tests enter the fuzz loop when `VITIATE_FUZZ=1`
 - [x] 1.5 Remove tests for `parseFuzzFlag`, `getFuzzPattern`, `shouldEnterFuzzLoop` pattern matching, and `VITIATE_FUZZ_PATTERN` scenarios
 - [x] 1.6 Write tests verifying: all fuzz tests enter fuzz loop when `VITIATE_FUZZ=1` (no pattern filtering)
 
@@ -35,7 +35,7 @@
 
 ## 5. Verify and clean up
 
-- [x] 5.1 Run full test suite (`pnpm run build && pnpm run test`) — all tests pass
-- [x] 5.2 Run all lints (`pnpm run lint && pnpm exec tsc --noEmit && pnpm run format:check`) — clean
+- [x] 5.1 Run full test suite (`pnpm run build && pnpm run test`) - all tests pass
+- [x] 5.2 Run all lints (`pnpm run lint && pnpm exec tsc --noEmit && pnpm run format:check`) - clean
 - [x] 5.3 Manually verify the three example workflows from `examples/url-parser/`: regression mode (`vitest run`), fuzz mode (`VITIATE_FUZZ=1 vitest run --project fuzz`), CLI mode (`vitiate test/url-parser.fuzz.ts -max_total_time=10`)
 - [x] 5.4 Verify multi-test scenarios: `VITIATE_FUZZ=1 vitest run --project fuzz -t "normalize-url"` targets only that test; CLI `-test=parse-url` targets only that test

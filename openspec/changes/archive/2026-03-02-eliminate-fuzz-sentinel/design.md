@@ -11,12 +11,12 @@ The pattern was set in the `vitest-plugin-integration` change when `--fuzz=<patt
 - Eliminate the `"1"` magic sentinel by giving the filter pattern its own env var (`VITIATE_FUZZ_PATTERN`)
 - `VITIATE_FUZZ` becomes a pure boolean: set to `"1"` when fuzzing is active, absent otherwise
 - `parseFuzzFlag()` returns a structured type that makes the distinction explicit in code
-- No behavior change for end users — `vitest --fuzz` and `vitest --fuzz=pattern` work identically
+- No behavior change for end users - `vitest --fuzz` and `vitest --fuzz=pattern` work identically
 
 **Non-Goals:**
 
-- Changing `isFuzzingMode()` semantics — it already does a pure boolean check and needs no changes
-- Modifying the standalone CLI or supervisor spawn — they already set `VITIATE_FUZZ="1"` with no pattern
+- Changing `isFuzzingMode()` semantics - it already does a pure boolean check and needs no changes
+- Modifying the standalone CLI or supervisor spawn - they already set `VITIATE_FUZZ="1"` with no pattern
 
 ## Decisions
 
@@ -47,8 +47,8 @@ The pattern was set in the `vitest-plugin-integration` change when `--fuzz=<patt
 
 **Decision:** The `fuzz()` parent-mode supervisor in `fuzz.ts` continues to set `VITIATE_FUZZ="1"` in the child env. It does not set `VITIATE_FUZZ_PATTERN` because the child is already filtered to a single test via `--test-name-pattern`. The parent inherits `VITIATE_FUZZ_PATTERN` from its own env (via `...process.env`), but the child's fuzz test will always match because Vitest's name filter ensures only the targeted test runs.
 
-**Rationale:** The child process pattern was already effectively "run this one test" — the regex filter is irrelevant at that level. No change needed.
+**Rationale:** The child process pattern was already effectively "run this one test" - the regex filter is irrelevant at that level. No change needed.
 
 ## Risks / Trade-offs
 
-**[Risk] External tools depend on `VITIATE_FUZZ` carrying the pattern** — If any external scripts or CI configs set `VITIATE_FUZZ=mypattern` to filter tests, they would need to switch to `VITIATE_FUZZ=1 VITIATE_FUZZ_PATTERN=mypattern`. Mitigation: this is an internal API, not documented for external use. The `--fuzz` CLI flag and `vitiatePlugin()` options are the public interfaces.
+**[Risk] External tools depend on `VITIATE_FUZZ` carrying the pattern** - If any external scripts or CI configs set `VITIATE_FUZZ=mypattern` to filter tests, they would need to switch to `VITIATE_FUZZ=1 VITIATE_FUZZ_PATTERN=mypattern`. Mitigation: this is an internal API, not documented for external use. The `--fuzz` CLI flag and `vitiatePlugin()` options are the public interfaces.

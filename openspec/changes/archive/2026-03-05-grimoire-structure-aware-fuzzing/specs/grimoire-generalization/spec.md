@@ -6,10 +6,10 @@ The system SHALL implement a generalization stage that identifies which bytes of
 
 1. Run after the I2S stage completes (or is skipped) for each interesting corpus entry, when Grimoire is enabled.
 2. Operate on the corpus entry identified by the stage pipeline's `corpus_id`.
-3. Produce `GeneralizedInputMetadata` — a sequence of `GeneralizedItem::Bytes(Vec<u8>)` and `GeneralizedItem::Gap` items — stored on the testcase.
+3. Produce `GeneralizedInputMetadata` - a sequence of `GeneralizedItem::Bytes(Vec<u8>)` and `GeneralizedItem::Gap` items - stored on the testcase.
 4. Use the `beginStage`/`advanceStage`/`abortStage` protocol, with `StageState::Generalization` as the active state.
 
-The generalization stage is interactive: each target execution informs the next decision. The JS fuzz loop drives execution identically to I2S — it receives a candidate input from Rust, executes the target, and calls `advanceStage()` to process the result.
+The generalization stage is interactive: each target execution informs the next decision. The JS fuzz loop drives execution identically to I2S - it receives a candidate input from Rust, executes the target, and calls `advanceStage()` to process the result.
 
 #### Scenario: Generalization produces metadata for a text corpus entry
 
@@ -58,7 +58,7 @@ When generalization is skipped and the testcase already has `GeneralizedInputMet
 
 The first execution of the generalization stage SHALL be a verification step: execute the original corpus entry (unmodified) and check that all novel coverage indices from `MapNoveltiesMetadata` are nonzero in the coverage map.
 
-If verification fails (any novel index has a zero value in the map after execution), the input is unstable and generalization SHALL be aborted — no `GeneralizedInputMetadata` is produced, and the stage pipeline transitions to completion (or Grimoire if metadata already exists from a prior run, which it won't for a fresh entry).
+If verification fails (any novel index has a zero value in the map after execution), the input is unstable and generalization SHALL be aborted - no `GeneralizedInputMetadata` is produced, and the stage pipeline transitions to completion (or Grimoire if metadata already exists from a prior run, which it won't for a fresh entry).
 
 #### Scenario: Verification succeeds for stable input
 
@@ -134,7 +134,7 @@ After each pass completes, trim consecutive gaps.
 
 ### Requirement: Gap-finding via bracket-based passes
 
-After delimiter passes, the system SHALL run 6 bracket-based (closure) gap-finding passes with bracket pairs `['(' ')', '[' ']', '{' '}', '<' '>', '\'' '\'', '"' '"']`. For each pass, using two tracking variables — `index` (overall progress through the payload, used by the outer loop) and `start` (current opening bracket position):
+After delimiter passes, the system SHALL run 6 bracket-based (closure) gap-finding passes with bracket pairs `['(' ')', '[' ']', '{' '}', '<' '>', '\'' '\'', '"' '"']`. For each pass, using two tracking variables - `index` (overall progress through the payload, used by the outer loop) and `start` (current opening bracket position):
 
 1. Initialize `index = 0`.
 2. **Find opening bracket:** Scan forward from `index`, incrementing `index` at each position, until `payload[index] == Some(opening_char)`. If `index >= payload.len()`, the pass is complete. Set `start = index`.
@@ -190,7 +190,7 @@ During generalization stage executions:
 2. Token promotion SHALL NOT occur.
 3. The coverage map SHALL be read for novelty verification, then zeroed.
 4. Coverage evaluation for corpus addition SHALL NOT occur during the verification phase (the verification execution is only checking stability, not evaluating for new coverage).
-5. **Vitiate-specific enhancement (not in LibAFL):** Coverage evaluation for corpus addition SHALL occur during gap-finding executions — an ablated input that triggers new coverage (beyond the original entry's novelties) SHALL be added to the corpus. LibAFL's generalization stage does not evaluate gap-finding candidates for corpus addition; Vitiate adds this to avoid wasting coverage discoveries made during the many generalization executions.
+5. **Vitiate-specific enhancement (not in LibAFL):** Coverage evaluation for corpus addition SHALL occur during gap-finding executions - an ablated input that triggers new coverage (beyond the original entry's novelties) SHALL be added to the corpus. LibAFL's generalization stage does not evaluate gap-finding candidates for corpus addition; Vitiate adds this to avoid wasting coverage discoveries made during the many generalization executions.
 
 #### Scenario: Generalization execution discovers new coverage
 
@@ -207,7 +207,7 @@ During generalization stage executions:
 
 ### Requirement: Generalization execution counting
 
-Each generalization stage execution (including the verification execution) SHALL increment `total_execs` and `state.executions`. The execution count for generalization depends on input structure and can range from 1 (verification fails immediately) to dozens (verification plus up to 18 gap-finding passes — 5 offset, 7 delimiter, 6 bracket — with multiple candidates each).
+Each generalization stage execution (including the verification execution) SHALL increment `total_execs` and `state.executions`. The execution count for generalization depends on input structure and can range from 1 (verification fails immediately) to dozens (verification plus up to 18 gap-finding passes - 5 offset, 7 delimiter, 6 bracket - with multiple candidates each).
 
 #### Scenario: Verification-only execution counted
 

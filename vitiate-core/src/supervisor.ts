@@ -159,7 +159,7 @@ export async function runSupervisor(
           return { crashed: false, exitCode: code ?? 143 };
         }
 
-        // Other signal — treat as crash
+        // Other signal - treat as crash
         process.stderr.write(`vitiate: child killed by signal ${signal}\n`);
 
         const result = recoverAndRespawn(
@@ -182,7 +182,7 @@ export async function runSupervisor(
         continue;
       }
 
-      // No signal — check shutdown flags for exit-code paths too
+      // No signal - check shutdown flags for exit-code paths too
       if (sigintReceived) {
         return { crashed: false, exitCode: code ?? 130 };
       }
@@ -192,17 +192,17 @@ export async function runSupervisor(
 
       // Child exited with a code
       if (code === 0) {
-        // Campaign complete — no crash found or limits reached
+        // Campaign complete - no crash found or limits reached
         return { crashed: false, exitCode: 0 };
       }
 
       if (code === 1) {
-        // JS crash found — artifact was written by the child
+        // JS crash found - artifact was written by the child
         return { crashed: true, exitCode: 1 };
       }
 
       if (code === WATCHDOG_EXIT_CODE) {
-        // Watchdog timeout — attempt backup recovery from shmem
+        // Watchdog timeout - attempt backup recovery from shmem
         process.stderr.write("vitiate: child exited with watchdog timeout\n");
 
         const result = recoverAndRespawn(
@@ -251,7 +251,7 @@ export async function runSupervisor(
         continue;
       }
 
-      // Unknown exit code — forward as-is
+      // Unknown exit code - forward as-is
       return { crashed: false, exitCode: code ?? 1 };
     }
   } finally {

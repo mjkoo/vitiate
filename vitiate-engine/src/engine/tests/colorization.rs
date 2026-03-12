@@ -292,7 +292,7 @@ fn test_begin_redqueen_sets_corpus_id() {
     let taint = TaintMetadata::new(vec![0x41, 0x42, 0x43, 0x44], vec![0..4]);
     fuzzer.state.metadata_map_mut().insert(taint);
 
-    // Call begin_redqueen — multi_mutate may return empty candidates for this
+    // Call begin_redqueen - multi_mutate may return empty candidates for this
     // simple input, but the corpus ID should be set.
     let _result = fuzzer.begin_redqueen(corpus_id);
 
@@ -312,5 +312,5 @@ fn test_begin_redqueen_sets_corpus_id() {
 // (begin_colorization → advance_colorization → dual trace →
 // begin_redqueen → advance_redqueen) is intentionally absent here.
 // The setup requires a fully wired Fuzzer with coverage map, CmpLog
-// observer, and multi-step async iteration — complexity that belongs
+// observer, and multi-step async iteration - complexity that belongs
 // in the end-to-end e2e-fuzz.test.ts rather than unit tests.

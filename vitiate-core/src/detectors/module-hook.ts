@@ -26,7 +26,7 @@ let stashedVulnerabilityError: VulnerabilityError | undefined;
  * Drain and return the stashed VulnerabilityError, clearing the slot.
  *
  * Returns the stashed error, or undefined if none. The slot is always cleared
- * after this call. DetectorManager is the only intended caller — it drains in
+ * after this call. DetectorManager is the only intended caller - it drains in
  * endIteration(), beforeIteration() (defensive discard), and teardown()
  * (defensive cleanup).
  */

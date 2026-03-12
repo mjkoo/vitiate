@@ -418,16 +418,16 @@ The full behavioral specification is defined in the stage-execution capability s
 The `Fuzzer` SHALL implement a private `evaluate_coverage()` method that encapsulates the coverage evaluation logic shared between `report_result()` and `advance_stage()`.
 
 The helper SHALL accept the following parameters:
-- `input: &[u8]` — the input bytes to store in the testcase if interesting.
-- `exec_time_ns: f64` — execution time in nanoseconds for the testcase's `exec_time`.
-- `exit_kind: ExitKind` — used for crash/timeout objective evaluation.
-- `parent_corpus_id: CorpusId` — used to compute `depth` (parent's depth + 1).
+- `input: &[u8]` - the input bytes to store in the testcase if interesting.
+- `exec_time_ns: f64` - execution time in nanoseconds for the testcase's `exec_time`.
+- `exit_kind: ExitKind` - used for crash/timeout objective evaluation.
+- `parent_corpus_id: CorpusId` - used to compute `depth` (parent's depth + 1).
 
 The helper SHALL:
 
 1. Mask unstable edges (zero coverage map entries at indices in the unstable entries set).
 2. Construct a `StdMapObserver` from `map_ptr`.
-3. Evaluate crash/timeout objective (`CrashFeedback`, `TimeoutFeedback`) using `exit_kind`. For `ExitKind::Ok` (the only value used by `advance_stage()`), objective evaluation will return "not a solution" — this is expected and the evaluation is still performed for uniformity.
+3. Evaluate crash/timeout objective (`CrashFeedback`, `TimeoutFeedback`) using `exit_kind`. For `ExitKind::Ok` (the only value used by `advance_stage()`), objective evaluation will return "not a solution" - this is expected and the evaluation is still performed for uniformity.
 4. Evaluate coverage feedback (`MaxMapFeedback::is_interesting()`). During the coverage map iteration that computes `MapNoveltiesMetadata`, also collect the indices of all nonzero entries into `MapIndexesMetadata`.
 5. If interesting: create a `Testcase` from the provided `input` bytes, set `exec_time` to `Duration::from_nanos(exec_time_ns as u64)`, add `SchedulerTestcaseMetadata` with the following fields:
    - `depth`: `parent_corpus_id`'s depth + 1.

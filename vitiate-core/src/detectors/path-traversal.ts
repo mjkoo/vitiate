@@ -197,7 +197,7 @@ export class PathTraversalDetector implements Detector {
 
     let pathStr: string;
     if (pathArg instanceof URL) {
-      // Node.js fs functions accept file: URLs — extract the pathname.
+      // Node.js fs functions accept file: URLs - extract the pathname.
       pathStr = fileURLToPath(pathArg);
     } else if (typeof pathArg === "string") {
       pathStr = pathArg;
@@ -205,7 +205,7 @@ export class PathTraversalDetector implements Detector {
       pathStr = pathArg.toString();
     }
 
-    // Null byte detection — always deny before policy evaluation.
+    // Null byte detection - always deny before policy evaluation.
     if (pathStr.includes("\x00")) {
       throw new VulnerabilityError(this.name, "Path Traversal", {
         function: functionName,
@@ -236,7 +236,7 @@ export class PathTraversalDetector implements Detector {
       }
     }
 
-    // Not in any allowed path — deny.
+    // Not in any allowed path - deny.
     throw new VulnerabilityError(this.name, "Path Traversal", {
       function: functionName,
       argument: argumentName,

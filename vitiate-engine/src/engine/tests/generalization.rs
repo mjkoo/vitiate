@@ -104,7 +104,7 @@ fn test_generalization_verification_succeeds() {
         .grimoire(true)
         .build_with_corpus_entry(input, &novelty_indices);
 
-    // Begin generalization — should return the original input for verification.
+    // Begin generalization - should return the original input for verification.
     let first = fuzzer.begin_generalization(corpus_id).unwrap();
     assert!(first.is_some(), "should return verification candidate");
     let candidate: Vec<u8> = first.unwrap().to_vec();
@@ -127,7 +127,7 @@ fn test_generalization_verification_succeeds() {
         }
     }
 
-    // Advance — verification should pass and produce next candidate.
+    // Advance - verification should pass and produce next candidate.
     let next = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
     assert!(
         next.is_some(),
@@ -159,7 +159,7 @@ fn test_generalization_verification_fails() {
     // Simulate execution where one novelty index is zero (unstable).
     unsafe {
         *fuzzer.map_ptr.add(10) = 1;
-        // index 20 is left at 0 — verification fails.
+        // index 20 is left at 0 - verification fails.
     }
 
     let next = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
@@ -217,7 +217,7 @@ fn test_generalization_offset_marks_gaps() {
     // Continue through remaining offset levels and delimiter passes.
     // Eventually generalization completes.
 
-    // Drive to completion — keep advancing until None.
+    // Drive to completion - keep advancing until None.
     let mut exec_count = 2; // verification + first offset candidate
     while let Some(_buf) = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap() {
         exec_count += 1;
@@ -276,7 +276,7 @@ fn test_generalization_offset_preserves_structural() {
     // (Don't set the novelty index → it stays 0.)
     let _next = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
     // Pass complete (end=4 >= payload.len=4). Move to next offset level.
-    // Continue — all candidates also fail novelties.
+    // Continue - all candidates also fail novelties.
     let mut exec_count = 3;
     loop {
         let candidate = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
@@ -284,7 +284,7 @@ fn test_generalization_offset_preserves_structural() {
             break;
         }
         exec_count += 1;
-        // Don't set novelty index — all candidates fail.
+        // Don't set novelty index - all candidates fail.
         if exec_count > 200 {
             panic!("generalization should complete within reasonable iterations");
         }
@@ -440,7 +440,7 @@ fn test_generalization_output_format() {
 
 #[test]
 fn test_generalization_output_leading_trailing_gaps() {
-    // Payload starts and ends with Some — should get leading/trailing gaps.
+    // Payload starts and ends with Some - should get leading/trailing gaps.
     let payload = vec![Some(b'a'), Some(b'b')];
     let meta = GeneralizedInputMetadata::generalized_from_options(&payload);
     let items = meta.generalized();
@@ -485,7 +485,7 @@ fn test_build_generalization_candidate() {
         Some(b'd'),
         Some(b'e'),
     ];
-    // Remove range [1, 4) — removes Some(b'b'), None, Some(b'c').
+    // Remove range [1, 4) - removes Some(b'b'), None, Some(b'c').
     let candidate = build_generalization_candidate(&payload, 1, 4);
     // payload[..1] = [Some(b'a')] → [b'a']
     // payload[4..] = [Some(b'd'), Some(b'e')] → [b'd', b'e']
@@ -496,7 +496,7 @@ fn test_build_generalization_candidate() {
 #[test]
 fn test_build_candidate_skips_gaps() {
     let payload = vec![None, Some(b'a'), Some(b'b'), None, Some(b'c')];
-    // Remove range [1, 3) — removes Some(b'a'), Some(b'b').
+    // Remove range [1, 3) - removes Some(b'a'), Some(b'b').
     let candidate = build_generalization_candidate(&payload, 1, 3);
     // payload[..1] = [None] → skipped
     // payload[3..] = [None, Some(b'c')] → [b'c']
@@ -524,7 +524,7 @@ fn test_generalization_delimiter_gap_finding() {
     }
     let _ = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
 
-    // Drive through all offset passes — don't set novelty (all fail, bytes stay structural).
+    // Drive through all offset passes - don't set novelty (all fail, bytes stay structural).
     let mut count = 0;
     loop {
         let candidate = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
@@ -630,7 +630,7 @@ fn test_generalization_gap_finding_adds_to_corpus() {
         "gap-finding corpus entry should have MapNoveltiesMetadata"
     );
 
-    // Verify that last_interesting_corpus_id is None — stage-found entries
+    // Verify that last_interesting_corpus_id is None - stage-found entries
     // don't set this (only report_result does).
     assert!(
         fuzzer.last_interesting_corpus_id.is_none(),
@@ -726,7 +726,7 @@ fn test_bracket_gaps_marked_on_novelty_survival() {
         "bracket-based generalization should produce gaps when novelties survive"
     );
 
-    // Verify opener byte `(` is preserved (not gapped) — the candidate_range
+    // Verify opener byte `(` is preserved (not gapped) - the candidate_range
     // should exclude the opener position so it remains in a Bytes segment.
     let opener_preserved = metadata
         .generalized()

@@ -11,7 +11,7 @@
  * - validate-scheme: planted "javascript" scheme bug found via CmpLog token
  *   injection (string comparison)
  *
- * NOTE: These tests are inherently probabilistic — they rely on the fuzzer
+ * NOTE: These tests are inherently probabilistic - they rely on the fuzzer
  * finding planted bugs within a 60-second-per-target budget. With CmpLog
  * guidance, this should happen well under the budget. The beforeAll hook
  * deletes the corpus cache so every run starts from a consistent state
@@ -95,7 +95,7 @@ describe("fuzz pipeline: discovers planted bugs end-to-end", () => {
   // fuzz run can take up to ~180s plus startup overhead.
   //
   // Uses async spawn instead of execSync so the outer vitest worker's event
-  // loop stays unblocked — this prevents birpc RPC timeouts (e.g.
+  // loop stays unblocked - this prevents birpc RPC timeouts (e.g.
   // "Timeout calling onTaskUpdate") that occur when execSync blocks for
   // longer than birpc's 60-second default timeout.
   beforeAll(async () => {

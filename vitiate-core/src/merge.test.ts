@@ -285,7 +285,7 @@ describe("runMergeMode", () => {
     await runMergeMode({
       target: (data: Buffer) => {
         if (data.toString() === "bad") {
-          // Write partial coverage before throwing — stale edge 10
+          // Write partial coverage before throwing - stale edge 10
           coverageMap[10] = 1;
           throw new Error("target error");
         }
@@ -394,7 +394,7 @@ describe("runOptimizeMode", () => {
       coverageMap,
     });
 
-    // entry2 is redundant — should be deleted
+    // entry2 is redundant - should be deleted
     expect(existsSync(path1)).toBe(true);
     expect(existsSync(path2)).toBe(false);
     expect(existsSync(path3)).toBe(true);
@@ -481,7 +481,7 @@ describe("runOptimizeMode", () => {
       target: (data: Buffer) => {
         const str = data.toString();
         if (str === "bad-seed") {
-          // Write partial coverage before throwing — edge 10 is stale
+          // Write partial coverage before throwing - edge 10 is stale
           coverageMap[10] = 1;
           throw new Error("seed error");
         } else if (str === "cachedA") {

@@ -29,7 +29,7 @@ const JS_TS_EXTENSIONS = /\.(?:[cm]?[jt]sx?|[jt]s)(?:\?.*)?$/;
  * `require("child_process").execSync = wrapper`). This works for CJS
  * require() and ESM default imports, but ESM named imports
  * (`import { execSync } from "child_process"`) capture a static binding
- * from the ESM namespace — which Vitest's SSR runner externalizes and
+ * from the ESM namespace - which Vitest's SSR runner externalizes and
  * caches before hooks are installed.
  *
  * The hooks plugin rewrites named imports of these modules into default
@@ -63,7 +63,7 @@ interface ParsedClause {
  */
 function extractImportClause(statement: string): string | null {
   const normalized = statement.replace(/\s+/g, " ").trim();
-  // Skip `import type` — at enforce: "pre", TypeScript hasn't been
+  // Skip `import type` - at enforce: "pre", TypeScript hasn't been
   // stripped yet, so we must handle full type-only imports ourselves.
   if (/^import\s+type\s/i.test(normalized)) return null;
 
@@ -242,7 +242,7 @@ function rewriteHookedImports(
     }
 
     // If all named specifiers were type-only (filtered out) and there's no
-    // namespace import, skip this import — it's purely types. Rewriting it
+    // namespace import, skip this import - it's purely types. Rewriting it
     // would introduce an unnecessary side-effectful default import.
     if (destructLines.length === 0 && !parsed.namespaceImport) continue;
 
@@ -332,7 +332,7 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin[] {
   const fuzz = options?.fuzz;
   const cacheDir = options?.cacheDir;
   const coverageMapSize = options?.coverageMapSize;
-  // Always exclude vitiate's own package directories — setup/globals files must
+  // Always exclude vitiate's own package directories - setup/globals files must
   // run before the coverage map exists and cannot be instrumented, and the napi
   // native binding loader must not be instrumented either. In pnpm workspaces,
   // symlinked packages resolve to real paths that bypass the default

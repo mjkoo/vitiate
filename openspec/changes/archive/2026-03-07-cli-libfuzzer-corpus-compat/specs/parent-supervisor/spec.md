@@ -55,7 +55,7 @@ The `testName` and `testDir` fields on `SupervisorOptions` remain required for V
 
 ### Requirement: Native crash detection
 
-The detection mechanism is unchanged — the only modification is that the crash artifact path in the scenarios now references the resolved artifact format (see "Crash artifact format" requirement above) instead of a hardcoded `testdata/fuzz/` path.
+The detection mechanism is unchanged - the only modification is that the crash artifact path in the scenarios now references the resolved artifact format (see "Crash artifact format" requirement above) instead of a hardcoded `testdata/fuzz/` path.
 
 #### Scenario: Native crash on Unix
 

@@ -95,7 +95,7 @@ export class UnsafeEvalDetector implements Detector {
 
     globalThis.Function = FunctionWrapper;
 
-    // Hook setTimeout and setInterval — both accept string first arguments
+    // Hook setTimeout and setInterval - both accept string first arguments
     // that are eval'd. Use installHook-style wrapping via the global object
     // to avoid complex Node.js timer type overloads.
     this.originalSetTimeout = globalThis.setTimeout;
@@ -124,7 +124,7 @@ export class UnsafeEvalDetector implements Detector {
     };
 
     // Safe cast: the wrapper preserves calling convention. The complex overloaded
-    // timer types don't affect the runtime behavior — we just intercept string args.
+    // timer types don't affect the runtime behavior - we just intercept string args.
     (globalThis as Record<string, unknown>)["setTimeout"] = wrapTimer(
       this.originalSetTimeout as unknown as (...args: unknown[]) => unknown,
       "setTimeout",

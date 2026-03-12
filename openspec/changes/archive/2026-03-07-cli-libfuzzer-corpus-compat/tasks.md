@@ -1,7 +1,7 @@
 ## 1. Corpus management additions
 
-- [x] 1.1 Add `writeCorpusEntryToDir(dir, data)` to `corpus.ts` — flat layout (`{dir}/{fullSha256Hex}`), mkdir recursive, idempotent via `wx` flag. Add unit tests.
-- [x] 1.2 Add `writeArtifactWithPrefix(prefix, data, kind)` to `corpus.ts` — writes `{prefix}{kind}-{fullSha256Hex}`, mkdir for parent directory if prefix includes a directory component, idempotent. Add unit tests.
+- [x] 1.1 Add `writeCorpusEntryToDir(dir, data)` to `corpus.ts` - flat layout (`{dir}/{fullSha256Hex}`), mkdir recursive, idempotent via `wx` flag. Add unit tests.
+- [x] 1.2 Add `writeArtifactWithPrefix(prefix, data, kind)` to `corpus.ts` - writes `{prefix}{kind}-{fullSha256Hex}`, mkdir for parent directory if prefix includes a directory component, idempotent. Add unit tests.
 
 ## 2. CLI flag parsing
 
@@ -11,7 +11,7 @@
 ## 3. CLI parent mode plumbing
 
 - [x] 3.1 In `runParentMode`, resolve artifact prefix (flag value or `./` default). Pass artifact prefix to `runSupervisor` via new `artifactPrefix` field on `SupervisorOptions`.
-- [x] 3.2 In `runChildMode`, set env vars for the child: `VITIATE_LIBFUZZER_COMPAT=1` (always), `VITIATE_CORPUS_OUTPUT_DIR` (first corpus dir, if any), `VITIATE_ARTIFACT_PREFIX` (flag value, if provided — omit when not provided so child uses `./` default under compat mode).
+- [x] 3.2 In `runChildMode`, set env vars for the child: `VITIATE_LIBFUZZER_COMPAT=1` (always), `VITIATE_CORPUS_OUTPUT_DIR` (first corpus dir, if any), `VITIATE_ARTIFACT_PREFIX` (flag value, if provided - omit when not provided so child uses `./` default under compat mode).
 
 ## 4. Supervisor artifact prefix support
 
@@ -31,10 +31,10 @@
 - [x] 6.2 Update `runFuzzLoop` signature to accept `corpusOutputDir?: string`, `artifactPrefix?: string`, `libfuzzerCompat?: boolean`. Corpus write logic: if `corpusOutputDir` is set, use `writeCorpusEntryToDir`; else if `libfuzzerCompat`, skip writes; else use `writeCorpusEntry` (cache dir).
 - [x] 6.3 Artifact write logic in `runFuzzLoop`: if `artifactPrefix` is set, use `writeArtifactWithPrefix`; else if `libfuzzerCompat`, use `writeArtifactWithPrefix` with `./` default; else use `writeArtifact` (testdata/fuzz/). Apply to both the main-loop crash path and the stage-crash path.
 - [x] 6.4 Update `artifactDir` computation in `runFuzzLoop` (used for `Watchdog` constructor and `installExceptionHandler`). Replace with resolved `artifactPrefix` string: when in CLI mode, pass the prefix directly (e.g., `./`, `./out/`, `bug-`); when in Vitest mode, pass `testdata/fuzz/{sanitizedName}/` (trailing slash). Pass the prefix string to both `new Watchdog(artifactPrefix, shmemHandle)` and `installExceptionHandler(shmemHandle, artifactPrefix)`.
-- [x] 6.5 Verify Vitest mode is unchanged — when no libfuzzer-compat env vars are set, existing behavior is preserved (cache dir for corpus, testdata/fuzz/ for artifacts).
+- [x] 6.5 Verify Vitest mode is unchanged - when no libfuzzer-compat env vars are set, existing behavior is preserved (cache dir for corpus, testdata/fuzz/ for artifacts).
 
 ## 7. Integration verification
 
-- [x] 7.1 Manual smoke test: `npx vitiate <test> ./corpus/ -artifact_prefix=./` — verify corpus entries land in `./corpus/` and crash artifacts land in `./crash-<hash>`.
-- [x] 7.2 Manual smoke test: `npx vitiate <test>` (no corpus dir, no prefix) — verify no corpus files written to disk, crash artifacts land in `./crash-<hash>`.
+- [x] 7.1 Manual smoke test: `npx vitiate <test> ./corpus/ -artifact_prefix=./` - verify corpus entries land in `./corpus/` and crash artifacts land in `./crash-<hash>`.
+- [x] 7.2 Manual smoke test: `npx vitiate <test>` (no corpus dir, no prefix) - verify no corpus files written to disk, crash artifacts land in `./crash-<hash>`.
 - [x] 7.3 Verify existing CLI tests and fuzz-pipeline tests still pass.

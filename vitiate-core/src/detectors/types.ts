@@ -1,6 +1,6 @@
 /**
  * Error type thrown by detectors when a vulnerability is found.
- * Treated as ExitKind.Crash by the fuzz engine — reuses the existing crash path.
+ * Treated as ExitKind.Crash by the fuzz engine - reuses the existing crash path.
  */
 export class VulnerabilityError extends Error {
   readonly detectorName: string;

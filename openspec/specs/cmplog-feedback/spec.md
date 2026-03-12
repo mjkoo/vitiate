@@ -3,10 +3,10 @@
 ### Requirement: CmpLogOperator enum
 
 The system SHALL define a `CmpLogOperator` enum with the following variants:
-- `Equal` — derived from `"==="` and `"=="`
-- `NotEqual` — derived from `"!=="` and `"!="`
-- `Less` — derived from `"<"` and `"<="`
-- `Greater` — derived from `">"` and `">="`
+- `Equal` - derived from `"==="` and `"=="`
+- `NotEqual` - derived from `"!=="` and `"!="`
+- `Less` - derived from `"<"` and `"<="`
+- `Greater` - derived from `">"` and `">="`
 
 #### Scenario: trace_cmp stores site ID and operator
 
@@ -30,7 +30,7 @@ The system SHALL define a `CmpLogOperator` enum with the following variants:
 
 ### Requirement: Thread-local comparison log accumulator
 
-The system SHALL provide a thread-local accumulator in the `cmplog` module that comparison tracing calls can append to during a fuzz iteration. The accumulator SHALL store enriched entries of type `(CmpValues, u32, CmpLogOperator)` — comparison operand data, site ID, and operator type.
+The system SHALL provide a thread-local accumulator in the `cmplog` module that comparison tracing calls can append to during a fuzz iteration. The accumulator SHALL store enriched entries of type `(CmpValues, u32, CmpLogOperator)` - comparison operand data, site ID, and operator type.
 
 The accumulator SHALL be disabled by default (no entries recorded) and enabled only when a `Fuzzer` instance is active. The maximum capacity SHALL remain 4096 entries per iteration. When the accumulator is full, new entries SHALL be silently dropped.
 
@@ -157,9 +157,9 @@ During `reportResult()`, the drained entries SHALL be processed into `AflppCmpVa
 
 The system SHALL store CmpLog metadata in `AflppCmpValuesMetadata` format, which keys comparison values by site ID. The metadata SHALL contain:
 
-- `orig_cmpvals: HashMap<usize, Vec<CmpValues>>` — comparison values from the main loop execution, keyed by comparison site ID.
-- `new_cmpvals: HashMap<usize, Vec<CmpValues>>` — comparison values from the dual trace execution (colorized input), keyed by comparison site ID.
-- `headers: Vec<(usize, AflppCmpLogHeader)>` — comparison attributes (operator type, operand size) per site ID, stored as a list of (site ID, header) tuples.
+- `orig_cmpvals: HashMap<usize, Vec<CmpValues>>` - comparison values from the main loop execution, keyed by comparison site ID.
+- `new_cmpvals: HashMap<usize, Vec<CmpValues>>` - comparison values from the dual trace execution (colorized input), keyed by comparison site ID.
+- `headers: Vec<(usize, AflppCmpLogHeader)>` - comparison attributes (operator type, operand size) per site ID, stored as a list of (site ID, header) tuples.
 
 The `orig_cmpvals` and `headers` SHALL be populated during `reportResult()` by draining the enriched CmpLog accumulator, grouping entries by site ID, and deriving header attributes from the `CmpLogOperator`.
 
@@ -187,10 +187,10 @@ The `new_cmpvals` SHALL be populated during the dual trace step of the colorizat
 
 During `reportResult()`, the system SHALL store **both** metadata types on the fuzzer state:
 
-- `AflppCmpValuesMetadata` — site-keyed, used by REDQUEEN.
-- `CmpValuesMetadata` — flat list, synthesized by flattening `orig_cmpvals` values into a `Vec<CmpValues>` at drain time. Used by I2S mutators with zero code changes.
+- `AflppCmpValuesMetadata` - site-keyed, used by REDQUEEN.
+- `CmpValuesMetadata` - flat list, synthesized by flattening `orig_cmpvals` values into a `Vec<CmpValues>` at drain time. Used by I2S mutators with zero code changes.
 
-Both metadata types are populated once during `reportResult()`. No runtime adapter is needed — I2S mutators read `CmpValuesMetadata` as before.
+Both metadata types are populated once during `reportResult()`. No runtime adapter is needed - I2S mutators read `CmpValuesMetadata` as before.
 
 #### Scenario: I2S reads from flat metadata
 

@@ -48,9 +48,9 @@ The maximum number of candidates SHALL be capped at `MAX_REDQUEEN_CANDIDATES` (2
 
 The `StageState` enum SHALL include a `Redqueen` variant with the following fields:
 
-- `corpus_id: CorpusId` — the corpus entry being processed.
-- `candidates: Vec<BytesInput>` — pre-generated candidates from `multi_mutate()`.
-- `index: usize` — the current candidate index.
+- `corpus_id: CorpusId` - the corpus entry being processed.
+- `candidates: Vec<BytesInput>` - pre-generated candidates from `multi_mutate()`.
+- `index: usize` - the current candidate index.
 
 #### Scenario: Initial state after begin
 

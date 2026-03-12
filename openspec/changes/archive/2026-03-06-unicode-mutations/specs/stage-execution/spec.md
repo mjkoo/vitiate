@@ -6,8 +6,8 @@ The system SHALL provide `fuzzer.beginStage()` which initiates a stage execution
 
 1. Check that `StageState` is `None` (no stage currently active). If a stage is in progress, return `null`.
 2. Read `last_interesting_corpus_id`. If not set (no corpus entry was recently added via `reportResult()` returning `Interesting` with completed calibration), clear `last_interesting_corpus_id` and return `null`.
-3. Clear `last_interesting_corpus_id` (set to `None`) unconditionally — the ID is consumed regardless of whether the stage proceeds.
-4. Attempt to start the I2S stage: read `CmpValuesMetadata`. If non-empty, begin the I2S stage (unchanged behavior — select 1–128 iterations, clone entry, apply `I2SSpliceReplace`, transition to `StageState::I2S`).
+3. Clear `last_interesting_corpus_id` (set to `None`) unconditionally - the ID is consumed regardless of whether the stage proceeds.
+4. Attempt to start the I2S stage: read `CmpValuesMetadata`. If non-empty, begin the I2S stage (unchanged behavior - select 1-128 iterations, clone entry, apply `I2SSpliceReplace`, transition to `StageState::I2S`).
 5. If `CmpValuesMetadata` is empty (I2S skipped) AND Grimoire is enabled AND the input qualifies for generalization: begin the generalization stage directly (transition to `StageState::Generalization`).
 6. If `CmpValuesMetadata` is empty (I2S skipped) AND Grimoire is enabled AND the input does NOT qualify for generalization BUT already has `GeneralizedInputMetadata`: begin the Grimoire stage directly (transition to `StageState::Grimoire`).
 7. If `CmpValuesMetadata` is empty (I2S skipped) AND Grimoire stages are not applicable (disabled, OR the entry does not qualify for generalization and has no pre-existing `GeneralizedInputMetadata`) AND unicode is enabled AND the corpus entry has valid UTF-8 regions: begin the unicode stage directly (transition to `StageState::Unicode`).
@@ -15,7 +15,7 @@ The system SHALL provide `fuzzer.beginStage()` which initiates a stage execution
 
 The pipeline ordering is: I2S → Generalization → Grimoire → Unicode → None. `beginStage()` always attempts I2S first. If I2S is skipped, it falls through to Grimoire stages (if enabled and applicable), then unicode (if enabled). Generalization, Grimoire, and unicode transitions are also handled by `advanceStage()` when the preceding stage completes.
 
-It SHALL be valid to call `beginStage()` only after `calibrateFinish()` has completed for the current interesting input. This is a protocol-level contract enforced by the JS fuzz loop's calling order (calibration always runs before `beginStage()`), not a Rust-side check — the Rust-side precondition checks are `StageState::None` and `last_interesting_corpus_id` being set.
+It SHALL be valid to call `beginStage()` only after `calibrateFinish()` has completed for the current interesting input. This is a protocol-level contract enforced by the JS fuzz loop's calling order (calibration always runs before `beginStage()`), not a Rust-side check - the Rust-side precondition checks are `StageState::None` and `last_interesting_corpus_id` being set.
 
 #### Scenario: Stage begins with CmpLog data available
 
@@ -117,7 +117,7 @@ The system SHALL provide `fuzzer.advanceStage(exitKind: ExitKind, execTimeNs: nu
 4. Increment `total_execs` and `state.executions`.
 5. Zero the coverage map after processing (via the shared evaluation helper or explicitly for generalization verification).
 
-The `exitKind` parameter SHALL only be `ExitKind.Ok` — crashes and timeouts are handled by `abortStage()`, not `advanceStage()`.
+The `exitKind` parameter SHALL only be `ExitKind.Ok` - crashes and timeouts are handled by `abortStage()`, not `advanceStage()`.
 
 #### Scenario: I2S stage completes and transitions to generalization
 
@@ -236,13 +236,13 @@ The system SHALL provide `fuzzer.abortStage(exitKind: ExitKind)` which cleanly t
 1. Drain the CmpLog accumulator and discard all entries.
 2. Zero the coverage map (may contain partial/corrupt data from the crashed execution).
 3. Increment `total_execs` and `state.executions` (the aborted execution still counts as a target invocation).
-4. Transition `StageState` to `None` (regardless of which stage variant was active — I2S, Generalization, Grimoire, or Unicode).
+4. Transition `StageState` to `None` (regardless of which stage variant was active - I2S, Generalization, Grimoire, or Unicode).
 5. NOT evaluate coverage or add the crashed/timed-out input to the corpus.
-6. NOT add the crash/timeout to the solutions corpus — the crash artifact is written by the JS fuzz loop, but `solutionCount` is not incremented by `abortStage()`. This is intentional: stage-discovered crashes are handled at the JS level (artifact writing) rather than the Rust level (solutions tracking). The `solutionCount` stat only reflects crashes detected via `reportResult()`.
+6. NOT add the crash/timeout to the solutions corpus - the crash artifact is written by the JS fuzz loop, but `solutionCount` is not incremented by `abortStage()`. This is intentional: stage-discovered crashes are handled at the JS level (artifact writing) rather than the Rust level (solutions tracking). The `solutionCount` stat only reflects crashes detected via `reportResult()`.
 
 The `exitKind` parameter is accepted for interface consistency and potential future use (e.g., logging, metrics) but does not influence the current method's behavior.
 
-After `abortStage()` returns, the crash/timeout input and error are available in the JS fuzz loop for artifact writing via the existing crash-handling path. Stage-discovered crashes are NOT minimized inline — the raw stage input is written as the artifact (see fuzz-loop spec for details). The aborted execution's timing is intentionally not reported since the execution was abnormal and the timing would not be meaningful for scheduling.
+After `abortStage()` returns, the crash/timeout input and error are available in the JS fuzz loop for artifact writing via the existing crash-handling path. Stage-discovered crashes are NOT minimized inline - the raw stage input is written as the artifact (see fuzz-loop spec for details). The aborted execution's timing is intentionally not reported since the execution was abnormal and the timing would not be meaningful for scheduling.
 
 #### Scenario: Stage aborted during unicode
 
@@ -269,7 +269,7 @@ After `abortStage()` returns, the crash/timeout input and error are available in
 - **THEN** `StageState` SHALL transition from `Grimoire` to `None`
 - **AND** the remaining Grimoire iterations SHALL be skipped
 
-#### Scenario: Stage aborted on crash (I2S — unchanged)
+#### Scenario: Stage aborted on crash (I2S - unchanged)
 
 - **WHEN** the target throws during an I2S stage execution
 - **AND** `abortStage(ExitKind.Crash)` is called
@@ -390,7 +390,7 @@ State transitions:
 
 ### Requirement: I2S stage mutations use the original corpus entry
 
-Each I2S stage iteration SHALL clone the original corpus entry (identified by `corpus_id` in `StageState::I2S`) and apply a fresh `I2SSpliceReplace` mutation. The mutations SHALL NOT be cumulative — each iteration starts from the unmodified corpus entry, not from the previous iteration's mutated output.
+Each I2S stage iteration SHALL clone the original corpus entry (identified by `corpus_id` in `StageState::I2S`) and apply a fresh `I2SSpliceReplace` mutation. The mutations SHALL NOT be cumulative - each iteration starts from the unmodified corpus entry, not from the previous iteration's mutated output.
 
 The `I2SSpliceReplace` mutator reads `CmpValuesMetadata` from the fuzzer state. Since `advanceStage()` does not update `CmpValuesMetadata` (it discards CmpLog entries), the mutations throughout the stage are driven by the CmpLog data from the original `reportResult()` call that triggered `Interesting`.
 

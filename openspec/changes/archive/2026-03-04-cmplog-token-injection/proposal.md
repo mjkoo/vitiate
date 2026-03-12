@@ -22,6 +22,6 @@ LibAFL's `I2SRandReplace` mutator performs fixed-size byte overwrites when apply
 ## Impact
 
 - **Code:** `vitiate-napi/src/engine.rs` (mutation pipeline, report_result token extraction), potentially `vitiate-napi/src/cmplog.rs` (helper for token extraction).
-- **Dependencies:** No new crate dependencies — `Tokens`, `tokens_mutations`, `TokenInsert`, `TokenReplace` are already in `libafl::mutators`.
+- **Dependencies:** No new crate dependencies - `Tokens`, `tokens_mutations`, `TokenInsert`, `TokenReplace` are already in `libafl::mutators`.
 - **API:** No public API changes. The `Fuzzer` class interface is unchanged.
 - **Performance:** Marginal overhead per iteration to scan CmpLog entries and deduplicate tokens. Token count grows monotonically but is bounded by the 4096-entry CmpLog capacity limit and deduplication.

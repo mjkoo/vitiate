@@ -1,6 +1,6 @@
 ## Why
 
-The current `runs` option controls the maximum iteration count for a fuzz campaign, but the name is ambiguous — it could refer to test runs, calibration runs, or fuzzing iterations. Renaming it to `fuzzExecs` aligns it with the `fuzzTimeMs` naming convention and makes the semantics immediately clear: this is the execution budget for the main fuzz loop. A consistent naming pattern (`fuzzTimeMs` for wall-clock budget, `fuzzExecs` for iteration budget) makes the API self-documenting and enables reliable benchmarking of mutation strategies independent of target performance.
+The current `runs` option controls the maximum iteration count for a fuzz campaign, but the name is ambiguous - it could refer to test runs, calibration runs, or fuzzing iterations. Renaming it to `fuzzExecs` aligns it with the `fuzzTimeMs` naming convention and makes the semantics immediately clear: this is the execution budget for the main fuzz loop. A consistent naming pattern (`fuzzTimeMs` for wall-clock budget, `fuzzExecs` for iteration budget) makes the API self-documenting and enables reliable benchmarking of mutation strategies independent of target performance.
 
 ## What Changes
 
@@ -25,8 +25,8 @@ _(none)_
 
 ## Impact
 
-- **Config**: `vitiate/src/config.ts` — rename field in `FuzzOptionsSchema`, add `getFuzzExecs()` helper, add to `KNOWN_VITIATE_ENV_VARS`.
-- **Fuzz loop**: `vitiate/src/loop.ts` — rename `maxRuns` variable to use `fuzzExecs`.
-- **CLI**: `vitiate/src/cli.ts` (or wherever `-runs` is parsed) — map to new field name.
-- **Tests**: `vitiate/src/loop.test.ts`, any config tests — update field references.
-- **Specs**: `openspec/specs/fuzz-loop/spec.md`, `openspec/specs/standalone-cli/spec.md` — update terminology.
+- **Config**: `vitiate/src/config.ts` - rename field in `FuzzOptionsSchema`, add `getFuzzExecs()` helper, add to `KNOWN_VITIATE_ENV_VARS`.
+- **Fuzz loop**: `vitiate/src/loop.ts` - rename `maxRuns` variable to use `fuzzExecs`.
+- **CLI**: `vitiate/src/cli.ts` (or wherever `-runs` is parsed) - map to new field name.
+- **Tests**: `vitiate/src/loop.test.ts`, any config tests - update field references.
+- **Specs**: `openspec/specs/fuzz-loop/spec.md`, `openspec/specs/standalone-cli/spec.md` - update terminology.

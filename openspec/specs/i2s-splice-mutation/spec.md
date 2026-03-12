@@ -16,8 +16,8 @@ If the selected entry is `CmpValues::Bytes`, the mutator SHALL handle it directl
 
 For `CmpValues::Bytes` entries where a match is found in the input (see "Partial prefix matching" below for how `matched_prefix_len` is determined), the mutator SHALL select the strategy deterministically based on operand lengths:
 
-- **Equal lengths** (`matched_prefix_len == replacement_len`): Always **overwrite** — write `matched_prefix_len` bytes of the replacement operand over the match position. Input length is unchanged. Splice and overwrite produce identical results for equal-length operands.
-- **Different lengths**: Always **splice** — delete the `matched_prefix_len` matched bytes and insert the full replacement operand at the match position. Input length changes by `replacement_len - matched_prefix_len`. Overwriting a prefix of the replacement is incorrect for equality comparisons (produces a truncated constant that won't satisfy the comparison). If the splice would exceed `max_size`, the mutator SHALL fall back to overwrite as a best-effort partial mutation.
+- **Equal lengths** (`matched_prefix_len == replacement_len`): Always **overwrite** - write `matched_prefix_len` bytes of the replacement operand over the match position. Input length is unchanged. Splice and overwrite produce identical results for equal-length operands.
+- **Different lengths**: Always **splice** - delete the `matched_prefix_len` matched bytes and insert the full replacement operand at the match position. Input length changes by `replacement_len - matched_prefix_len`. Overwriting a prefix of the replacement is incorrect for equality comparisons (produces a truncated constant that won't satisfy the comparison). If the splice would exceed `max_size`, the mutator SHALL fall back to overwrite as a best-effort partial mutation.
 
 The mutator SHALL return `MutationResult::Mutated` if a match was found and either overwrite or splice was applied, or `MutationResult::Skipped` if no match was found at any position.
 
@@ -26,7 +26,7 @@ The mutator SHALL return `MutationResult::Mutated` if a match was found and eith
 The mutator SHALL handle empty operands as special cases:
 
 - **Non-empty source + empty replacement**: The scan loop finds the source in the input and deletes it via splice with a zero-length replacement.
-- **Empty source + non-empty replacement**: Empty-source pairs are skipped during the scan loop. If no scan match is found for any pair, the mutator SHALL attempt an **insertion fallback**: insert the non-empty replacement at the random offset `off` (with `matched_prefix_len = 0`). This ensures deletion/replacement of bytes already in the input is preferred over blind insertion. The insertion SHALL respect `max_size` — if `input_len + replacement_len > max_size`, the insertion is skipped and the mutator returns `MutationResult::Skipped`.
+- **Empty source + non-empty replacement**: Empty-source pairs are skipped during the scan loop. If no scan match is found for any pair, the mutator SHALL attempt an **insertion fallback**: insert the non-empty replacement at the random offset `off` (with `matched_prefix_len = 0`). This ensures deletion/replacement of bytes already in the input is preferred over blind insertion. The insertion SHALL respect `max_size` - if `input_len + replacement_len > max_size`, the insertion is skipped and the mutator returns `MutationResult::Skipped`.
 - **Both empty**: Skipped (no mutation possible).
 
 #### Scenario: Different-length operands always splice
@@ -35,7 +35,7 @@ The mutator SHALL handle empty operands as special cases:
 - **AND** the corpus contains an input with bytes `"http://example.com"` (18 bytes)
 - **THEN** the mutated input SHALL be `"javascript://example.com"` (24 bytes)
 - **AND** the input length SHALL have increased by 6 bytes
-- **AND** no coin flip SHALL occur — splice is always used for different-length operands
+- **AND** no coin flip SHALL occur - splice is always used for different-length operands
 
 #### Scenario: Splice replaces longer match with shorter operand
 

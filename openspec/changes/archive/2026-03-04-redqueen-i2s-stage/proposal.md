@@ -1,6 +1,6 @@
 ## Why
 
-Vitiate's I2S (input-to-state) mutations are diluted: each fuzz iteration gets at most one I2S replacement attempt on a randomly-selected corpus entry, whereas libafl_libfuzzer runs 1-128 concentrated I2S mutations on the freshly-traced corpus entry immediately after it's found interesting. CmpLog data collected from entry A may be used to mutate entry B, where the comparison operands don't appear. This significantly reduces the effectiveness of comparison-guided mutation. Fixing this requires the ability to drive multiple target executions from the Rust engine after calibration — a capability the architecture currently lacks. This is also a prerequisite for Grimoire (grammar-aware structural mutations), which needs the same multi-execution infrastructure.
+Vitiate's I2S (input-to-state) mutations are diluted: each fuzz iteration gets at most one I2S replacement attempt on a randomly-selected corpus entry, whereas libafl_libfuzzer runs 1-128 concentrated I2S mutations on the freshly-traced corpus entry immediately after it's found interesting. CmpLog data collected from entry A may be used to mutate entry B, where the comparison operands don't appear. This significantly reduces the effectiveness of comparison-guided mutation. Fixing this requires the ability to drive multiple target executions from the Rust engine after calibration - a capability the architecture currently lacks. This is also a prerequisite for Grimoire (grammar-aware structural mutations), which needs the same multi-execution infrastructure.
 
 ## What Changes
 
@@ -20,7 +20,7 @@ Vitiate's I2S (input-to-state) mutations are diluted: each fuzz iteration gets a
 
 ## Impact
 
-- **vitiate-napi/src/engine.rs**: New `StageState` enum, `begin_stage()`, `advance_stage()`, `abort_stage()` methods, shared `evaluate_coverage()` helper refactored from `report_result()`. The `I2SRandReplace`/`I2SSpliceReplace` mutators are reused directly — no new mutation logic.
+- **vitiate-napi/src/engine.rs**: New `StageState` enum, `begin_stage()`, `advance_stage()`, `abort_stage()` methods, shared `evaluate_coverage()` helper refactored from `report_result()`. The `I2SRandReplace`/`I2SSpliceReplace` mutators are reused directly - no new mutation logic.
 - **vitiate/src/loop.ts**: New stage execution loop after the calibration block, following the same three-branch async pattern (sync crash/timeout, async Promise with re-arm/await/disarm, no-watchdog direct call).
 - **vitiate-napi/index.d.ts**: TypeScript type declarations for the three new NAPI methods.
-- **No breaking changes**: The existing `getNextInput()`/`reportResult()` protocol is unchanged. The stage loop is additive — it runs only when `reportResult()` returns `Interesting` and calibration completes.
+- **No breaking changes**: The existing `getNextInput()`/`reportResult()` protocol is unchanged. The stage loop is additive - it runs only when `reportResult()` returns `Interesting` and calibration completes.

@@ -105,7 +105,7 @@ The regression loop SHALL NOT import or call `setDetectorActive()` directly. All
 
 In fuzzing mode (`VITIATE_FUZZ` is set), the `fuzz()` function SHALL detect whether it is running under a supervisor (the `VITIATE_SUPERVISOR` environment variable is set) and behave accordingly:
 
-**Child mode (supervised):** When `VITIATE_SUPERVISOR` is set, the `fuzz()` callback SHALL enter the fuzz loop directly — creating a `Fuzzer` instance, loading seeds, and running the mutation loop until a termination condition is met. If the fuzz loop result indicates crashes were found (`crashed === true`), the callback SHALL throw an error. The error message SHALL include the crash count and the first crash artifact path.
+**Child mode (supervised):** When `VITIATE_SUPERVISOR` is set, the `fuzz()` callback SHALL enter the fuzz loop directly - creating a `Fuzzer` instance, loading seeds, and running the mutation loop until a termination condition is met. If the fuzz loop result indicates crashes were found (`crashed === true`), the callback SHALL throw an error. The error message SHALL include the crash count and the first crash artifact path.
 
 **Parent mode (unsupervised):** When `VITIATE_SUPERVISOR` is not set, the `fuzz()` callback SHALL become the supervisor for a single fuzz test. It SHALL:
 
@@ -114,12 +114,12 @@ In fuzzing mode (`VITIATE_FUZZ` is set), the `fuzz()` function SHALL detect whet
 3. Enter the shared supervisor wait loop (`runSupervisor()`).
 4. Translate the `SupervisorResult` into Vitest test semantics: `crashed === true` throws an error (test fails), `crashed === false` returns normally (test passes).
 
-Each `fuzz()` call in a test file SHALL get its own independent supervisor lifecycle — its own shmem allocation, its own child process, its own crash recovery. Multiple fuzz tests in the same file run sequentially, each independently supervised.
+Each `fuzz()` call in a test file SHALL get its own independent supervisor lifecycle - its own shmem allocation, its own child process, its own crash recovery. Multiple fuzz tests in the same file run sequentially, each independently supervised.
 
 All fuzz tests SHALL enter fuzzing mode when `VITIATE_FUZZ` is set. Per-test filtering SHALL be handled by Vitest's built-in `--test-name-pattern` / `-t` flag, which skips non-matching test callbacks at the runner level. The `VITIATE_FUZZ_PATTERN` env var, `getFuzzPattern()` helper, and `shouldEnterFuzzLoop()` pattern matching logic SHALL be removed.
 
 > **Removed in change `projects-fuzz-activation`**: The following scenarios were removed: "Filter by pattern via VITIATE_FUZZ_PATTERN", "No pattern means all tests fuzz", "getFuzzPattern returns pattern from VITIATE_FUZZ_PATTERN", "getFuzzPattern returns null when no pattern is set", "getFuzzPattern returns null when pattern is empty".
-> **Reason**: `VITIATE_FUZZ_PATTERN` had incorrect behavior — non-matching tests regression-replayed instead of skipping. Vitest's built-in `-t` / `--test-name-pattern` provides correct runner-level filtering. The standalone CLI adds `-test=<name>` for the same purpose.
+> **Reason**: `VITIATE_FUZZ_PATTERN` had incorrect behavior - non-matching tests regression-replayed instead of skipping. Vitest's built-in `-t` / `--test-name-pattern` provides correct runner-level filtering. The standalone CLI adds `-test=<name>` for the same purpose.
 > **Migration**: Use `VITIATE_FUZZ=1 vitest run -t "<pattern>"` instead of `VITIATE_FUZZ=1 VITIATE_FUZZ_PATTERN=<pattern> vitest run`. For the standalone CLI, use `-test=<name>`.
 
 #### Scenario: Enter fuzz loop (child mode)
@@ -219,13 +219,13 @@ where the full task name follows Vitest's `getTaskFullName` format: `"<relativeF
 - **`process.execPath`** SHALL be used for the Node binary (same version, same flags).
 - **Vitest CLI path** SHALL be resolved via `createRequire(import.meta.url).resolve('vitest/vitest.mjs')`.
 - **`run`** mode ensures Vitest executes once and exits (no watch mode).
-- **`--test-name-pattern`** with anchored regex (`^...$`) filters at the Vitest runner level so only the targeted test runs. All other tests (fuzz and non-fuzz) are skipped — their callbacks never execute.
+- **`--test-name-pattern`** with anchored regex (`^...$`) filters at the Vitest runner level so only the targeted test runs. All other tests (fuzz and non-fuzz) are skipped - their callbacks never execute.
 - **Test file path** SHALL be obtained from `getCurrentTest()?.file?.filepath`.
-- **Regex escaping** SHALL use a well-supported library (e.g., `escape-string-regexp`) — custom regex escaping logic SHALL NOT be implemented.
+- **Regex escaping** SHALL use a well-supported library (e.g., `escape-string-regexp`) - custom regex escaping logic SHALL NOT be implemented.
 
 The child's environment SHALL inherit the parent's env vars plus:
-- `VITIATE_SUPERVISOR=1` — signals the child's `fuzz()` to enter the fuzz loop directly.
-- `VITIATE_FUZZ=1` — activates fuzzing mode.
+- `VITIATE_SUPERVISOR=1` - signals the child's `fuzz()` to enter the fuzz loop directly.
+- `VITIATE_FUZZ=1` - activates fuzzing mode.
 
 The child picks up the same `vitest.config.ts` from the working directory, loads the same vitiate plugin, applies the same SWC transforms.
 

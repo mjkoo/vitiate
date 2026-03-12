@@ -62,7 +62,7 @@ impl Fuzzer {
             _ => return Ok(None),
         };
 
-        // Drain CmpLog (discard — Grimoire doesn't use CmpLog data).
+        // Drain CmpLog (discard - Grimoire doesn't use CmpLog data).
         let _ = crate::cmplog::drain();
 
         // Reset stage state before the fallible evaluate_coverage call. On error,
@@ -74,7 +74,7 @@ impl Fuzzer {
             .take()
             .ok_or_else(|| Error::from_reason("advanceGrimoire: no stashed stage input"))?;
 
-        // The target was invoked — count the execution before the fallible
+        // The target was invoked - count the execution before the fallible
         // evaluate_coverage call so counters stay accurate on error.
         self.total_execs += 1;
         *self.state.executions_mut() += 1;
@@ -88,7 +88,7 @@ impl Fuzzer {
 
         let next_iteration = iteration + 1;
         if next_iteration >= max_iterations {
-            // Grimoire complete — try unicode.
+            // Grimoire complete - try unicode.
             // stage_state is already StageState::None (reset before evaluate_coverage above).
             if let Some(buf) = self.begin_unicode(corpus_id)? {
                 return Ok(Some(buf));

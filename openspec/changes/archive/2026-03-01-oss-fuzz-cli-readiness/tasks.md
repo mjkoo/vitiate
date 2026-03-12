@@ -17,7 +17,7 @@
 
 - [x] 3.1 Create a `testCandidate` wrapper that calls `Watchdog.runTarget()` and returns true if `exitKind=1`
 - [x] 3.2 Integrate into `loop.ts`: after `IterationResult.Solution` with `ExitKind.Crash`, call `minimize()` with the wrapper before `writeCrashArtifact()`
-- [x] 3.3 Skip minimization for `ExitKind.Timeout` — write the original input directly
+- [x] 3.3 Skip minimization for `ExitKind.Timeout` - write the original input directly
 - [x] 3.4 Write integration test: fuzz target that crashes on inputs containing a specific byte pattern, verify the artifact is smaller than the original mutated input
 
 ## 4. Configuration

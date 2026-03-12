@@ -13,13 +13,13 @@ The system SHALL implement a Grimoire mutational stage that runs after the gener
 3. After each execution: drain and discard CmpLog, evaluate coverage via the shared `evaluate_coverage()` helper, and increment execution counters.
 4. Use `StageState::Grimoire { corpus_id, iteration, max_iterations }` as the active state.
 
-The stage uses the same `advanceStage`/`abortStage` protocol as I2S — structurally identical (counted loop with mutator call per iteration).
+The stage uses the same `advanceStage`/`abortStage` protocol as I2S - structurally identical (counted loop with mutator call per iteration).
 
 #### Scenario: Grimoire stage runs after successful generalization
 
 - **WHEN** the generalization stage produces `GeneralizedInputMetadata` for a corpus entry
 - **THEN** the Grimoire mutational stage SHALL begin
-- **AND** 1–128 iterations of Grimoire mutations SHALL be generated
+- **AND** 1-128 iterations of Grimoire mutations SHALL be generated
 
 #### Scenario: Grimoire stage skipped without generalization metadata
 
@@ -42,11 +42,11 @@ The Grimoire mutator SHALL be a `HavocScheduledMutator` wrapping five mutator en
 2. `GrimoireRecursiveReplacementMutator` (1x weight)
 3. `GrimoireStringReplacementMutator` (1x weight)
 4. `GrimoireRandomDeleteMutator` (1x weight)
-5. `GrimoireRandomDeleteMutator` (1x weight — doubled for extra deletion pressure)
+5. `GrimoireRandomDeleteMutator` (1x weight - doubled for extra deletion pressure)
 
 The `GrimoireRandomDeleteMutator` is included twice to counteract the input-growth tendency of extension and recursive replacement mutators.
 
-All five mutators are LibAFL's implementations used directly — they require `HasMetadata + HasRand + HasCorpus` trait bounds, which `FuzzerState` already satisfies.
+All five mutators are LibAFL's implementations used directly - they require `HasMetadata + HasRand + HasCorpus` trait bounds, which `FuzzerState` already satisfies.
 
 #### Scenario: Mutator composition matches libafl_libfuzzer
 
@@ -64,9 +64,9 @@ Each Grimoire stage iteration SHALL:
 4. Enforce `max_input_len` truncation.
 5. Store the `BytesInput` internally (for corpus addition if interesting) and return it as a `Buffer`.
 
-Mutations are NOT cumulative across iterations — each iteration starts from the original corpus entry's `GeneralizedInputMetadata`.
+Mutations are NOT cumulative across iterations - each iteration starts from the original corpus entry's `GeneralizedInputMetadata`.
 
-If the `HavocScheduledMutator` returns `MutationResult::Skipped` for an iteration (e.g., all selected sub-mutators skip due to empty `Tokens` or unsuitable metadata), the iteration SHALL still be counted (iteration counter incremented) and the unmutated `GeneralizedInputMetadata` SHALL be converted to `BytesInput` and returned for execution. This matches the simple counted-loop semantics — skipped mutations do not extend the iteration budget.
+If the `HavocScheduledMutator` returns `MutationResult::Skipped` for an iteration (e.g., all selected sub-mutators skip due to empty `Tokens` or unsuitable metadata), the iteration SHALL still be counted (iteration counter incremented) and the unmutated `GeneralizedInputMetadata` SHALL be converted to `BytesInput` and returned for execution. This matches the simple counted-loop semantics - skipped mutations do not extend the iteration budget.
 
 #### Scenario: Each iteration starts from original metadata
 

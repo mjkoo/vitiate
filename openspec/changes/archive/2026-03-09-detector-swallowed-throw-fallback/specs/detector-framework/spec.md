@@ -10,9 +10,9 @@ The system SHALL provide a utility for safely monkey-patching Node built-in modu
 - Restore the original function when `restore()` is called.
 - Support hooking the same function from multiple detectors (hooks compose as a chain).
 
-The hook wrapper SHALL wrap the `check()` call in a try/catch. When the caught exception is a `VulnerabilityError`, the wrapper SHALL write it to a module-level stash slot (first-write-wins — if the slot is already occupied, the new error is discarded) and then re-throw the original error. The stash preserves the `VulnerabilityError` with its detection-site stack trace as a backup for cases where the target catches the thrown error. Non-`VulnerabilityError` exceptions from the `check` callback SHALL be re-thrown without stashing (these indicate detector bugs, not findings).
+The hook wrapper SHALL wrap the `check()` call in a try/catch. When the caught exception is a `VulnerabilityError`, the wrapper SHALL write it to a module-level stash slot (first-write-wins - if the slot is already occupied, the new error is discarded) and then re-throw the original error. The stash preserves the `VulnerabilityError` with its detection-site stack trace as a backup for cases where the target catches the thrown error. Non-`VulnerabilityError` exceptions from the `check` callback SHALL be re-thrown without stashing (these indicate detector bugs, not findings).
 
-The module SHALL export a `drainStashedVulnerabilityError()` function that returns the stashed `VulnerabilityError` (or `undefined` if none) and clears the slot. `DetectorManager` SHALL be the only caller — it drains in `endIteration()`, `beforeIteration()` (defensive discard), and `teardown()` (defensive cleanup).
+The module SHALL export a `drainStashedVulnerabilityError()` function that returns the stashed `VulnerabilityError` (or `undefined` if none) and clears the slot. `DetectorManager` SHALL be the only caller - it drains in `endIteration()`, `beforeIteration()` (defensive discard), and `teardown()` (defensive cleanup).
 
 #### Scenario: Hook intercepts function call
 

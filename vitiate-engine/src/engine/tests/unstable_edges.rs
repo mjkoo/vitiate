@@ -93,7 +93,7 @@ fn test_no_masking_without_unstable_metadata() {
     let (mut state, mut feedback, ..) = make_fuzzer(map_ptr, map.len());
     let mut mgr = NopEventManager::new();
 
-    // No unstable set — all edges evaluated normally.
+    // No unstable set - all edges evaluated normally.
     map[42] = 1;
 
     let observer =

@@ -23,7 +23,7 @@ The system SHALL extend `FuzzerConfig` with a `detectorTokens` field that accept
 
 ### Requirement: Detector tokens exempt from auto-discovery cap
 
-Detector tokens SHALL NOT count against the `MAX_DICTIONARY_SIZE` (512) cap enforced by the `TokenTracker`. They SHALL be treated like user-provided dictionary tokens — exempt from the cap.
+Detector tokens SHALL NOT count against the `MAX_DICTIONARY_SIZE` (512) cap enforced by the `TokenTracker`. They SHALL be treated like user-provided dictionary tokens - exempt from the cap.
 
 #### Scenario: Detector tokens do not consume dictionary budget
 

@@ -12,7 +12,7 @@ The fuzz loop SHALL implement the following cycle for each iteration:
 6. Call `fuzzer.reportResult(exitKind)` which reads coverage, updates corpus, zeroes the map, and drains CmpLog.
 7. If `reportResult` returns `Solution` and `exitKind` is `Crash`, attempt in-process crash minimization before writing the artifact. Pass the watchdog, target, input, and timeout to the minimizer. Write the minimized (or original, on failure) input as the crash artifact.
 
-The shmem stash (step 2) SHALL occur whenever the `VITIATE_SUPERVISOR` environment variable is set, regardless of whether the supervisor was spawned by the CLI entry point or by the `fuzz()` test callback. The fuzz loop does not need to know which entry point spawned the supervisor — the `VITIATE_SUPERVISOR` env var is the sole indicator.
+The shmem stash (step 2) SHALL occur whenever the `VITIATE_SUPERVISOR` environment variable is set, regardless of whether the supervisor was spawned by the CLI entry point or by the `fuzz()` test callback. The fuzz loop does not need to know which entry point spawned the supervisor - the `VITIATE_SUPERVISOR` env var is the sole indicator.
 
 The loop SHALL terminate when any of these conditions is met:
 

@@ -63,7 +63,7 @@ describe("fuzz loop", () => {
     if (!cov || !Buffer.isBuffer(cov)) return;
     // Set a single fixed edge to 1 (idempotent). This ensures the seed
     // produces novel coverage (so the corpus is non-empty) without making
-    // every subsequent input "interesting" — which would trigger calibration
+    // every subsequent input "interesting" - which would trigger calibration
     // and stage execution, inflating totalExecs beyond the fuzzExecs limit.
     cov[0] = 1;
   }
@@ -325,7 +325,7 @@ describe("fuzz loop", () => {
 
   it("throws when no seeds produce coverage", async () => {
     await setupFuzzingMode();
-    // Target does NOT call simulateCoverage — no coverage is ever written.
+    // Target does NOT call simulateCoverage - no coverage is ever written.
     const target = (_data: Buffer): void => {
       // no-op: simulates broken instrumentation
     };
@@ -522,7 +522,7 @@ describe("fuzz loop", () => {
     expect(result.totalExecs).toBe(50);
     // Calibration re-runs the target 3 additional times per interesting input.
     // Coverage written after `await` must be detected as interesting for this
-    // to hold — if async coverage collection were broken, callCount === 50.
+    // to hold - if async coverage collection were broken, callCount === 50.
     expect(callCount).toBeGreaterThan(50);
   });
 
@@ -856,7 +856,7 @@ describe("fuzz loop", () => {
       const { Fuzzer } = await import("@vitiate/engine");
       const fuzzer = new Fuzzer(covMap, {});
 
-      // No inputs processed yet — beginStage should return null
+      // No inputs processed yet - beginStage should return null
       expect(fuzzer.beginStage()).toBeNull();
 
       // Process a non-interesting input (no coverage written)
@@ -865,7 +865,7 @@ describe("fuzz loop", () => {
       const iterResult = fuzzer.reportResult(0, 1000);
       expect(iterResult).toBe(0);
 
-      // Still no interesting input — beginStage should return null
+      // Still no interesting input - beginStage should return null
       expect(fuzzer.beginStage()).toBeNull();
     });
 
@@ -904,7 +904,7 @@ describe("fuzz loop", () => {
       let crashOnNextNonNovel = false;
 
       const target = (data: Buffer): void => {
-        // No simulateCoverage here — this test writes its own coverage
+        // No simulateCoverage here - this test writes its own coverage
         // via covMap[data[0]!] and needs exact control over which inputs
         // are "novel" to match the crashOnNextNonNovel mechanism.
         callCount++;
@@ -1038,7 +1038,7 @@ describe("fuzz loop", () => {
       };
 
       // Pre-seed the corpus with inputs that trigger both crash sites.
-      // This makes crash discovery deterministic — no reliance on the
+      // This makes crash discovery deterministic - no reliance on the
       // mutator generating specific byte patterns.
       const seedDir = path.join(
         tmpDir,
@@ -1060,7 +1060,7 @@ describe("fuzz loop", () => {
       );
 
       // Both seeded inputs trigger crashes with unique dedup keys.
-      // maxCrashes=0 means unlimited — the loop should NOT stop at any
+      // maxCrashes=0 means unlimited - the loop should NOT stop at any
       // crash limit, only the fuzzExecs limit terminates.
       expect(result.crashed).toBe(true);
       expect(result.crashCount).toBeGreaterThanOrEqual(2);
@@ -1207,7 +1207,7 @@ describe("fuzz loop", () => {
 
       const target = (data: Buffer): void => {
         simulateCoverage(data);
-        // Always throw the same error from the same function — same dedup key
+        // Always throw the same error from the same function - same dedup key
         if (data.length > 0 && data[0] === 0x42) {
           crashCount++;
           throwCrash();
@@ -1258,7 +1258,7 @@ describe("fuzz loop", () => {
 
       expect(result.crashed).toBe(true);
       expect(result.crashCount).toBe(3);
-      // All crashes saved — no dedup possible (stack is unparseable)
+      // All crashes saved - no dedup possible (stack is unparseable)
       expect(result.duplicateCrashesSkipped).toBe(0);
     });
 
@@ -1267,7 +1267,7 @@ describe("fuzz loop", () => {
       let _crashCount = 0;
       const target = (data: Buffer): void => {
         simulateCoverage(data);
-        // Crash when first byte is 0x42 — same bug regardless of input size
+        // Crash when first byte is 0x42 - same bug regardless of input size
         if (data.length > 0 && data[0] === 0x42) {
           _crashCount++;
           throwSameBug();

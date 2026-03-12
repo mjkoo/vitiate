@@ -86,13 +86,13 @@ impl Fuzzer {
                 }
             }
         } else {
-            // First calibration run — store as baseline.
+            // First calibration run - store as baseline.
             self.calibration.first_map = Some(current_map);
             self.calibration.history_map = Some(vec![0u8; self.map_len]);
         }
 
         // Zero coverage map for next run.
-        // SAFETY: Same pointer validity as above. No aliasing — observer is not alive.
+        // SAFETY: Same pointer validity as above. No aliasing - observer is not alive.
         unsafe {
             std::ptr::write_bytes(self.map_ptr, 0, self.map_len);
         }
@@ -147,7 +147,7 @@ impl Fuzzer {
             .as_ref()
             .map(|m| m.iter().filter(|&&b| b > 0).count() as u64)
             .or_else(|| {
-                // No calibration runs completed — fall back to preliminary bitmap_size
+                // No calibration runs completed - fall back to preliminary bitmap_size
                 // from report_result (stored on the testcase's SchedulerTestcaseMetadata).
                 self.state.corpus().get(corpus_id).ok().and_then(|entry| {
                     let tc = entry.borrow();

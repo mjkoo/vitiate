@@ -34,6 +34,12 @@ pre-commit:
       glob: "*.ts"
       run: pnpm exec tsc --noEmit
 
+    no-fancy-dashes:
+      glob: "*.{ts,js,mjs,rs,md,mdx,json,yml,yaml,toml}"
+      run: >
+        ! grep -rPn '[\x{2013}\x{2014}]' {staged_files} ||
+        { echo "Found em-dash or en-dash characters. Use plain hyphens instead."; exit 1; }
+
     rust-autoinherit:
       glob: "*.toml"
       run: >

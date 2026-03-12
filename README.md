@@ -59,7 +59,7 @@ Run your test suite normally and they are replayed as regression tests automatic
 
 ## How It Works
 
-1. **Build time:** The SWC plugin inserts edge coverage counters (`__vitiate_cov[id]++`) and comparison tracing calls into every JS/TS module.
+1. **Transform time:** Vite's plugin hooks run every JS/TS module through the SWC plugin as it is imported, inserting edge coverage counters (`__vitiate_cov[id]++`) and comparison tracing calls. No separate build step required.
 2. **Runtime:** A shared coverage map (zero-copy between JS and Rust) tracks which edges are hit.
 3. **Fuzz loop:** LibAFL reads the coverage map after each execution, evaluates feedback, updates the corpus, and generates the next input using havoc mutations, CmpLog-guided byte replacement, Grimoire structure-aware mutations, and Unicode-aware mutations.
 4. **Crashes:** Inputs that cause uncaught exceptions are saved as crash artifacts and minimized automatically.

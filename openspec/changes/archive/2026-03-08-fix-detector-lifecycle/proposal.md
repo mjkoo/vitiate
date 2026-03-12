@@ -13,7 +13,7 @@ The `DetectorManager` lifecycle has a critical inconsistency: when a fuzz iterat
 
 ### New Capabilities
 
-_(none — this is a bugfix to existing capabilities)_
+_(none - this is a bugfix to existing capabilities)_
 
 ### Modified Capabilities
 

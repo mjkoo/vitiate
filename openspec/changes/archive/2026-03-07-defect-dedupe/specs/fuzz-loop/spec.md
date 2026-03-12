@@ -20,9 +20,9 @@ The fuzz loop SHALL implement the following cycle for each iteration:
     - **Before writing the artifact, compute the dedup key from the exit kind and error. If the dedup key matches an existing entry in the crash dedup map, apply the dedup policy: if the new input is smaller, atomically replace the existing artifact via `replaceArtifact` and update the map entry, then continue to the next iteration (a replacement is not a new crash); if not smaller, suppress the write, increment `duplicateCrashesSkipped`, and continue to the next iteration (a suppressed duplicate is not a new crash). If the dedup key is `undefined`, proceed with the write unconditionally (fail open). If the dedup key is new (not in the map), write the artifact and add the key to the map.**
     - After writing a new artifact (not suppressed or replaced by dedup):
       - If `stopOnCrash` is `true`: the loop terminates.
-      - If `stopOnCrash` is `false`: increment the crash counter, append the artifact path to the crash artifact list, and continue to the next iteration — UNLESS `maxCrashes` is non-zero and the crash counter has reached `maxCrashes`, in which case print a warning to stderr and terminate the loop.
+      - If `stopOnCrash` is `false`: increment the crash counter, append the artifact path to the crash artifact list, and continue to the next iteration - UNLESS `maxCrashes` is non-zero and the crash counter has reached `maxCrashes`, in which case print a warning to stderr and terminate the loop.
 
-The shmem stash (step 2) SHALL occur whenever the `VITIATE_SUPERVISOR` environment variable is set, regardless of whether the supervisor was spawned by the CLI entry point or by the `fuzz()` test callback. The fuzz loop does not need to know which entry point spawned the supervisor — the `VITIATE_SUPERVISOR` env var is the sole indicator.
+The shmem stash (step 2) SHALL occur whenever the `VITIATE_SUPERVISOR` environment variable is set, regardless of whether the supervisor was spawned by the CLI entry point or by the `fuzz()` test callback. The fuzz loop does not need to know which entry point spawned the supervisor - the `VITIATE_SUPERVISOR` env var is the sole indicator.
 
 The loop SHALL terminate when any of these conditions is met:
 
@@ -79,7 +79,7 @@ For `runs` and the time limit, a value of 0 means unlimited (equivalent to no li
 - **THEN** no artifact SHALL be written
 - **AND** the `duplicateCrashesSkipped` counter SHALL be incremented
 - **AND** the crash counter SHALL NOT be incremented (suppressed crashes do not count toward `maxCrashes`)
-- **AND** the loop continues to the next iteration (regardless of `stopOnCrash` — a suppressed duplicate is not a "new" crash)
+- **AND** the loop continues to the next iteration (regardless of `stopOnCrash` - a suppressed duplicate is not a "new" crash)
 
 #### Scenario: Duplicate crash with smaller input replaces artifact
 
@@ -193,9 +193,9 @@ The stage loop SHALL:
 5. After the stage loop completes (normally or via abort), resume the main fuzz iteration cycle.
 
 The stage execution loop SHALL use the same three-branch target execution pattern used by the main iteration cycle and the calibration loop:
-- **Branch 1 — Watchdog sync**: `watchdog.runTarget()` returns non-zero `exitKind` (sync crash/timeout).
-- **Branch 2 — Watchdog async**: `watchdog.runTarget()` returns a Promise in `result`. Re-arm watchdog before `await`. On rejection, check `watchdog.didFire` to distinguish timeout from crash.
-- **Branch 3 — No watchdog**: Direct `target(input)` call with try/catch, checking for Promise return.
+- **Branch 1 - Watchdog sync**: `watchdog.runTarget()` returns non-zero `exitKind` (sync crash/timeout).
+- **Branch 2 - Watchdog async**: `watchdog.runTarget()` returns a Promise in `result`. Re-arm watchdog before `await`. On rejection, check `watchdog.didFire` to distinguish timeout from crash.
+- **Branch 3 - No watchdog**: Direct `target(input)` call with try/catch, checking for Promise return.
 
 #### Scenario: Crash during stage aborts and writes artifact
 

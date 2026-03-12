@@ -220,7 +220,7 @@ export function replaceArtifact(
     try {
       unlinkSync(tmpPath);
     } catch {
-      // Best-effort cleanup — temp file may already be gone
+      // Best-effort cleanup - temp file may already be gone
     }
     throw new Error(`Failed to replace artifact ${tmpPath} → ${newPath}`, {
       cause: e,

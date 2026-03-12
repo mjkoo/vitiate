@@ -1,6 +1,6 @@
 ## Why
 
-The `ProbabilitySamplingScheduler` with `PowerSchedule::fast()` weights corpus entry selection by execution speed, coverage size, and path frequency — but it has no mechanism to identify or deprioritize entries whose coverage is entirely subsumed by other entries. As the corpus grows, redundant entries accumulate and dilute mutation budget across inputs that contribute no unique coverage. A minimizer scheduler wrapping the existing power scheduler would maintain a minimal favored set covering all observed edges, focusing mutation effort on the most efficient representatives.
+The `ProbabilitySamplingScheduler` with `PowerSchedule::fast()` weights corpus entry selection by execution speed, coverage size, and path frequency - but it has no mechanism to identify or deprioritize entries whose coverage is entirely subsumed by other entries. As the corpus grows, redundant entries accumulate and dilute mutation budget across inputs that contribute no unique coverage. A minimizer scheduler wrapping the existing power scheduler would maintain a minimal favored set covering all observed edges, focusing mutation effort on the most efficient representatives.
 
 ## What Changes
 

@@ -1,20 +1,20 @@
 ## 1. CmpLog Enrichment
 
 - [x] 1.1 Define `CmpLogOperator` enum (Equal, NotEqual, Less, Greater) in `cmplog.rs` with conversion from `op` string
-- [x] 1.2 Change thread-local accumulator from `Vec<CmpValues>` to `Vec<(CmpValues, u32, CmpLogOperator)>` — update `push()` signature to accept site ID and operator, update `drain()` return type
+- [x] 1.2 Change thread-local accumulator from `Vec<CmpValues>` to `Vec<(CmpValues, u32, CmpLogOperator)>` - update `push()` signature to accept site ID and operator, update `drain()` return type
 - [x] 1.3 Update `trace_cmp()` in `trace.rs` to pass `cmp_id` and parsed `CmpLogOperator` to `push()` (remove `_` prefix from `_cmp_id`)
 - [x] 1.4 Add `AflppCmpValuesMetadata` and `AflppCmpLogHeader` imports from LibAFL (verify availability in the fork, cherry-pick if needed)
-- [x] 1.5 Update `report_result()` to build `AflppCmpValuesMetadata` from enriched drain: group by site ID into `orig_cmpvals`, derive `headers` from operator/size, initialize `new_cmpvals` empty. Also store `CmpValuesMetadata` (flattened from `orig_cmpvals`) for I2S compatibility — no runtime adapter needed, both types populated at drain time
+- [x] 1.5 Update `report_result()` to build `AflppCmpValuesMetadata` from enriched drain: group by site ID into `orig_cmpvals`, derive `headers` from operator/size, initialize `new_cmpvals` empty. Also store `CmpValuesMetadata` (flattened from `orig_cmpvals`) for I2S compatibility - no runtime adapter needed, both types populated at drain time
 - [x] 1.6 Update token extraction to work on enriched drain tuples (extract `CmpValues` component)
 - [x] 1.7 Write tests for CmpLogOperator parsing, enriched accumulator push/drain, site-keyed grouping, dual metadata storage (AflppCmpValuesMetadata + CmpValuesMetadata), and token extraction
 
 ## 2. Colorization Stage
 
-- [x] 2.1 Implement `type_replace()` function: port LibAFL's `type_replace` algorithm (digit→digit, hex letter→hex letter, whitespace swaps, deterministic special cases, XOR fallbacks for non-class bytes — every byte guaranteed to differ from original)
+- [x] 2.1 Implement `type_replace()` function: port LibAFL's `type_replace` algorithm (digit→digit, hex letter→hex letter, whitespace swaps, deterministic special cases, XOR fallbacks for non-class bytes - every byte guaranteed to differ from original)
 - [x] 2.2 Implement `coverage_hash()` function: fast u64 hash of nonzero coverage map indices using `DefaultHasher`
 - [x] 2.3 Add `StageState::Colorization` variant with fields: corpus_id, original_hash, original_input, changed_input, pending_ranges, taint_ranges, executions, max_executions, awaiting_dual_trace
 - [x] 2.4 Implement `begin_colorization()`: check REDQUEEN enabled + input size ≤ MAX_COLORIZATION_LEN, execute original for baseline hash, apply type_replace, push full range to pending_ranges
-- [x] 2.5 Implement `advance_colorization()`: binary search logic — compare coverage hash, split or accept ranges, process pending_ranges largest-first
+- [x] 2.5 Implement `advance_colorization()`: binary search logic - compare coverage hash, split or accept ranges, process pending_ranges largest-first
 - [x] 2.6 Implement colorization termination: merge adjacent taint_ranges, store `TaintMetadata` on fuzzer state (containing both merged free byte ranges and colorized input vector)
 - [x] 2.7 Implement dual trace terminal step: set `awaiting_dual_trace = true`, generate fully-colorized candidate, drain and retain CmpLog as `new_cmpvals`
 - [x] 2.8 Write tests for type_replace, coverage_hash, binary search convergence (all free, none free, partial), taint range merging, dual trace CmpLog capture

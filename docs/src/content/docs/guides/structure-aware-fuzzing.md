@@ -39,7 +39,7 @@ The fuzzer's mutation engine still operates on raw bytes, but `FuzzedDataProvide
 
 `FuzzedDataProvider` consumes bytes from the end of the buffer, leaving the beginning intact for the first values you request. This means:
 
-- The first few `consume*()` calls get the most "stable" bytes — small mutations to the input tend to change later values while keeping earlier ones similar
+- The first few `consume*()` calls get the most "stable" bytes - small mutations to the input tend to change later values while keeping earlier ones similar
 - The fuzzer can learn which byte positions affect which consumed values and mutate them independently
 
 This is the same design as [LLVM's FuzzedDataProvider](https://llvm.org/docs/LibFuzzer.html#fuzzed-data-provider).
@@ -106,7 +106,7 @@ const temperature = fdp.consumeNumberInRange(-273.15, 1000.0);
 **Use raw bytes** when your target already accepts bytes or strings:
 
 ```ts
-// Parser that takes a string — just convert the buffer directly
+// Parser that takes a string - just convert the buffer directly
 fuzz("parse JSON", (data: Buffer) => {
   JSON.parse(data.toString("utf-8"));
 });
@@ -122,7 +122,7 @@ fuzz("query database", (data: Buffer) => {
 });
 ```
 
-For text-based targets using raw bytes, Vitiate's Grimoire mutation strategy automatically detects that the input is UTF-8 text and applies structure-aware mutations that preserve textual patterns. This happens transparently — you do not need to configure anything.
+For text-based targets using raw bytes, Vitiate's Grimoire mutation strategy automatically detects that the input is UTF-8 text and applies structure-aware mutations that preserve textual patterns. This happens transparently - you do not need to configure anything.
 
 ## Checking Remaining Bytes
 

@@ -14,7 +14,7 @@ The system SHALL automatically determine whether to enable Grimoire (generalizat
 4. Enable Grimoire if `utf8_count > non_utf8_count` (strictly greater than).
 5. Store the result as a `grimoire_enabled: bool` field on the `Fuzzer` struct.
 
-The detection result persists for the fuzzer's lifetime — it is NOT re-evaluated as the corpus grows, except in the deferred detection case (see below).
+The detection result persists for the fuzzer's lifetime - it is NOT re-evaluated as the corpus grows, except in the deferred detection case (see below).
 
 #### Scenario: Majority UTF-8 corpus enables Grimoire
 
@@ -40,9 +40,9 @@ The detection result persists for the fuzzer's lifetime — it is NOT re-evaluat
 
 The `FuzzerConfig` (NAPI config object passed to `Fuzzer::new()`) SHALL accept an optional `grimoire` field:
 
-- `grimoire: true` — Force-enable Grimoire regardless of corpus content.
-- `grimoire: false` — Force-disable Grimoire regardless of corpus content.
-- `grimoire: undefined` (or field absent) — Use auto-detection.
+- `grimoire: true` - Force-enable Grimoire regardless of corpus content.
+- `grimoire: false` - Force-disable Grimoire regardless of corpus content.
+- `grimoire: undefined` (or field absent) - Use auto-detection.
 
 When an explicit value is provided, corpus scanning SHALL be skipped entirely.
 

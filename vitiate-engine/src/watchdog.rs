@@ -74,7 +74,7 @@ fn watchdog_thread(shared: Arc<WatchdogShared>) {
             break;
         }
 
-        // We're armed — compute how long to wait
+        // We're armed - compute how long to wait
         let deadline = match state.deadline {
             Some(d) => d,
             None => continue, // Spurious wake without deadline
@@ -85,7 +85,7 @@ fn watchdog_thread(shared: Arc<WatchdogShared>) {
         loop {
             let now = Instant::now();
             if now >= deadline {
-                // Deadline expired — fire!
+                // Deadline expired - fire!
                 handle_timeout(&shared);
                 break;
             }
@@ -113,7 +113,7 @@ fn watchdog_thread(shared: Arc<WatchdogShared>) {
 fn handle_timeout(shared: &WatchdogShared) {
     if shared.v8_available {
         // Set `fired` BEFORE calling v8_terminate(). The C++ shim reads `fired`
-        // to distinguish timeout from crash — if the main thread sees the V8
+        // to distinguish timeout from crash - if the main thread sees the V8
         // termination exception before `fired` is visible, it misclassifies the
         // timeout as a crash.
         shared.fired.store(true, Ordering::Release);
@@ -134,7 +134,7 @@ fn handle_timeout(shared: &WatchdogShared) {
             }
             let state = shared.state.lock().unwrap();
             if !state.armed || state.shutdown {
-                return; // Disarmed or shutting down — termination was handled
+                return; // Disarmed or shutting down - termination was handled
             }
             let remaining = exit_deadline - now;
             let _ = shared.condvar.wait_timeout(state, remaining).unwrap();
@@ -147,7 +147,7 @@ fn handle_timeout(shared: &WatchdogShared) {
         }
         drop(state);
     } else {
-        // No V8 TerminateExecution — go straight to _exit
+        // No V8 TerminateExecution - go straight to _exit
         shared.fired.store(true, Ordering::Release);
     }
 
@@ -159,7 +159,7 @@ fn handle_timeout(shared: &WatchdogShared) {
 fn exit_with_input_capture(shared: &WatchdogShared) {
     // Read the current input from the shmem region using the generation-counter
     // consistency check. If shmem is not available (no supervisor), skip input
-    // capture — the _exit still fires to terminate the hung process.
+    // capture - the _exit still fires to terminate the hung process.
     if let Some(ref view) = shared.shmem_view
         && let Some(input) = view.read_consistent()
         && !input.is_empty()
@@ -219,7 +219,7 @@ impl Watchdog {
     /// - `shmem`: Optional shared memory handle for input capture before `_exit`.
     ///   When running under the supervisor, pass the shmem handle so the watchdog
     ///   can read the current input from shmem before calling `_exit`. When running
-    ///   without the supervisor (Vitest integration), pass `null` — the `_exit`
+    ///   without the supervisor (Vitest integration), pass `null` - the `_exit`
     ///   fallback still fires but without writing a timeout artifact.
     #[napi(constructor)]
     pub fn new(artifact_prefix: String, shmem: Option<&ShmemHandle>) -> Self {
@@ -305,7 +305,7 @@ impl Watchdog {
         // state is clean before the next fuzz iteration.
         //
         // For the sync timeout path, the C++ shim already called
-        // CancelTerminateExecution so NAPI calls could succeed — this second
+        // CancelTerminateExecution so NAPI calls could succeed - this second
         // cancel is redundant but harmless (CancelTerminateExecution is
         // idempotent). For the async timeout path, this is the *only* cancel,
         // since the C++ shim never ran the timeout branch. The intentional
@@ -324,7 +324,7 @@ impl Watchdog {
     /// Deterministically shut down the watchdog thread.
     ///
     /// Signals the background thread to exit, wakes it via condvar, and joins
-    /// it. Safe to call multiple times — subsequent calls are no-ops.
+    /// it. Safe to call multiple times - subsequent calls are no-ops.
     /// Also called automatically by `Drop`, but calling explicitly allows JS
     /// callers to release the thread without waiting for GC.
     #[napi]
@@ -365,7 +365,7 @@ impl Watchdog {
         self.arm(timeout_ms);
 
         let raw_env = env.raw();
-        // SAFETY: `raw_env` is valid — obtained from the `Env` parameter which
+        // SAFETY: `raw_env` is valid - obtained from the `Env` parameter which
         // NAPI guarantees is valid for the duration of this call. `input` and
         // `target` are owned Rust values being converted to raw NAPI handles.
         let input_value = unsafe { Buffer::to_napi_value(raw_env, input)? };
@@ -412,12 +412,12 @@ impl Watchdog {
         // Note: in practice, `timed_out` is always false here. This fallback
         // path only runs when the C++ shim isn't initialized (v8_available is
         // false), and without V8 termination the watchdog calls _exit() on
-        // timeout — the process is dead before we reach this point. The timeout
+        // timeout - the process is dead before we reach this point. The timeout
         // handling below exists for defensive consistency with the C++ shim path.
         let timed_out = self.shared.fired.load(Ordering::Acquire);
 
         // If V8 termination fired, cancel it before any NAPI calls to clear
-        // V8's internal termination flag. disarm() calls cancel again —
+        // V8's internal termination flag. disarm() calls cancel again -
         // idempotent, harmless.
         if timed_out {
             v8_shim::v8_cancel_terminate();
@@ -449,7 +449,7 @@ impl Watchdog {
                 obj.set("exitKind", 2u32)?;
 
                 // Create a timeout error for consistency with the C++ shim path.
-                // Best-effort — exitKind is already set for classification.
+                // Best-effort - exitKind is already set for classification.
                 let msg = "fuzz target timed out";
                 let mut js_msg: napi::sys::napi_value = std::ptr::null_mut();
                 let msg_status = unsafe {
@@ -548,7 +548,7 @@ mod tests {
         }
         shared.condvar.notify_one();
 
-        // Disarm before deadline — no sleep needed; the watchdog thread checks
+        // Disarm before deadline - no sleep needed; the watchdog thread checks
         // `armed` on every condvar wake, so the disarm is observed regardless of
         // whether the thread has entered its wait loop yet.
         {
@@ -558,7 +558,7 @@ mod tests {
         }
         shared.condvar.notify_one();
 
-        // Shutdown and join — thread::join() establishes happens-before, so all
+        // Shutdown and join - thread::join() establishes happens-before, so all
         // writes from the watchdog thread are visible after join returns.
         {
             let mut state = shared.state.lock().unwrap();
@@ -599,7 +599,7 @@ mod tests {
         }
         shared.condvar.notify_one();
 
-        // Shut down while armed — no sleep needed; the watchdog thread checks
+        // Shut down while armed - no sleep needed; the watchdog thread checks
         // `shutdown` before every condvar wait, so setting it and notifying
         // always causes clean exit regardless of timing.
         {

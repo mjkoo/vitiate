@@ -56,7 +56,7 @@ function captureSnapshot(name: string, proto: object): PrototypeSnapshot {
   for (const key of Reflect.ownKeys(proto)) {
     const descriptor = Object.getOwnPropertyDescriptor(proto, key);
     if (!descriptor) continue;
-    // Skip function-valued data properties (polyfills) — these are not
+    // Skip function-valued data properties (polyfills) - these are not
     // pollution targets and should not trigger false positives.
     if ("value" in descriptor && typeof descriptor.value === "function") {
       continue;
@@ -119,7 +119,7 @@ export class PrototypePollutionDetector implements Detector {
       for (const key of currentKeys) {
         const descriptor = Object.getOwnPropertyDescriptor(proto, key);
         if (!descriptor) continue;
-        // Skip function-valued data properties (polyfills) — matching
+        // Skip function-valued data properties (polyfills) - matching
         // the captureSnapshot filter.
         if ("value" in descriptor && typeof descriptor.value === "function") {
           continue;

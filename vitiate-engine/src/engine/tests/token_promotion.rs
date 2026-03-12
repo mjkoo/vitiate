@@ -200,7 +200,7 @@ fn test_promoted_tokens_not_reinserted_into_candidates() {
 
     let dict_len_before = fuzzer.state.metadata::<Tokens>().unwrap().tokens().len();
 
-    // Push the same CmpLog entry again — the token must NOT re-enter candidates.
+    // Push the same CmpLog entry again - the token must NOT re-enter candidates.
     for _ in 0..TOKEN_PROMOTION_THRESHOLD {
         let _input = fuzzer.get_next_input().unwrap();
         cmplog::push(
@@ -326,7 +326,7 @@ fn user_tokens_do_not_count_toward_cmplog_cap() {
     let mut fuzzer = crate::engine::Fuzzer::new(coverage_map, Some(config)).unwrap();
     fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
 
-    // User tokens exceed MAX_DICTIONARY_SIZE — they should all be present.
+    // User tokens exceed MAX_DICTIONARY_SIZE - they should all be present.
     let user_token_count = fuzzer.state.metadata::<Tokens>().unwrap().tokens().len();
     assert_eq!(user_token_count, MAX_DICTIONARY_SIZE + 100);
 
@@ -405,7 +405,7 @@ fn detector_tokens_inserted_and_exempt_from_cap() {
     assert!(fuzzer.token_tracker.promoted.contains(b"../".as_slice()));
     assert_eq!(fuzzer.token_tracker.pre_seeded_count, 3);
 
-    // CmpLog promotion should still work — detector tokens don't count toward cap.
+    // CmpLog promotion should still work - detector tokens don't count toward cap.
     for i in 0..TOKEN_PROMOTION_THRESHOLD {
         let _input = fuzzer.get_next_input().unwrap();
         // SAFETY: index 1 is within the 256-byte map; no other observer is live.
@@ -438,7 +438,7 @@ fn duplicate_detector_tokens_do_not_cause_underflow() {
     cmplog::disable();
     cmplog::drain();
 
-    // Pass duplicate detector tokens — HashSet deduplicates but pre_seeded_count
+    // Pass duplicate detector tokens - HashSet deduplicates but pre_seeded_count
     // would be the Vec length. With saturating_sub this must not panic or
     // permanently disable CmpLog promotion.
     let coverage_map: Buffer = vec![0u8; 256].into();

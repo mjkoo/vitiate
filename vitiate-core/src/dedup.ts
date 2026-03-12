@@ -47,7 +47,7 @@ export function normalizeStackForDedup(stack: string): string | undefined {
         funcName = rest.slice(0, parenIdx);
         locationPart = rest.slice(parenIdx + 2, -1); // strip parens
       } else {
-        // "new Constructor filePath:line:col" (no parens — bare path)
+        // "new Constructor filePath:line:col" (no parens - bare path)
         const spaceIdx = rest.indexOf(" ", 4);
         if (spaceIdx !== -1) {
           funcName = rest.slice(0, spaceIdx);
@@ -60,7 +60,7 @@ export function normalizeStackForDedup(stack: string): string | undefined {
       funcName = rest.slice(0, parenIdx);
       locationPart = rest.slice(parenIdx + 2, -1); // strip parens
     } else {
-      // "filePath:line:col" (anonymous — no function name, no parens)
+      // "filePath:line:col" (anonymous - no function name, no parens)
       funcName = "";
       locationPart = rest;
     }
@@ -96,7 +96,7 @@ export function computeDedupKey(
   // in the hash to distinguish crashes from different error categories in
   // the same code path. We use error.name instead of error.message because
   // messages often contain input-dependent content (e.g., "unexpected token
-  // 'x' at position 42") which defeats deduplication — the same logical bug
+  // 'x' at position 42") which defeats deduplication - the same logical bug
   // produces different keys for each input.
   const hashInput = normalized + "\n" + error.name;
   return createHash("sha256").update(hashInput).digest("hex");

@@ -32,7 +32,7 @@ pub(super) fn set_n_fuzz_entry_for_corpus_id(state: &FuzzerState, id: CorpusId) 
 /// Iterates `CmpValues::Bytes` entries (extracting the `CmpValues` component
 /// from enriched tuples) and collects both operands, filtering out empty
 /// sequences, all-null byte sequences, and all-0xFF byte sequences.
-/// Non-Bytes entries (U8, U16, U32, U64) are skipped — integer comparisons
+/// Non-Bytes entries (U8, U16, U32, U64) are skipped - integer comparisons
 /// already produce a companion `CmpValues::Bytes` entry with decimal string
 /// representations.
 pub(super) fn extract_tokens_from_cmplog(entries: &[crate::cmplog::CmpLogEntry]) -> Vec<Vec<u8>> {

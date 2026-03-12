@@ -66,7 +66,7 @@ describe("minimize", () => {
 
   describe("byte deletion pass", () => {
     it("removes interior bytes that are irrelevant to the crash", async () => {
-      // Input: [0x41, 0x00, 0x00, 0x00, 0x42] — crashes if contains both 0x41 and 0x42
+      // Input: [0x41, 0x00, 0x00, 0x00, 0x42] - crashes if contains both 0x41 and 0x42
       const input = Buffer.from([0x41, 0x00, 0x00, 0x00, 0x42]);
       const testCandidate = crashesIfContainsAll([0x41, 0x42]);
 
@@ -120,7 +120,7 @@ describe("minimize", () => {
 
   describe("budget tracking", () => {
     it("stops when iteration cap is reached and returns best so far", async () => {
-      // Large input with crash pattern at the start — but iteration budget is very small
+      // Large input with crash pattern at the start - but iteration budget is very small
       const input = Buffer.alloc(500);
       input[0] = 0xaa;
       let execCount = 0;
@@ -212,7 +212,7 @@ describe("minimize", () => {
 
       expect(result.length).toBe(1);
       // Truncation: ceil(log2(1024)) + 1 = 11 execs.
-      // Byte deletion on a 1-byte input: 1 exec (try removing the only byte — fails).
+      // Byte deletion on a 1-byte input: 1 exec (try removing the only byte - fails).
       // Total should be ~12, well under 20.
       expect(execCount).toBeLessThanOrEqual(20);
     });

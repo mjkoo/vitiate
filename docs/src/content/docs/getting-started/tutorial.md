@@ -51,8 +51,10 @@ This is the simplest form: pass every input to the parser and let any uncaught e
 Seed inputs give the fuzzer a head start. First, run the fuzzer briefly so it creates the seed directory (the directory name includes a hash prefix derived from the test name):
 
 ```bash
-npx vitiate test/url-parser.fuzz.ts -runs 1
+VITIATE_FUZZ=1 npx vitest run test/url-parser.fuzz.ts
 ```
+
+Press `Ctrl+C` after a few seconds, or set a limit with the `fuzzExecs` option in your test.
 
 Check the created directory name:
 
@@ -70,12 +72,12 @@ echo -n 'http://user:pass@host.com:8080/path?key=value&foo=bar#section' > "$SEED
 echo -n 'ftp://[::1]:21/file' > "$SEED_DIR/seed-ipv6"
 ```
 
-Seeds do not need to trigger bugs — they just need to exercise different code paths so the fuzzer can mutate from diverse starting points.
+Seeds do not need to trigger bugs - they just need to exercise different code paths so the fuzzer can mutate from diverse starting points.
 
 ## Step 4: Run the Fuzzer
 
 ```bash
-npx vitiate test/url-parser.fuzz.ts
+VITIATE_FUZZ=1 npx vitest run test/url-parser.fuzz.ts
 ```
 
 Watch the output. The `edges` counter shows how many unique code edges the fuzzer has reached. The `corpus` counter shows how many inputs have been kept because they found new coverage.
@@ -97,7 +99,7 @@ ls test/testdata/fuzz/*parseUrl*/crash-*
 xxd test/testdata/fuzz/*parseUrl*/crash-*
 ```
 
-The file contains the raw bytes that triggered the crash. The filename includes a SHA-256 hash for deduplication — if the fuzzer finds the same crash twice, it will not create a duplicate file.
+The file contains the raw bytes that triggered the crash. The filename includes a SHA-256 hash for deduplication - if the fuzzer finds the same crash twice, it will not create a duplicate file.
 
 ## Step 6: Fix the Bug
 
@@ -106,12 +108,12 @@ Examine the stack trace from the fuzzer output to understand the root cause. Fix
 ## Step 7: Run Regression Tests
 
 ```bash
-npm test
+npx vitest run
 ```
 
 Vitest runs your fuzz tests in regression mode, replaying every file in the seed corpus directory (including crash artifacts) and every cached corpus entry. If your fix is correct, the crash artifact no longer throws and the test passes.
 
-If you revert the fix, the test fails immediately — the crash artifact is a permanent guard against regression.
+If you revert the fix, the test fails immediately - the crash artifact is a permanent guard against regression.
 
 ## Step 8: Add a Dictionary (Optional)
 
@@ -134,7 +136,7 @@ If the fuzzer is slow to find coverage, add domain-specific tokens. Create a dic
 "localhost"
 ```
 
-The fuzzer will use these tokens during mutation, making it much more likely to generate structurally valid URLs that exercise deep parsing paths.
+The fuzzer will use these tokens during mutation, making it much more likely to generate structurally valid URLs that exercise deep parsing paths. See [Dictionaries and Seeds](/vitiate/guides/dictionaries-and-seeds/) for the full dictionary syntax, hex escapes for binary tokens, and links to premade dictionaries for common formats.
 
 ## Step 9: Tighten the Target (Optional)
 
@@ -168,6 +170,6 @@ The fuzzing workflow is:
 
 1. Write a fuzz target that exercises the code under test
 2. Optionally add seed inputs and a dictionary
-3. Run `npx vitiate` and let it find crashes
+3. Run `VITIATE_FUZZ=1 npx vitest run` and let it find crashes
 4. Fix the bugs; crash artifacts become regression tests automatically
 5. Tighten assertions over time as the code matures

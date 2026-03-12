@@ -87,7 +87,7 @@ Dual-path functions (both path arguments SHALL be checked):
 
 For `fs/promises`, the sync variants do not exist. The detector SHALL hook only the async function names that are present on the `fs/promises` module object (e.g., `readFile`, `writeFile`, `stat`, `copyFile`, etc.). Presence SHALL be determined by a runtime check (e.g., `functionName in module`) rather than a hardcoded list, so the hooks adapt to the Node.js version's exports.
 
-Note: `require("fs").promises` returns the same object as `require("fs/promises")`. Hooking `fs/promises` via `installHook` patches the module object's properties, so calls through `fs.promises.readFile(...)` are also intercepted. This is a side effect of the shared object identity, not an explicit design goal — the detector does not separately hook the `fs.promises` property chain.
+Note: `require("fs").promises` returns the same object as `require("fs/promises")`. Hooking `fs/promises` via `installHook` patches the module object's properties, so calls through `fs.promises.readFile(...)` are also intercepted. This is a side effect of the shared object identity, not an explicit design goal - the detector does not separately hook the `fs.promises` property chain.
 
 #### Scenario: Dual-path function with traversal in destination
 

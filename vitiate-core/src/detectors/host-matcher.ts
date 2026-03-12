@@ -5,7 +5,7 @@
  * into an efficient matching structure. Used by the SSRF detector for both
  * blocklist and allowlist evaluation.
  *
- * Uses ipaddr.js for robust IP parsing — handles octal notation, hex notation,
+ * Uses ipaddr.js for robust IP parsing - handles octal notation, hex notation,
  * single-integer IPs, IPv4-mapped IPv6, and other edge cases that bypass
  * naive parsers.
  */
@@ -93,7 +93,7 @@ function parseRule(spec: string): Rule {
       return { kind: "ipv6-cidr", spec, cidr: [addr as ipaddr.IPv6, 128] };
     }
   } catch {
-    // Not an IP — treat as hostname
+    // Not an IP - treat as hostname
   }
 
   // Hostname (case-insensitive)

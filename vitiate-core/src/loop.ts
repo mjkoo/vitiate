@@ -147,7 +147,7 @@ async function executeTarget(
     return { exitKind: ExitKind.Ok };
   }
 
-  // No timeout — call target directly
+  // No timeout - call target directly
   try {
     const maybePromise = target(input);
     if (maybePromise instanceof Promise) {
@@ -228,7 +228,7 @@ async function runCalibration(
     if (exitKind !== ExitKind.Ok) {
       // Detector findings during calibration are surfaced as crashes.
       // Regular crashes/timeouts during calibration are silently swallowed
-      // (existing behavior — calibration re-runs the same input, crashes
+      // (existing behavior - calibration re-runs the same input, crashes
       // indicate instability, not a new finding).
       const vulnError =
         detectorError ??
@@ -309,7 +309,7 @@ async function runStage(
     }
 
     const stageExecTimeNs = Number(process.hrtime.bigint() - stageStartNs);
-    // Only reached for Ok executions — crashes break above.
+    // Only reached for Ok executions - crashes break above.
     stageResult = fuzzer.advanceStage(ExitKind.Ok, stageExecTimeNs);
   }
 
@@ -385,13 +385,13 @@ export async function runFuzzLoop(
   const cacheDir = getCacheDir();
 
   // Resolve dictionary path: env var (from CLI -dict flag) takes precedence.
-  // Convention-based discovery only applies in Vitest mode — CLI mode uses
+  // Convention-based discovery only applies in Vitest mode - CLI mode uses
   // only the explicit -dict flag, never convention-based discovery.
   const dictionaryPath =
     getDictionaryPathEnv() ??
     (libfuzzerCompat ? undefined : getDictionaryPath(testDir, testName));
 
-  // Install detector hooks (idempotent — no-op if setup.ts already did it).
+  // Install detector hooks (idempotent - no-op if setup.ts already did it).
   // setup.ts calls this early so ESM imports capture patched wrappers.
   installDetectorModuleHooks(options.detectors);
   const detectorManager = getDetectorManager();
@@ -484,7 +484,7 @@ export async function runFuzzLoop(
   }
 
   // Only create the watchdog when a timeout is configured. Creating a Watchdog
-  // spawns a thread, resolves V8 symbols via dlsym — unnecessary overhead when
+  // spawns a thread, resolves V8 symbols via dlsym - unnecessary overhead when
   // no timeout enforcement is needed. Pass the shmem handle so the watchdog can
   // read from shmem on its _exit path.
   const timeoutMs = options.timeoutMs;
@@ -651,7 +651,7 @@ export async function runFuzzLoop(
         let crashData: Buffer = input;
 
         // Minimize crash inputs for JS exceptions (ExitKind.Crash) only.
-        // Skip minimization for timeouts — timing-dependent behavior may not
+        // Skip minimization for timeouts - timing-dependent behavior may not
         // reproduce with shorter inputs.
         if (exitKind === ExitKind.Crash) {
           crashData = await minimizeCrashInput(
@@ -725,7 +725,7 @@ export async function runFuzzLoop(
             detectorManager,
           );
           if (stageCrash) {
-            // Stage crashes are NOT minimized — write raw input.
+            // Stage crashes are NOT minimized - write raw input.
             if (
               handleCrash(
                 stageCrash.input,
@@ -801,7 +801,7 @@ async function minimizeCrashInput(
       return false;
     }
 
-    // Target threw (Crash) — accept iff original was also a non-detector crash.
+    // Target threw (Crash) - accept iff original was also a non-detector crash.
     return (
       result.exitKind === ExitKind.Crash &&
       originalVulnerabilityType === undefined

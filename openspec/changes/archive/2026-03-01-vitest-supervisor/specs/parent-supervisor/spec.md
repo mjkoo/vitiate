@@ -28,7 +28,7 @@ The caller provides a `spawnChild` function that encapsulates the entry-point-sp
 - **CLI:** `spawn(process.execPath, process.argv.slice(1), { env: { VITIATE_SUPERVISOR: "1" } })`
 - **Vitest:** `spawn(process.execPath, [vitestCliPath, "run", testFile, "--test-name-pattern", pattern], { env: { VITIATE_SUPERVISOR: "1", VITIATE_FUZZ: "1" } })`
 
-Everything else — wait loop, exit code interpretation, shmem read, artifact write, respawn logic, SIGINT handling — SHALL be shared.
+Everything else - wait loop, exit code interpretation, shmem read, artifact write, respawn logic, SIGINT handling - SHALL be shared.
 
 #### Scenario: CLI uses shared supervisor
 

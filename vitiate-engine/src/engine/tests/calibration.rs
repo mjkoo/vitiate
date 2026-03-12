@@ -119,7 +119,7 @@ fn test_calibrate_run_detects_unstable_edges() {
     let second_map = {
         map.fill(0);
         map[10] = 1;
-        // map[20] = 0 — differs from first
+        // map[20] = 0 - differs from first
         map.to_vec()
     };
 
@@ -453,7 +453,7 @@ fn test_calibrate_finish_without_calibrate_run() {
     }
 
     // calibrate_finish() without ever calling calibrate_run().
-    // calibration_first_map is None — the fallback should use the
+    // calibration_first_map is None - the fallback should use the
     // bitmap_size from the testcase's SchedulerTestcaseMetadata.
     fuzzer.calibrate_finish().unwrap();
 

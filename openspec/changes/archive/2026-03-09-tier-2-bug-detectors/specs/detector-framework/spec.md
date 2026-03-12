@@ -4,12 +4,12 @@
 
 The module-hook utility SHALL export a `stashAndRethrow(error: unknown): never` helper function (or equivalent) that replicates the stash-and-rethrow behavior used internally by `installHook`. The helper SHALL:
 
-1. If `error` is a `VulnerabilityError`, write it to the module-level stash slot (first-write-wins — if the slot is already occupied, the new error is discarded).
+1. If `error` is a `VulnerabilityError`, write it to the module-level stash slot (first-write-wins - if the slot is already occupied, the new error is discarded).
 2. Re-throw the original error unconditionally.
 
 This helper is intended for detectors that wrap globals or prototype methods directly (not via `installHook`) but still need their findings recoverable by `DetectorManager.endIteration()` when the target swallows the thrown error.
 
-The calling convention for direct-replacement hooks differs from `installHook`. In `installHook`, the check callback throws a `VulnerabilityError` and the `installHook` wrapper catches it, stashes, and re-throws. With `stashAndRethrow`, the direct-replacement wrapper creates the `VulnerabilityError` and passes it to `stashAndRethrow` directly — `stashAndRethrow` stashes and throws in one step (it never returns). Example usage:
+The calling convention for direct-replacement hooks differs from `installHook`. In `installHook`, the check callback throws a `VulnerabilityError` and the `installHook` wrapper catches it, stashes, and re-throws. With `stashAndRethrow`, the direct-replacement wrapper creates the `VulnerabilityError` and passes it to `stashAndRethrow` directly - `stashAndRethrow` stashes and throws in one step (it never returns). Example usage:
 
 ```typescript
 // Inside a direct-replacement wrapper:
@@ -177,7 +177,7 @@ The `setDetectorActive()` function SHALL be an internal implementation detail of
 
 ### Requirement: Detector configuration schema
 
-*This replaces the main spec's statement that "Tier 2 detector fields (`redos`, `ssrf`, `unsafeEval`) are NOT included in this change" — they are now included.*
+*This replaces the main spec's statement that "Tier 2 detector fields (`redos`, `ssrf`, `unsafeEval`) are NOT included in this change" - they are now included.*
 
 The system SHALL define per-detector configuration using Valibot schemas within the `FuzzOptions.detectors` key. Each detector field SHALL accept either a `boolean` or a detector-specific options object:
 

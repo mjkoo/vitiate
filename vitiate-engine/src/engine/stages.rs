@@ -15,7 +15,7 @@ use super::{Fuzzer, STAGE_MAX_ITERATIONS};
 use crate::types::ExitKind;
 
 /// Tracks the lifecycle of a multi-execution stage (I2S, Grimoire, etc.).
-/// Designed for extensibility — future stages add new variants.
+/// Designed for extensibility - future stages add new variants.
 pub(crate) enum StageState {
     /// No stage is active.
     None,
@@ -86,7 +86,7 @@ pub(crate) enum StageState {
 }
 
 impl Fuzzer {
-    /// Implementation of `begin_stage` — dispatches to the appropriate stage.
+    /// Implementation of `begin_stage` - dispatches to the appropriate stage.
     pub(super) fn begin_stage_impl(&mut self) -> Result<Option<Buffer>> {
         // Precondition: no stage currently active.
         if !matches!(self.stage_state, StageState::None) {
@@ -196,10 +196,10 @@ impl Fuzzer {
         Ok(None)
     }
 
-    /// Implementation of `advance_stage` — processes stage result, returns next input.
+    /// Implementation of `advance_stage` - processes stage result, returns next input.
     ///
     /// `exit_kind` is only used by the Redqueen stage (to decide whether to
-    /// record a solution). All other stages evaluate coverage as `Ok` — stage
+    /// record a solution). All other stages evaluate coverage as `Ok` - stage
     /// crashes are handled via `abort_stage`, not `advance_stage`.
     pub(super) fn advance_stage_impl(
         &mut self,
@@ -245,7 +245,7 @@ impl Fuzzer {
         };
 
         // Drain and discard CmpLog accumulator (do not update CmpValuesMetadata
-        // or promote tokens — stage CmpLog data is noise from I2S-mutated inputs).
+        // or promote tokens - stage CmpLog data is noise from I2S-mutated inputs).
         let _ = crate::cmplog::drain();
 
         // Reset stage state before the fallible evaluate_coverage call. On error,
@@ -256,7 +256,7 @@ impl Fuzzer {
             .last_stage_input
             .take()
             .ok_or_else(|| Error::from_reason("advanceStage: no stashed stage input"))?;
-        // The target was invoked — count the execution before the fallible
+        // The target was invoked - count the execution before the fallible
         // evaluate_coverage call so counters stay accurate on error.
         self.total_execs += 1;
         *self.state.executions_mut() += 1;
@@ -270,7 +270,7 @@ impl Fuzzer {
 
         let next_iteration = iteration + 1;
         if next_iteration >= max_iterations {
-            // I2S stage complete — try transitioning to Generalization, Grimoire, or Unicode.
+            // I2S stage complete - try transitioning to Generalization, Grimoire, or Unicode.
             // stage_state is already StageState::None (reset before evaluate_coverage above).
             return self.begin_post_i2s_stages(corpus_id);
         }
@@ -303,7 +303,7 @@ impl Fuzzer {
         Ok(Some(Buffer::from(bytes)))
     }
 
-    /// Implementation of `abort_stage` — cleanly terminates the current stage.
+    /// Implementation of `abort_stage` - cleanly terminates the current stage.
     pub(super) fn abort_stage_impl(&mut self, exit_kind: ExitKind) -> Result<()> {
         if matches!(self.stage_state, StageState::None) {
             return Ok(());
@@ -312,7 +312,7 @@ impl Fuzzer {
         // Drain and discard CmpLog accumulator.
         let _ = crate::cmplog::drain();
 
-        // Take the stage input into a local before cleanup — we may need it
+        // Take the stage input into a local before cleanup - we may need it
         // for solution recording below.
         let stage_input = self.last_stage_input.take();
 
@@ -333,7 +333,7 @@ impl Fuzzer {
         *self.state.executions_mut() += 1;
 
         // Record crash/timeout as a solution. This is the only fallible
-        // operation — all cleanup is already done above.
+        // operation - all cleanup is already done above.
         if matches!(exit_kind, ExitKind::Crash | ExitKind::Timeout)
             && let Some(input_bytes) = stage_input
         {

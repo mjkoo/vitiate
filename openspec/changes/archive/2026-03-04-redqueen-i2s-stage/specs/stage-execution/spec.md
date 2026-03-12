@@ -6,9 +6,9 @@ The system SHALL provide `fuzzer.beginStage()` which initiates a stage execution
 
 1. Check that `StageState` is `None` (no stage currently active). If a stage is in progress, return `null`.
 2. Read `last_interesting_corpus_id`. If not set (no corpus entry was recently added via `reportResult()` returning `Interesting` with completed calibration), clear `last_interesting_corpus_id` and return `null`.
-3. Clear `last_interesting_corpus_id` (set to `None`) unconditionally — the ID is consumed regardless of whether the stage proceeds.
+3. Clear `last_interesting_corpus_id` (set to `None`) unconditionally - the ID is consumed regardless of whether the stage proceeds.
 4. Read the `CmpValuesMetadata` currently stored on the fuzzer state (populated by the preceding `reportResult()` call).
-5. If `CmpValuesMetadata` is empty (no comparison data available, i.e., the vector contains zero `CmpValues` entries), return `null` immediately — no stage executions are needed.
+5. If `CmpValuesMetadata` is empty (no comparison data available, i.e., the vector contains zero `CmpValues` entries), return `null` immediately - no stage executions are needed.
 6. Select a random iteration count between 1 and 128 inclusive (`state.rand_mut().below(128) + 1`).
 7. Clone the corpus entry identified by the consumed corpus ID (the entry that triggered `Interesting`).
 8. Apply `I2SSpliceReplace` mutation (which wraps `I2SRandReplace`) to the cloned input, using the `CmpValuesMetadata` as the mutation source.
@@ -17,7 +17,7 @@ The system SHALL provide `fuzzer.beginStage()` which initiates a stage execution
 11. Transition the internal `StageState` from `None` to `I2S { corpus_id, iteration: 0, max_iterations }`.
 12. Return the mutated input as a `Buffer`.
 
-It SHALL be valid to call `beginStage()` only after `calibrateFinish()` has completed for the current interesting input. This is a protocol-level contract enforced by the JS fuzz loop's calling order (calibration always runs before `beginStage()`), not a Rust-side check — the Rust-side precondition checks are `StageState::None` and `last_interesting_corpus_id` being set.
+It SHALL be valid to call `beginStage()` only after `calibrateFinish()` has completed for the current interesting input. This is a protocol-level contract enforced by the JS fuzz loop's calling order (calibration always runs before `beginStage()`), not a Rust-side check - the Rust-side precondition checks are `StageState::None` and `last_interesting_corpus_id` being set.
 
 #### Scenario: Stage begins with CmpLog data available
 
@@ -75,7 +75,7 @@ The system SHALL provide `fuzzer.advanceStage(exitKind: ExitKind, execTimeNs: nu
 5. If `iteration < max_iterations`: clone the original corpus entry (identified by `StageState::I2S.corpus_id`), apply `I2SSpliceReplace` mutation, enforce `max_input_len` truncation, store the mutated input internally (for the next `advanceStage()` call's corpus addition), and return the mutated input as a `Buffer`.
 6. If `iteration >= max_iterations`: transition `StageState` to `None` and return `null` (stage complete).
 
-The `exitKind` parameter SHALL only be `ExitKind.Ok` — crashes and timeouts are handled by `abortStage()`, not `advanceStage()`. The parameter is accepted for forward-compatibility with future stage types that may handle non-Ok exit kinds; calling with non-Ok values in the current I2S stage is a programming error and behavior is undefined.
+The `exitKind` parameter SHALL only be `ExitKind.Ok` - crashes and timeouts are handled by `abortStage()`, not `advanceStage()`. The parameter is accepted for forward-compatibility with future stage types that may handle non-Ok exit kinds; calling with non-Ok values in the current I2S stage is a programming error and behavior is undefined.
 
 #### Scenario: Stage advances with more iterations remaining
 
@@ -142,11 +142,11 @@ The system SHALL provide `fuzzer.abortStage(exitKind: ExitKind)` which cleanly t
 3. Increment `total_execs` and `state.executions` (the aborted execution still counts as a target invocation).
 4. Transition `StageState` to `None`.
 5. NOT evaluate coverage or add the crashed/timed-out input to the corpus.
-6. NOT add the crash/timeout to the solutions corpus — the crash artifact is written by the JS fuzz loop, but `solutionCount` is not incremented by `abortStage()`. This is intentional: stage-discovered crashes are handled at the JS level (artifact writing) rather than the Rust level (solutions tracking). The `solutionCount` stat only reflects crashes detected via `reportResult()`.
+6. NOT add the crash/timeout to the solutions corpus - the crash artifact is written by the JS fuzz loop, but `solutionCount` is not incremented by `abortStage()`. This is intentional: stage-discovered crashes are handled at the JS level (artifact writing) rather than the Rust level (solutions tracking). The `solutionCount` stat only reflects crashes detected via `reportResult()`.
 
 The `exitKind` parameter is accepted for interface consistency and potential future use (e.g., logging, metrics) but does not influence the current method's behavior.
 
-After `abortStage()` returns, the crash/timeout input and error are available in the JS fuzz loop for artifact writing via the existing crash-handling path. Stage-discovered crashes are NOT minimized inline — the raw stage input is written as the artifact (see fuzz-loop spec for details). The aborted execution's timing is intentionally not reported since the execution was abnormal and the timing would not be meaningful for scheduling.
+After `abortStage()` returns, the crash/timeout input and error are available in the JS fuzz loop for artifact writing via the existing crash-handling path. Stage-discovered crashes are NOT minimized inline - the raw stage input is written as the artifact (see fuzz-loop spec for details). The aborted execution's timing is intentionally not reported since the execution was abnormal and the timing would not be meaningful for scheduling.
 
 #### Scenario: Stage aborted on crash
 
@@ -187,7 +187,7 @@ State transitions:
 - `I2S` → `I2S`: Via `advanceStage()` when `iteration < max_iterations` (iteration incremented).
 - `I2S` → `None`: Via `advanceStage()` when `iteration >= max_iterations`, or via `abortStage()`.
 
-The `StageState` enum SHALL be designed for extensibility — future stages (Generalization, Grimoire) add new variants without changing existing transitions.
+The `StageState` enum SHALL be designed for extensibility - future stages (Generalization, Grimoire) add new variants without changing existing transitions.
 
 #### Scenario: Initial state is None
 
@@ -210,7 +210,7 @@ The `StageState` enum SHALL be designed for extensibility — future stages (Gen
 
 ### Requirement: I2S stage mutations use the original corpus entry
 
-Each I2S stage iteration SHALL clone the original corpus entry (identified by `corpus_id` in `StageState::I2S`) and apply a fresh `I2SSpliceReplace` mutation. The mutations SHALL NOT be cumulative — each iteration starts from the unmodified corpus entry, not from the previous iteration's mutated output.
+Each I2S stage iteration SHALL clone the original corpus entry (identified by `corpus_id` in `StageState::I2S`) and apply a fresh `I2SSpliceReplace` mutation. The mutations SHALL NOT be cumulative - each iteration starts from the unmodified corpus entry, not from the previous iteration's mutated output.
 
 The `I2SSpliceReplace` mutator reads `CmpValuesMetadata` from the fuzzer state. Since `advanceStage()` does not update `CmpValuesMetadata` (it discards CmpLog entries), the mutations throughout the stage are driven by the CmpLog data from the original `reportResult()` call that triggered `Interesting`.
 

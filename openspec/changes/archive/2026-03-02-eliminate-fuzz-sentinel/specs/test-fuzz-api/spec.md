@@ -4,7 +4,7 @@
 
 In fuzzing mode (`VITIATE_FUZZ` is set), the `fuzz()` function SHALL detect whether it is running under a supervisor (the `VITIATE_SUPERVISOR` environment variable is set) and behave accordingly:
 
-**Child mode (supervised):** When `VITIATE_SUPERVISOR` is set, the `fuzz()` callback SHALL enter the fuzz loop directly — creating a `Fuzzer` instance, loading seeds, and running the mutation loop until a termination condition is met. This is the existing behavior, unchanged.
+**Child mode (supervised):** When `VITIATE_SUPERVISOR` is set, the `fuzz()` callback SHALL enter the fuzz loop directly - creating a `Fuzzer` instance, loading seeds, and running the mutation loop until a termination condition is met. This is the existing behavior, unchanged.
 
 **Parent mode (unsupervised):** When `VITIATE_SUPERVISOR` is not set, the `fuzz()` callback SHALL become the supervisor for a single fuzz test. It SHALL:
 
@@ -13,9 +13,9 @@ In fuzzing mode (`VITIATE_FUZZ` is set), the `fuzz()` function SHALL detect whet
 3. Enter the shared supervisor wait loop (`runSupervisor()`).
 4. Translate the `SupervisorResult` into Vitest test semantics: `crashed === true` throws an error (test fails), `crashed === false` returns normally (test passes).
 
-Each `fuzz()` call in a test file SHALL get its own independent supervisor lifecycle — its own shmem allocation, its own child process, its own crash recovery. Multiple fuzz tests in the same file run sequentially, each independently supervised.
+Each `fuzz()` call in a test file SHALL get its own independent supervisor lifecycle - its own shmem allocation, its own child process, its own crash recovery. Multiple fuzz tests in the same file run sequentially, each independently supervised.
 
-If `VITIATE_FUZZ_PATTERN` is set, its value SHALL be treated as a regex filter — only fuzz tests whose name matches the pattern SHALL enter supervised fuzzing mode. Non-matching tests SHALL fall back to regression behavior. If `VITIATE_FUZZ_PATTERN` is not set (or empty), all fuzz tests SHALL enter fuzzing mode.
+If `VITIATE_FUZZ_PATTERN` is set, its value SHALL be treated as a regex filter - only fuzz tests whose name matches the pattern SHALL enter supervised fuzzing mode. Non-matching tests SHALL fall back to regression behavior. If `VITIATE_FUZZ_PATTERN` is not set (or empty), all fuzz tests SHALL enter fuzzing mode.
 
 `getFuzzPattern()` SHALL read `process.env["VITIATE_FUZZ_PATTERN"]` and return its value if it is a non-empty string, or `null` otherwise. The function SHALL NOT inspect the value of `VITIATE_FUZZ`.
 

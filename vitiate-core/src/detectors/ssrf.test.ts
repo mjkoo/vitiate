@@ -229,7 +229,7 @@ describe("SsrfDetector", () => {
       setDetectorActive(true);
 
       const http = require("http") as typeof import("http");
-      // Should not throw — 10.0.0.5 is in the allowlist
+      // Should not throw - 10.0.0.5 is in the allowlist
       const req = http.request("http://10.0.0.5/api");
       req.on("error", () => {}); // Suppress unhandled socket errors
       req.destroy();
@@ -267,7 +267,7 @@ describe("SsrfDetector", () => {
       setDetectorActive(true);
 
       const http = require("http") as typeof import("http");
-      // 10.0.0.5 is in the allowlist — should not throw
+      // 10.0.0.5 is in the allowlist - should not throw
       const req = http.request("http://10.0.0.5/api");
       req.on("error", () => {}); // Suppress unhandled socket errors
       req.destroy();
@@ -355,7 +355,7 @@ describe("SsrfDetector", () => {
       setDetectorActive(true);
 
       const http = require("http") as typeof import("http");
-      // Numeric argument is not a URL, options, or Request — extractHostname
+      // Numeric argument is not a URL, options, or Request - extractHostname
       // returns null and the hook passes through to the original function.
       // Node's http.request accepts this without throwing synchronously,
       // so we just verify no VulnerabilityError is thrown.
@@ -370,7 +370,7 @@ describe("SsrfDetector", () => {
       setDetectorActive(true);
 
       const http = require("http") as typeof import("http");
-      // Malformed URL should not crash the hook — it passes through to the original
+      // Malformed URL should not crash the hook - it passes through to the original
       // which will also fail, but the hook shouldn't throw VulnerabilityError
       let threw = false;
       try {
@@ -403,7 +403,7 @@ describe("SsrfDetector", () => {
   it("is inactive outside iteration window", () => {
     detector = new SsrfDetector();
     detector.setup();
-    // Do NOT set detectorActive — should pass through
+    // Do NOT set detectorActive - should pass through
     const http = require("http") as typeof import("http");
     const req = http.request("http://127.0.0.1/admin");
     req.on("error", () => {}); // Suppress unhandled socket errors

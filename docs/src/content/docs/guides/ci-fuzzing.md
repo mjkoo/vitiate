@@ -1,52 +1,49 @@
 ---
-title: CI Fuzzing and libFuzzer Compatibility
-description: Running Vitiate in CI and using its libFuzzer-compatible CLI interface.
+title: CI Fuzzing
+description: Integrating Vitiate into your CI pipeline for regression testing and continuous fuzzing.
 ---
 
-Vitiate's CLI accepts libFuzzer-compatible flags, making it usable with fuzzing infrastructure that expects a libFuzzer-style interface.
+Fuzzing delivers the most value when it is integrated into your CI pipeline at two levels: fast feedback on every change and deep exploration on a schedule. This guide covers the Vitest-integrated approach (`VITIATE_FUZZ=1 npx vitest run`). If your CI pipeline needs libFuzzer-compatible flags or integration with a fuzzing platform, see [Standalone CLI](/vitiate/guides/cli/).
 
-## libFuzzer-Compatible Interface
+## Branches and Pull Requests
 
-The CLI maps libFuzzer conventions to Vitiate:
-
-```bash
-# Standard libFuzzer invocation pattern
-npx vitiate test/parser.fuzz.ts corpus/ -max_len 1024 -max_total_time 300
-
-# Corpus minimization (merge mode)
-npx vitiate test/parser.fuzz.ts -merge 1 minimized/ corpus_a/ corpus_b/
-
-# Artifact output location
-npx vitiate test/parser.fuzz.ts -artifact_prefix ./crashes/
-```
-
-Positional arguments after the test file are treated as corpus directories, matching libFuzzer behavior.
-
-## CI Fuzzing
-
-### Environment Variables
-
-Use environment variables to configure fuzzing in CI without modifying test files:
+Run **regression tests** on every branch push and PR. Regression mode replays the committed seed corpus and cached corpus without generating new inputs, so it is fast, deterministic, and catches regressions introduced by the change:
 
 ```bash
-# Run for 5 minutes
-VITIATE_FUZZ_TIME=300 npx vitiate test/parser.fuzz.ts
-
-# Run for exactly 100,000 iterations
-VITIATE_FUZZ_EXECS=100000 npx vitiate test/parser.fuzz.ts
+npx vitest run
 ```
 
-### GitHub Actions Example
+For additional confidence, run a **short fuzzing session** (30 seconds to a few minutes) after regression tests pass. This catches shallow bugs introduced by the change before they reach the main branch:
+
+```bash
+VITIATE_FUZZ=1 VITIATE_FUZZ_TIME=300 npx vitest run
+```
+
+`VITIATE_FUZZ_TIME` sets the fuzzing duration in seconds per target. Keep it short enough that PRs are not blocked waiting for the fuzzer. The goal is fast feedback, not exhaustive exploration.
+
+## Main and Release Branches
+
+Run **long nightly fuzzing sessions** (minutes to hours) on main or release branches via a scheduled CI job. These sessions have time to exercise deep code paths and find bugs that short runs miss:
+
+```bash
+VITIATE_FUZZ=1 VITIATE_FUZZ_TIME=3600 npx vitest run
+```
+
+After a nightly session, optionally [minimize and checkpoint the corpus](/vitiate/concepts/corpus/#checkpointing-fuzzer-progress) to feed coverage gains back into the regression suite so that every subsequent PR benefits from the fuzzer's discoveries.
+
+## GitHub Actions Example
 
 ```yaml
 name: Fuzz
 on:
+  push:
+    branches: [main]
+  pull_request:
   schedule:
     - cron: '0 2 * * *'  # nightly
-  workflow_dispatch:
 
 jobs:
-  fuzz:
+  regression:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -54,19 +51,19 @@ jobs:
         with:
           node-version: 20
       - run: npm ci
-      - run: npx vitiate test/parser.fuzz.ts -max_total_time 600
-      - uses: actions/upload-artifact@v4
-        if: failure()
+      - run: npx vitest run
+
+  fuzz:
+    runs-on: ubuntu-latest
+    needs: regression
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          name: crash-artifacts
-          path: testdata/fuzz/**/crash-*
-```
+          node-version: 20
+      - run: npm ci
 
-### Corpus Caching
-
-Persist the corpus across CI runs to build on previous coverage:
-
-```yaml
+      # Cache the corpus across runs to build on previous coverage
       - uses: actions/cache@v4
         with:
           path: .vitiate-corpus
@@ -74,34 +71,38 @@ Persist the corpus across CI runs to build on previous coverage:
           restore-keys: |
             fuzz-corpus-${{ hashFiles('test/**/*.fuzz.ts') }}-
             fuzz-corpus-
+
+      # Short fuzz on PRs, long fuzz on nightly schedule
+      - name: Fuzz (short)
+        if: github.event_name == 'pull_request'
+        run: VITIATE_FUZZ=1 VITIATE_FUZZ_TIME=300 npx vitest run
+
+      - name: Fuzz (nightly)
+        if: github.event_name == 'schedule'
+        run: VITIATE_FUZZ=1 VITIATE_FUZZ_TIME=3600 npx vitest run
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: crash-artifacts
+          path: testdata/fuzz/**/crash-*
 ```
 
-## Corpus Minimization
+## Corpus Caching
 
-Over time, the corpus grows. Periodically minimize it:
+The cache key strategy in the example above ensures each CI run builds on previous coverage:
 
-```bash
-# Merge multiple corpus directories into a minimized set
-npx vitiate test/parser.fuzz.ts -merge 1 minimized-corpus/ .vitiate-corpus/ extra-corpus/
+- `run_number` in the key means each run saves a new cache entry rather than overwriting
+- `restore-keys` falls back to the most recent cache for the same test files, then to any previous cache
+- If fuzz test files change, the cache starts fresh (since coverage maps may be incompatible)
 
-# Replace the old corpus with the minimized one
-rm -rf .vitiate-corpus/
-mv minimized-corpus/ .vitiate-corpus/
-```
+For background on corpus locations and what gets cached, see [Corpus Locations](/vitiate/concepts/corpus/#corpus-locations). For periodic cleanup of the cached corpus, see [Corpus Minimization](/vitiate/concepts/corpus/#corpus-minimization).
 
-The merge operation evaluates every input's coverage contribution and keeps only the smallest set that maintains the same total coverage.
+## Summary
 
-## Supported Flags
-
-| Flag | libFuzzer Equivalent | Notes |
-|------|---------------------|-------|
-| `-max_len` | `-max_len` | Maximum input length |
-| `-timeout` | `-timeout` | Per-execution timeout (seconds) |
-| `-runs` | `-runs` | Total iterations |
-| `-max_total_time` | `-max_total_time` | Total time limit (seconds) |
-| `-seed` | `-seed` | RNG seed |
-| `-dict` | `-dict` | Dictionary file |
-| `-merge` | `-merge` | Corpus minimization |
-| `-artifact_prefix` | `-artifact_prefix` | Crash artifact location |
-| `-fork` | `-fork` | Parsed for compatibility, ignored (always 1) |
-| `-jobs` | `-jobs` | Parsed for compatibility, ignored (always 1) |
+| CI context | What to run | Why |
+|---|---|---|
+| Every push/PR | Regression tests (`npx vitest run`) | Fast, deterministic - catches regressions |
+| Every push/PR | Short fuzz (5min) | Catches shallow bugs before merge |
+| Nightly on main | Long fuzz (1h) | Deep exploration, finds subtle bugs |
+| After nightly fuzz | Optimize + checkpoint | Feeds coverage gains back to regression suite |

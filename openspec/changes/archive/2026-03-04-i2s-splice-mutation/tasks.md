@@ -24,13 +24,13 @@ All unit tests MUST use a seeded `StdRand` to make RNG-dependent behavior determ
 - [x] 3.5 Write unit test: non-`Bytes` entry selected → delegates entire call to inner `I2SRandReplace`
 - [x] 3.6 Write unit test: splice exceeding `max_size` falls back to overwrite
 - [x] 3.7 Write unit test: splice within `max_size` proceeds normally
-- [x] 3.8 Write unit test: bidirectional matching — forward (`v.0` found → replace with `v.1`) and reverse (`v.1` found → replace with `v.0`)
+- [x] 3.8 Write unit test: bidirectional matching - forward (`v.0` found → replace with `v.1`) and reverse (`v.1` found → replace with `v.0`)
 - [x] 3.9 Write unit test: partial prefix match with splice uses full replacement operand
 - [x] 3.10 Write unit test: empty `CmpValuesMetadata` or empty input returns `MutationResult::Skipped`
 
 ## 4. Verification
 
-- [x] 4.1 Run `cargo clippy --workspace --all-targets` — no warnings
-- [x] 4.2 Run `cargo fmt --all --check` — clean
-- [x] 4.3 Run full test suite (`pnpm test`) — all pass (pre-existing example-url-parser failure unrelated to this change)
+- [x] 4.1 Run `cargo clippy --workspace --all-targets` - no warnings
+- [x] 4.2 Run `cargo fmt --all --check` - clean
+- [x] 4.3 Run full test suite (`pnpm test`) - all pass (pre-existing example-url-parser failure unrelated to this change)
 - [x] 4.4 Run fuzz-pipeline e2e test to confirm validate-scheme target now passes (currently failing due to havoc stacking corrupting token-injected mutations)

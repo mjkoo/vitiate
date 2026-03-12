@@ -1,14 +1,14 @@
 ## Why
 
-On Windows, the watchdog cannot gracefully interrupt hung fuzz targets — it falls back to `ExitProcess()`, killing the entire Vitest worker process and producing "Channel closed" errors. This prevents in-process timeout tests from running on Windows and forces the `loop.test.ts` sync timeout test to be skipped. Node.js on Windows exports V8 C++ symbols from `node.exe`, making `TerminateExecution` available via `GetProcAddress` — the same approach used with `dlsym` on Unix.
+On Windows, the watchdog cannot gracefully interrupt hung fuzz targets - it falls back to `ExitProcess()`, killing the entire Vitest worker process and producing "Channel closed" errors. This prevents in-process timeout tests from running on Windows and forces the `loop.test.ts` sync timeout test to be skipped. Node.js on Windows exports V8 C++ symbols from `node.exe`, making `TerminateExecution` available via `GetProcAddress` - the same approach used with `dlsym` on Unix.
 
 Additionally, the Rust fallback path (used when the C++ shim returns 0) has a latent bug with two interacting problems: `disarm()` atomically resets `fired` to false before the classification code reads it, causing timeouts to be silently misclassified as crashes; and it does not call `CancelTerminateExecution()` before making NAPI calls, leaving V8's internal termination flag set. Today this is harmless because the fallback is only reached when V8 termination is unavailable (the process dies via `_exit` before the code runs), but it should be fixed as defense-in-depth regardless of the Windows work.
 
 ## What Changes
 
 - Compile `v8_shim.cc` on all platforms (not just Unix), using `GetProcAddress` with MSVC-mangled symbol names on Windows and `dlsym` with Itanium-mangled names on Unix.
-- Remove `#[cfg(unix)]` / `#[cfg(not(unix))]` gates from the Rust V8 shim wrapper (`v8_shim.rs`) — the C++ shim handles unavailability gracefully at runtime.
-- Make the `_exit` fallback timeout multiplier dynamic: `5x` when V8 termination is available, `1x` when it is not — rather than hardcoding based on `cfg!(unix)`.
+- Remove `#[cfg(unix)]` / `#[cfg(not(unix))]` gates from the Rust V8 shim wrapper (`v8_shim.rs`) - the C++ shim handles unavailability gracefully at runtime.
+- Make the `_exit` fallback timeout multiplier dynamic: `5x` when V8 termination is available, `1x` when it is not - rather than hardcoding based on `cfg!(unix)`.
 - Fix the Rust fallback path in `watchdog.rs`: read `fired` before `disarm()` resets it, call `CancelTerminateExecution()` before NAPI calls when fired, and use the saved value for classification.
 - Update `build.rs` to compile `v8_shim.cc` on Windows targets (MSVC).
 - Remove the `skipIf(win32)` from the sync timeout test in `loop.test.ts`.

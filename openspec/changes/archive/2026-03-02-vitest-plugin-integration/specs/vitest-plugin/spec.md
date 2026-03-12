@@ -60,7 +60,7 @@ TO: Setup file registration
 
 The plugin SHALL register the runtime setup file via the `config()` hook by returning `{ test: { setupFiles: [setupPath] } }`. Vite deep-merges `config()` return values into the resolved config before Vitest processes them, ensuring the setup file is registered before any test code executes.
 
-The `configureVitest` hook SHALL NOT be used for setup file registration because it fires after Vitest's project config is resolved and frozen — `setupFiles` cannot be modified at that point.
+The `configureVitest` hook SHALL NOT be used for setup file registration because it fires after Vitest's project config is resolved and frozen - `setupFiles` cannot be modified at that point.
 
 #### Scenario: Setup file is registered via config hook
 

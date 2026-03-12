@@ -19,9 +19,9 @@ The fuzz loop SHALL implement the following cycle for each iteration:
     - For timeouts (normal or stage), write the input as a timeout artifact without minimization.
     - After writing the artifact:
       - If `stopOnCrash` is `true`: the loop terminates.
-      - If `stopOnCrash` is `false`: increment the crash counter, append the artifact path to the crash artifact list, and continue to the next iteration — UNLESS `maxCrashes` is non-zero and the crash counter has reached `maxCrashes`, in which case print a warning to stderr and terminate the loop.
+      - If `stopOnCrash` is `false`: increment the crash counter, append the artifact path to the crash artifact list, and continue to the next iteration - UNLESS `maxCrashes` is non-zero and the crash counter has reached `maxCrashes`, in which case print a warning to stderr and terminate the loop.
 
-The shmem stash (step 2) SHALL occur whenever the `VITIATE_SUPERVISOR` environment variable is set, regardless of whether the supervisor was spawned by the CLI entry point or by the `fuzz()` test callback. The fuzz loop does not need to know which entry point spawned the supervisor — the `VITIATE_SUPERVISOR` env var is the sole indicator.
+The shmem stash (step 2) SHALL occur whenever the `VITIATE_SUPERVISOR` environment variable is set, regardless of whether the supervisor was spawned by the CLI entry point or by the `fuzz()` test callback. The fuzz loop does not need to know which entry point spawned the supervisor - the `VITIATE_SUPERVISOR` env var is the sole indicator.
 
 The loop SHALL terminate when any of these conditions is met:
 
@@ -171,9 +171,9 @@ The stage loop SHALL:
 5. After the stage loop completes (normally or via abort), resume the main fuzz iteration cycle.
 
 The stage execution loop SHALL use the same three-branch target execution pattern used by the main iteration cycle and the calibration loop:
-- **Branch 1 — Watchdog sync**: `watchdog.runTarget()` returns non-zero `exitKind` (sync crash/timeout).
-- **Branch 2 — Watchdog async**: `watchdog.runTarget()` returns a Promise in `result`. Re-arm watchdog before `await`. On rejection, check `watchdog.didFire` to distinguish timeout from crash.
-- **Branch 3 — No watchdog**: Direct `target(input)` call with try/catch, checking for Promise return.
+- **Branch 1 - Watchdog sync**: `watchdog.runTarget()` returns non-zero `exitKind` (sync crash/timeout).
+- **Branch 2 - Watchdog async**: `watchdog.runTarget()` returns a Promise in `result`. Re-arm watchdog before `await`. On rejection, check `watchdog.didFire` to distinguish timeout from crash.
+- **Branch 3 - No watchdog**: Direct `target(input)` call with try/catch, checking for Promise return.
 
 #### Scenario: Stage loop runs after calibration when CmpLog data available
 

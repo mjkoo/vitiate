@@ -4,10 +4,10 @@
 
 The prototype pollution detector SHALL separate detection from restoration:
 
-- In `afterIteration()`, the detector SHALL check ALL monitored prototypes against their `beforeIteration()` snapshots. If pollution is found, it SHALL throw a `VulnerabilityError` for the first finding. `afterIteration()` SHALL NOT restore prototypes — restoration is the responsibility of `resetIteration()`.
+- In `afterIteration()`, the detector SHALL check ALL monitored prototypes against their `beforeIteration()` snapshots. If pollution is found, it SHALL throw a `VulnerabilityError` for the first finding. `afterIteration()` SHALL NOT restore prototypes - restoration is the responsibility of `resetIteration()`.
 - In `resetIteration()`, the detector SHALL restore ALL monitored prototypes to their `beforeIteration()` snapshot state. For each polluted prototype found, the detector SHALL delete added properties and restore modified/deleted properties. `resetIteration()` SHALL NOT throw.
 
-This separation ensures that prototype restoration occurs regardless of whether `afterIteration()` was called. When a module-hook detector fires (e.g., command injection), the target execution ends with a crash and `afterIteration()` is not called — but `resetIteration()` still runs unconditionally via `endIteration()`, preventing polluted prototypes from persisting as the baseline for future iterations.
+This separation ensures that prototype restoration occurs regardless of whether `afterIteration()` was called. When a module-hook detector fires (e.g., command injection), the target execution ends with a crash and `afterIteration()` is not called - but `resetIteration()` still runs unconditionally via `endIteration()`, preventing polluted prototypes from persisting as the baseline for future iterations.
 
 #### Scenario: Pollution is cleaned up after detection
 

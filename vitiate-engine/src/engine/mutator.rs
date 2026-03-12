@@ -125,7 +125,7 @@ impl I2SSpliceReplace {
     /// - Non-empty source + empty replacement: scans for the source and deletes it
     ///   (splice with zero-length replacement).
     /// - Empty source + non-empty replacement: handled as an insertion fallback
-    ///   after the scan loop — inserts the replacement at `off` when no scan match
+    ///   after the scan loop - inserts the replacement at `off` when no scan match
     ///   was found. This ensures deletion/replacement of bytes already in the input
     ///   is preferred over blind insertion.
     fn mutate_bytes_splice<I>(
@@ -147,7 +147,7 @@ impl I2SSpliceReplace {
         let input_len = input.len();
 
         // Wrap-around scan: check all positions starting from `off`.
-        // Pairs with empty source are skipped here — they're handled by the
+        // Pairs with empty source are skipped here - they're handled by the
         // insertion fallback below.
         for k in 0..input_len {
             let i = (off + k) % input_len;
@@ -203,7 +203,7 @@ impl I2SSpliceReplace {
     /// in-place (splice and overwrite are identical for equal-length operands).
     /// Otherwise, always uses splice: overwriting a prefix of a longer replacement
     /// produces a truncated constant that cannot satisfy an equality comparison.
-    /// Splice respects max_size — falls back to overwrite if the spliced result
+    /// Splice respects max_size - falls back to overwrite if the spliced result
     /// would exceed the limit.
     fn apply_mutation<I>(
         &self,
@@ -235,7 +235,7 @@ impl I2SSpliceReplace {
             if new_len <= max_size {
                 self.apply_splice(input, replacement, pos, matched_prefix_len);
             } else {
-                // Splice would exceed max_size — fall back to overwrite as a
+                // Splice would exceed max_size - fall back to overwrite as a
                 // best-effort partial mutation.
                 self.apply_overwrite(input, replacement, pos, matched_prefix_len);
             }

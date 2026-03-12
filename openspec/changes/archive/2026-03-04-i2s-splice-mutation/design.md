@@ -1,6 +1,6 @@
 ## Context
 
-LibAFL's `I2SRandReplace` mutator handles `CmpValues::Bytes` by finding one operand in the input (using decreasing prefix lengths) and overwriting it with `matched_prefix_len` bytes of the other operand. This means a 4-byte match can never be replaced by a 10-byte operand — only 4 bytes of the replacement are written.
+LibAFL's `I2SRandReplace` mutator handles `CmpValues::Bytes` by finding one operand in the input (using decreasing prefix lengths) and overwriting it with `matched_prefix_len` bytes of the other operand. This means a 4-byte match can never be replaced by a 10-byte operand - only 4 bytes of the replacement are written.
 
 Standard libfuzzer's equivalent (`ApplyDictionaryEntry` in `FuzzerMutate.cpp:183-203`) randomly chooses between INSERT (splice: shift tail right, write full replacement, grow buffer) and OVERWRITE (same-length memcpy). This INSERT path is what allows it to find bugs requiring length-changing string comparisons in <1 second.
 
@@ -8,7 +8,7 @@ Vitiate's mutation pipeline in `get_next_input()` runs two mutators sequentially
 1. `FuzzerMutator` (havoc + token mutations, stacked)
 2. `I2SRandReplace` (post-havoc, unstacked)
 
-The I2S mutator runs post-havoc and operates on `CmpValuesMetadata` populated by `report_result()`. This is the correct place to add the splice path — it won't be corrupted by havoc stacking.
+The I2S mutator runs post-havoc and operates on `CmpValuesMetadata` populated by `report_result()`. This is the correct place to add the splice path - it won't be corrupted by havoc stacking.
 
 ## Goals / Non-Goals
 
@@ -21,8 +21,8 @@ The I2S mutator runs post-havoc and operates on `CmpValuesMetadata` populated by
 
 **Non-Goals:**
 
-- Implementing `AflppRedQueen` (requires taint tracking and two-run CmpLog protocol — architectural mismatch with vitiate's JS execution model).
-- Implementing Grimoire (same architectural mismatch — requires Rust-side target re-execution).
+- Implementing `AflppRedQueen` (requires taint tracking and two-run CmpLog protocol - architectural mismatch with vitiate's JS execution model).
+- Implementing Grimoire (same architectural mismatch - requires Rust-side target re-execution).
 - Adding splice to integer `CmpValues` variants (U8/U16/U32/U64 are fixed-width by nature).
 - Changing `TokenInsert`/`TokenReplace` or their placement inside havoc stacking.
 
@@ -35,15 +35,15 @@ The I2S mutator runs post-havoc and operates on `CmpValuesMetadata` populated by
 **Alternatives considered:**
 
 - *Fork `I2SRandReplace` entirely:* Copies ~160 lines of integer handling code (U8/U16/U32/U64) that we don't need to modify. Creates maintenance burden when LibAFL updates the integer paths.
-- *Monkeypatch / trait override:* Not possible — `I2SRandReplace::mutate` is a concrete method, not a trait default.
+- *Monkeypatch / trait override:* Not possible - `I2SRandReplace::mutate` is a concrete method, not a trait default.
 
 **Rationale:** Wrapping minimizes code duplication. The integer variants are delegated unchanged. Only the `CmpValues::Bytes` path is reimplemented with the added splice logic. If LibAFL ever adds a splice path upstream, we drop our wrapper with no other changes.
 
-### Decision 2: Implementation approach — single random entry, splice before delegate
+### Decision 2: Implementation approach - single random entry, splice before delegate
 
 **Choice:** `I2SSpliceReplace::mutate()` follows `I2SRandReplace`'s single-entry selection strategy: it reads `CmpValuesMetadata`, picks one random entry via `state.rand_mut().below(cmps_len)`, and picks a random starting offset in the input. If the selected entry is `CmpValues::Bytes`, the wrapper handles it directly using its own matching loop (with the splice/overwrite coin flip). If the selected entry is a non-`Bytes` variant (U8/U16/U32/U64), the wrapper delegates the entire call to `I2SRandReplace::mutate()`, which performs its own independent random entry selection and matching.
 
-**Rationale:** The wrapper only needs to intercept `CmpValues::Bytes`. All other variants pass through to the inner `I2SRandReplace` unchanged, avoiding reimplementation of integer replacement logic and its endianness handling. The delegation for non-`Bytes` entries means the inner mutator picks its own random entry — it might select a `Bytes` entry and apply the overwrite-only path, or it might select an integer entry. This is acceptable: over many iterations, the splice path fires whenever the outer selection happens to land on a `Bytes` entry (proportional to the fraction of `Bytes` entries in the metadata).
+**Rationale:** The wrapper only needs to intercept `CmpValues::Bytes`. All other variants pass through to the inner `I2SRandReplace` unchanged, avoiding reimplementation of integer replacement logic and its endianness handling. The delegation for non-`Bytes` entries means the inner mutator picks its own random entry - it might select a `Bytes` entry and apply the overwrite-only path, or it might select an integer entry. This is acceptable: over many iterations, the splice path fires whenever the outer selection happens to land on a `Bytes` entry (proportional to the fraction of `Bytes` entries in the metadata).
 
 ### Decision 3: 50/50 coin flip between splice and overwrite
 
@@ -53,7 +53,7 @@ The I2S mutator runs post-havoc and operates on `CmpValuesMetadata` populated by
 
 When operand lengths are equal, always overwrite (splice and overwrite are identical for same-length operands).
 
-**Rationale:** Matches libfuzzer's `ApplyDictionaryEntry` behavior. The 50/50 split ensures both strategies are explored — overwrite preserves input structure, splice enables length-changing substitution. Uses `below(2)` rather than a `coinflip` method because LibAFL's `StdRand` exposes `below(N)` for uniform random selection.
+**Rationale:** Matches libfuzzer's `ApplyDictionaryEntry` behavior. The 50/50 split ensures both strategies are explored - overwrite preserves input structure, splice enables length-changing substitution. Uses `below(2)` rather than a `coinflip` method because LibAFL's `StdRand` exposes `below(N)` for uniform random selection.
 
 ### Decision 4: Respect `max_size` for splice
 

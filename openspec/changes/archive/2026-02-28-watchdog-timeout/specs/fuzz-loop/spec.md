@@ -59,7 +59,7 @@ The loop SHALL terminate when any of these conditions is met:
 
 ### Requirement: Async target support
 
-The fuzz loop SHALL support async target functions. If the target returns a Promise, the loop SHALL await it before disarming the watchdog and calling `reportResult()`. The watchdog enforces timeouts for both sync and async targets uniformly — there SHALL be no separate async-specific timeout mechanism.
+The fuzz loop SHALL support async target functions. If the target returns a Promise, the loop SHALL await it before disarming the watchdog and calling `reportResult()`. The watchdog enforces timeouts for both sync and async targets uniformly - there SHALL be no separate async-specific timeout mechanism.
 
 #### Scenario: Async target completes normally
 

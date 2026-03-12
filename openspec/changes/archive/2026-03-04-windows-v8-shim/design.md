@@ -31,7 +31,7 @@ Additionally, the Rust fallback path (used when the C++ shim returns 0) has a la
 
 **Alternative considered:** Link against `node.lib` at build time (the standard approach for C++ addons).
 
-**Rationale:** `GetProcAddress` mirrors the existing `dlsym` approach — graceful null return when symbols are missing, no build-time dependency on a version-specific `node.lib`, and no changes to the napi-rs build pipeline. The `node.lib` approach would require fetching the correct `node.lib` for the target Node.js version during build, complicating CI and local development.
+**Rationale:** `GetProcAddress` mirrors the existing `dlsym` approach - graceful null return when symbols are missing, no build-time dependency on a version-specific `node.lib`, and no changes to the napi-rs build pipeline. The `node.lib` approach would require fetching the correct `node.lib` for the target Node.js version during build, complicating CI and local development.
 
 ### Decision 2: Platform-conditional symbol resolution in `v8_shim.cc` via preprocessor
 
@@ -43,7 +43,7 @@ Additionally, the Rust fallback path (used when the C++ shim returns 0) has a la
 
 ### Decision 3: Dynamic `_exit` fallback multiplier based on V8 availability
 
-**Choice:** Set `exit_timeout_multiplier` to `5` when `v8_init()` succeeds, `1` when it fails — regardless of target OS.
+**Choice:** Set `exit_timeout_multiplier` to `5` when `v8_init()` succeeds, `1` when it fails - regardless of target OS.
 
 **Alternative considered:** Keep the `cfg!(unix)` check or use a separate Windows-specific multiplier.
 
@@ -53,13 +53,13 @@ Additionally, the Rust fallback path (used when the C++ shim returns 0) has a la
 
 The Rust fallback path has two interacting bugs:
 
-**Bug A: `disarm()` resets `fired` before classification reads it.** `disarm()` calls `fired.swap(false, AcqRel)` at line 301. The classification code at line 410 then reads `fired.load(Acquire)` — which is always `false`. Timeouts are silently misclassified as crashes.
+**Bug A: `disarm()` resets `fired` before classification reads it.** `disarm()` calls `fired.swap(false, AcqRel)` at line 301. The classification code at line 410 then reads `fired.load(Acquire)` - which is always `false`. Timeouts are silently misclassified as crashes.
 
 **Bug B: No `CancelTerminateExecution` before NAPI calls.** The C++ shim calls `CancelTerminateExecution()` before building the result object. The Rust fallback doesn't, so NAPI calls between the exception and `disarm()` could fail if V8's termination flag is still set.
 
 The root cause is that `disarm()` has two responsibilities with conflicting ordering needs:
-- **Stop the timer** (clear deadline, signal condvar) — must happen ASAP to prevent `_exit` from racing while we build the result
-- **Clean up V8 state** (cancel terminate, reset `fired`) — must happen AFTER `fired` is read for classification
+- **Stop the timer** (clear deadline, signal condvar) - must happen ASAP to prevent `_exit` from racing while we build the result
+- **Clean up V8 state** (cancel terminate, reset `fired`) - must happen AFTER `fired` is read for classification
 
 **Choice:** Save `fired` before `disarm()`, cancel V8 termination when saved value is true, then classify using the saved value:
 
@@ -71,7 +71,7 @@ let call_status = napi_call_function(...);
 let timed_out = self.shared.fired.load(Ordering::Acquire);
 
 // If V8 termination fired, cancel it before any NAPI calls.
-// disarm() will call cancel again — idempotent, harmless.
+// disarm() will call cancel again - idempotent, harmless.
 if timed_out {
     v8_shim::v8_cancel_terminate();
 }
@@ -85,7 +85,7 @@ self.disarm();
 
 This mirrors the C++ shim's ordering: read `fired` → cancel → build result → `disarm()`.
 
-**Rationale:** The bug is latent today because the Rust fallback is only reached when V8 termination is unavailable (the watchdog calls `_exit` and the process dies before this code runs). After this change, the C++ shim handles all platforms when symbols are available. The Rust fallback remains reachable only when symbols can't be resolved (static Node builds, cargo test), where V8 termination is still unavailable. Nevertheless, defense-in-depth demands that both paths handle V8 termination correctly — especially since `vitiate_run_target` returning 0 (shim not initialized) and `v8_init` returning 1 (symbols resolved) are independent conditions in principle, even though in practice they are correlated.
+**Rationale:** The bug is latent today because the Rust fallback is only reached when V8 termination is unavailable (the watchdog calls `_exit` and the process dies before this code runs). After this change, the C++ shim handles all platforms when symbols are available. The Rust fallback remains reachable only when symbols can't be resolved (static Node builds, cargo test), where V8 termination is still unavailable. Nevertheless, defense-in-depth demands that both paths handle V8 termination correctly - especially since `vitiate_run_target` returning 0 (shim not initialized) and `v8_init` returning 1 (symbols resolved) are independent conditions in principle, even though in practice they are correlated.
 
 ### Decision 5: MSVC-mangled names hardcoded for x64 only
 
@@ -97,7 +97,7 @@ This mirrors the C++ shim's ordering: read `fired` → cancel → build result �
 | `TerminateExecution` | `?TerminateExecution@Isolate@v8@@QEAAXXZ` |
 | `CancelTerminateExecution` | `?CancelTerminateExecution@Isolate@v8@@QEAAXXZ` |
 
-**Rationale:** These names have been stable since V8 6.x / Node 10 (8+ years). x86 mangling differs but is irrelevant — Node.js on Windows is overwhelmingly x64. If V8 ever changes these signatures, `GetProcAddress` returns null and the watchdog degrades gracefully to `_exit`-only mode.
+**Rationale:** These names have been stable since V8 6.x / Node 10 (8+ years). x86 mangling differs but is irrelevant - Node.js on Windows is overwhelmingly x64. If V8 ever changes these signatures, `GetProcAddress` returns null and the watchdog degrades gracefully to `_exit`-only mode.
 
 ### Decision 6: MSVC x64 calling convention is compatible with function pointer casts
 
@@ -105,7 +105,7 @@ On MSVC x64, all calling conventions (`__cdecl`, `__thiscall`, `__stdcall`, `__f
 
 ### Decision 7: `vitiate_run_target` compiles on MSVC without changes
 
-The `vitiate_run_target` function is the critical codepath for sync timeout recovery — it calls the target via NAPI, intercepts V8 termination exceptions, calls `CancelTerminateExecution`, and builds the result object. Unlike `vitiate_v8_init`, it contains no platform-specific code: it uses only function pointers (resolved at init time), standard C++ atomics (`std::memory_order_acquire`), and NAPI opaque types. It compiles as-is on MSVC.
+The `vitiate_run_target` function is the critical codepath for sync timeout recovery - it calls the target via NAPI, intercepts V8 termination exceptions, calls `CancelTerminateExecution`, and builds the result object. Unlike `vitiate_v8_init`, it contains no platform-specific code: it uses only function pointers (resolved at init time), standard C++ atomics (`std::memory_order_acquire`), and NAPI opaque types. It compiles as-is on MSVC.
 
 The existing spec did not mention `vitiate_run_target` (only the three init/terminate/cancel functions). The delta spec for this change adds it to close the gap, since the function is essential for the timeout recovery path on all platforms.
 
@@ -118,7 +118,7 @@ This happens on:
 - `cargo test` binaries (no Node.js host process)
 - Hypothetical embedded environments without standard symbol exports
 
-The fallback path must remain correct and tested. The `_exit`-only mode is the appropriate behavior when symbols can't be resolved — the process dies on timeout, and the supervisor respawns.
+The fallback path must remain correct and tested. The `_exit`-only mode is the appropriate behavior when symbols can't be resolved - the process dies on timeout, and the supervisor respawns.
 
 ## Risks / Trade-offs
 

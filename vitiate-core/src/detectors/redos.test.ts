@@ -39,7 +39,7 @@ describe("RedosDetector", () => {
   });
 
   it("is inactive outside iteration window", () => {
-    detector = new RedosDetector(0); // threshold of 0ms — would fire on any regex
+    detector = new RedosDetector(0); // threshold of 0ms - would fire on any regex
     detector.setup();
     // Do NOT set detectorActive
     // This should pass through without firing
@@ -99,7 +99,7 @@ describe("RedosDetector", () => {
   });
 
   it("stash recovery when target catches VulnerabilityError", () => {
-    detector = new RedosDetector(0); // threshold 0ms — fires on any timed regex call
+    detector = new RedosDetector(0); // threshold 0ms - fires on any timed regex call
     detector.setup();
     setDetectorActive(true);
 
@@ -117,7 +117,7 @@ describe("RedosDetector", () => {
   });
 
   it("long input is truncated in context", () => {
-    detector = new RedosDetector(0); // threshold 0 — fires on any timed call
+    detector = new RedosDetector(0); // threshold 0 - fires on any timed call
     detector.setup();
     setDetectorActive(true);
 

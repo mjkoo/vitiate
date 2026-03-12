@@ -24,7 +24,7 @@ The `options` parameter SHALL accept:
 
 - `coverageMapSize` (number, optional, default 65536): Number of edge counter slots in the coverage map. Must be an integer in [256, 4194304]. Larger values reduce hash collisions for large applications. A warning is emitted if the value is not a power of two.
 
-The `vitiate:hooks` plugin SHALL use the resolved exclude patterns (but NOT the include patterns) to determine whether a file should be processed. The hooks plugin SHALL NOT hardcode a node_modules exclusion independent of the configured exclude patterns. The hooks plugin SHALL process all JS/TS files not matched by the exclude patterns, regardless of the include patterns — because detector import rewriting must work across all user code (including test files) even when instrumentation scope is narrowed via include. Virtual modules (IDs starting with `\0`) and non-JS/TS files SHALL still be skipped unconditionally.
+The `vitiate:hooks` plugin SHALL use the resolved exclude patterns (but NOT the include patterns) to determine whether a file should be processed. The hooks plugin SHALL NOT hardcode a node_modules exclusion independent of the configured exclude patterns. The hooks plugin SHALL process all JS/TS files not matched by the exclude patterns, regardless of the include patterns - because detector import rewriting must work across all user code (including test files) even when instrumentation scope is narrowed via include. Virtual modules (IDs starting with `\0`) and non-JS/TS files SHALL still be skipped unconditionally.
 
 When the resolved `exclude` patterns do not contain any pattern with the substring `node_modules`, the plugin's `config()` hook SHALL return `server: { deps: { inline: true } }` to configure Vitest to inline all dependencies through the Vite transform pipeline. This ensures node_modules files reach the plugin's transform hooks when the user has opted in to instrumenting them.
 
@@ -169,7 +169,7 @@ The WASM plugin path SHALL be resolved from the `@vitiate/swc-plugin` package's 
 
 The plugin SHALL register the runtime setup file via the `config()` hook by returning `{ test: { setupFiles: [setupPath] } }`. Vite deep-merges `config()` return values into the resolved config before Vitest processes them, ensuring the setup file is registered before any test code executes.
 
-The `configureVitest` hook SHALL NOT be used for setup file registration because it fires after Vitest's project config is resolved and frozen — `setupFiles` cannot be modified at that point.
+The `configureVitest` hook SHALL NOT be used for setup file registration because it fires after Vitest's project config is resolved and frozen - `setupFiles` cannot be modified at that point.
 
 #### Scenario: Setup file is registered via config hook
 
@@ -189,7 +189,7 @@ The `rewriteHookedImports` function SHALL perform a quick bail-out check before 
 
 The bail-out check for each hooked module SHALL use patterns that match how the module appears in import or require statements, not bare substring matching. For `child_process`, `fs/promises`, and `http2`, `code.includes(mod)` is sufficiently specific because these strings are unlikely to appear as substrings of unrelated identifiers. For `fs`, the check SHALL use patterns that avoid matching unrelated occurrences of the substring "fs" (e.g., in identifiers like `offset`, function names, or comments). Suitable patterns include checking for `'"fs"'`, `"'fs'"`, `':fs"'`, or `"':fs'"`.
 
-The bail-out is a performance optimization only — false positives (proceeding to parse when no hooked imports exist) are acceptable, but false negatives (skipping a file that does contain hooked imports) are not.
+The bail-out is a performance optimization only - false positives (proceeding to parse when no hooked imports exist) are acceptable, but false negatives (skipping a file that does contain hooked imports) are not.
 
 #### Scenario: File without hooked module imports skips parsing
 

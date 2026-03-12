@@ -6,7 +6,7 @@ Controls where crash and timeout artifacts are written in CLI mode via the `-art
 
 ### Requirement: Artifact prefix flag
 
-The CLI SHALL accept a `-artifact_prefix=<path>` flag that controls where crash and timeout artifacts are written. The `<path>` value is a prefix string (not a directory) — the artifact filename is appended directly.
+The CLI SHALL accept a `-artifact_prefix=<path>` flag that controls where crash and timeout artifacts are written. The `<path>` value is a prefix string (not a directory) - the artifact filename is appended directly.
 
 When `-artifact_prefix` is set:
 - Crash artifacts SHALL be written to `{prefix}crash-{hash}`.
@@ -50,7 +50,7 @@ The artifact prefix SHALL be passed to both the fuzz loop (for JS-detected crash
 
 ### Requirement: Artifact prefix plumbing to child process
 
-When `-artifact_prefix` is provided, the CLI parent SHALL pass the value to the child process via the `artifactPrefix` field in the `VITIATE_CLI_IPC` JSON blob. When `-artifact_prefix` is not provided, the CLI parent SHALL omit `artifactPrefix` from the IPC blob — the child defaults to `./` when `libfuzzerCompat` is true.
+When `-artifact_prefix` is provided, the CLI parent SHALL pass the value to the child process via the `artifactPrefix` field in the `VITIATE_CLI_IPC` JSON blob. When `-artifact_prefix` is not provided, the CLI parent SHALL omit `artifactPrefix` from the IPC blob - the child defaults to `./` when `libfuzzerCompat` is true.
 
 The fuzz loop SHALL resolve the artifact prefix as follows, using the `getArtifactPrefix()` and `isLibfuzzerCompat()` helpers from `config.ts`:
 1. If `getArtifactPrefix()` returns a value → use it.

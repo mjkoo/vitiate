@@ -102,7 +102,7 @@ fn test_map_indexes_metadata_absent_for_non_interesting() {
 
     let corpus_before = fuzzer.state.corpus().count();
 
-    // Second: same coverage (edge 10 only) — not interesting.
+    // Second: same coverage (edge 10 only) - not interesting.
     unsafe {
         *fuzzer.map_ptr.add(10) = 1;
     }
@@ -111,7 +111,7 @@ fn test_map_indexes_metadata_absent_for_non_interesting() {
     let result = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
     assert!(matches!(result, IterationResult::None));
 
-    // Corpus should not have grown — no entry was added.
+    // Corpus should not have grown - no entry was added.
     assert_eq!(fuzzer.state.corpus().count(), corpus_before);
 
     cmplog::disable();
@@ -228,7 +228,7 @@ fn test_non_favored_entries_skipped_with_high_probability() {
         scheduler.on_add(&mut state, id).unwrap();
     }
 
-    // With a known seed, call next() multiple times — it should always return
+    // With a known seed, call next() multiple times - it should always return
     // a valid corpus ID even though all entries are non-favored.
     for _ in 0..20 {
         let id = scheduler.next(&mut state).unwrap();
@@ -314,7 +314,7 @@ fn test_seeds_have_empty_map_indexes_metadata() {
         scheduler.on_add(&mut state, id).unwrap();
     }
 
-    // TopRatedsMetadata should STILL be empty — seeds have no edges.
+    // TopRatedsMetadata should STILL be empty - seeds have no edges.
     {
         let top_rated = state.metadata::<TopRatedsMetadata>().unwrap();
         assert!(
@@ -447,7 +447,7 @@ fn test_entry_loses_favored_status_when_displaced() {
     let id_a = state.corpus_mut().add(tc_a).unwrap();
     scheduler.on_add(&mut state, id_a).unwrap();
 
-    // Trigger cull via next() — A should be favored (best for edge 10).
+    // Trigger cull via next() - A should be favored (best for edge 10).
     let _ = scheduler.next(&mut state).unwrap();
     {
         let tc = state.corpus().get(id_a).unwrap().borrow();

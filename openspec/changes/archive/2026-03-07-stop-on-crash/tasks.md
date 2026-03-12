@@ -1,8 +1,8 @@
 ## 1. Configuration Schema
 
-- [x] 1.1 Add `stopOnCrash` field to `FuzzOptionsSchema` in `config.ts` — tri-state union: `v.optional(v.union([v.boolean(), v.literal("auto")]))`
-- [x] 1.2 Add `maxCrashes` field to `FuzzOptionsSchema` in `config.ts` — `v.optional(NonNegativeInteger)`, default applied at usage site (1000)
-- [x] 1.3 Add `forkExplicit` field to `CliIpcSchema` in `config.ts` — `v.optional(v.boolean())`
+- [x] 1.1 Add `stopOnCrash` field to `FuzzOptionsSchema` in `config.ts` - tri-state union: `v.optional(v.union([v.boolean(), v.literal("auto")]))`
+- [x] 1.2 Add `maxCrashes` field to `FuzzOptionsSchema` in `config.ts` - `v.optional(NonNegativeInteger)`, default applied at usage site (1000)
+- [x] 1.3 Add `forkExplicit` field to `CliIpcSchema` in `config.ts` - `v.optional(v.boolean())`
 - [x] 1.4 Write unit tests for new config fields: valid values, invalid values, defaults, JSON round-trip via `VITIATE_FUZZ_OPTIONS`
 
 ## 2. Auto-Resolution Logic
@@ -15,7 +15,7 @@
 ## 3. CLI IPC Plumbing
 
 - [x] 3.1 Set `forkExplicit: true` in `CliIpc` blob in `cli.ts` `runChildMode` when `parsed.fork !== undefined`
-- [x] 3.2 Forward `stopOnCrash` and `maxCrashes` from CLI `fuzzOptions` through `VITIATE_FUZZ_OPTIONS` (already happens via existing plumbing — verify)
+- [x] 3.2 Forward `stopOnCrash` and `maxCrashes` from CLI `fuzzOptions` through `VITIATE_FUZZ_OPTIONS` (already happens via existing plumbing - verify)
 - [x] 3.3 Write tests for `forkExplicit` presence/absence in `CliIpc` based on `-fork` flag
 
 ## 4. Fuzz Loop Multi-Crash Support
@@ -32,7 +32,7 @@
 ## 5. Vitest Reporting
 
 - [x] 5.1 Update child-mode crash reporting in `fuzz.ts`: use `crashCount` and `crashArtifactPaths` from `FuzzLoopResult` to construct error message
-- [x] 5.2 Verify `translateSupervisorResult` needs no changes (SupervisorResult is unchanged — crash count is only available in child mode via FuzzLoopResult)
+- [x] 5.2 Verify `translateSupervisorResult` needs no changes (SupervisorResult is unchanged - crash count is only available in child mode via FuzzLoopResult)
 - [x] 5.3 Write tests: single crash error message, multi-crash error message with count, no-crash passes
 
 ## 6. Integration Testing

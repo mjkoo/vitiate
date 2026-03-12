@@ -37,8 +37,8 @@
 ## 6. Tests
 
 - [x] 6.1 Add an e2e test for synchronous target timeout: a fuzz target with `while(true){}`, configured with a short timeout, verify it reports `ExitKind.Timeout` and the fuzz loop continues (Unix) or the process exits cleanly (Windows)
-- [x] 6.2 Add an e2e test for async target timeout: a fuzz target returning a never-resolving promise, verify timeout is detected — NOTE: async timeouts cause _exit (V8 TerminateExecution cascades through all JS frames); tested via comment in loop.test.ts, child-process integration test deferred to parent supervisor implementation
+- [x] 6.2 Add an e2e test for async target timeout: a fuzz target returning a never-resolving promise, verify timeout is detected - NOTE: async timeouts cause _exit (V8 TerminateExecution cascades through all JS frames); tested via comment in loop.test.ts, child-process integration test deferred to parent supervisor implementation
 - [x] 6.3 Add an e2e test that a normal crash (thrown error) is not misclassified as a timeout
 - [x] 6.4 Add a Rust integration test for the V8 shim: verify `vitiate_v8_init` returns the expected value (1 on Unix when running under Node, 0 when V8 symbols are absent)
-- [x] 6.5 Add a test for the `_exit` input capture path: verify timeout artifact is written to disk before process termination — NOTE: _exit kills the process; the artifact writing is verified by the Watchdog smoke test (stashInput + construction) and the sync timeout loop.test.ts; a child-process integration test is deferred to parent supervisor implementation
+- [x] 6.5 Add a test for the `_exit` input capture path: verify timeout artifact is written to disk before process termination - NOTE: _exit kills the process; the artifact writing is verified by the Watchdog smoke test (stashInput + construction) and the sync timeout loop.test.ts; a child-process integration test is deferred to parent supervisor implementation
 - [x] 6.6 Run full test suite and `lefthook run pre-commit` to verify no regressions

@@ -18,17 +18,18 @@ hero:
 import { Card, CardGrid } from "@astrojs/starlight/components";
 
 <CardGrid stagger>
-  <Card title="Vitest Integration" icon="seti:vitest">
+  <Card title="Vitest Integration" icon="approve-check-circle">
     Write fuzz tests alongside your unit tests using the familiar `test()`-style
     API. Crashes become regression tests automatically.
   </Card>
   <Card title="LibAFL Engine" icon="rocket">
-    Powered by LibAFL's mutation engine: havoc mutations, CmpLog-guided byte
-    replacement, Grimoire structure-aware mutations, and Unicode-aware fuzzing.
+    Powered by LibAFL for coverage feedback, power schedules, and advanced
+    mutations - havoc, CmpLog/REDQUEEN, Grimoire grammar synthesis, and
+    Unicode-aware strategies.
   </Card>
   <Card title="SWC Instrumentation" icon="seti:json">
-    Edge coverage counters and comparison tracing inserted at build time via an
-    SWC WASM plugin. Zero runtime configuration.
+    Edge coverage counters and comparison tracing inserted on-the-fly via an SWC
+    WASM plugin during Vite's module transform. No separate build step required.
   </Card>
   <Card title="Vulnerability Detectors" icon="warning">
     Built-in detectors for prototype pollution, command injection, path

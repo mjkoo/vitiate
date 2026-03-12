@@ -53,7 +53,7 @@ The CLI SHALL accept a `-test=<name>` flag that selects exactly one fuzz test by
 1. The name SHALL be escaped and anchored as `^{escaped}$` before being passed to `startVitest()` as the `testNamePattern` option, ensuring exact-match semantics (e.g., `-test=parse-url` matches only "parse-url", not "parse-url-v2").
 2. The name SHALL be used as the `testName` for `runSupervisor()`, for logging and for Vitest-mode artifact path determination.
 
-In CLI mode, the test name does NOT determine the artifact path — artifact paths are determined by the resolved artifact prefix (see `cli-artifact-prefix` capability). The `testName` is still passed to `SupervisorOptions` for log messages and as a fallback when `artifactPrefix` is not set.
+In CLI mode, the test name does NOT determine the artifact path - artifact paths are determined by the resolved artifact prefix (see `cli-artifact-prefix` capability). The `testName` is still passed to `SupervisorOptions` for log messages and as a fallback when `artifactPrefix` is not set.
 
 When `-test` is not provided, all fuzz tests in the file enter the fuzz loop. The parent SHALL derive `testName` from the filename (current behavior), which is correct for the single-test-per-file convention used in libFuzzer/OSS-Fuzz.
 
@@ -171,16 +171,16 @@ When positional corpus directories are provided:
 
 When no positional corpus directories are provided in CLI mode:
 - The fuzz loop SHALL NOT write new interesting inputs to disk. The in-memory corpus in the LibAFL engine retains all interesting inputs for the duration of the process, matching libFuzzer's behavior when no corpus directory is given.
-- Interesting inputs discovered before a crash/respawn are lost. This is expected — users who want corpus persistence must provide a corpus directory.
+- Interesting inputs discovered before a crash/respawn are lost. This is expected - users who want corpus persistence must provide a corpus directory.
 
 The CLI SHALL pass CLI-specific IPC configuration to the child process via the `VITIATE_CLI_IPC` environment variable, a JSON blob validated by the `CliIpcSchema` in `config.ts`. The blob includes:
 
-- `libfuzzerCompat: true` — signals that the fuzz loop SHALL use libFuzzer path conventions for corpus writes and artifact paths.
-- `corpusOutputDir` — set to the first positional corpus directory when provided. Omitted when no corpus dirs are given.
-- `artifactPrefix` — set to the `-artifact_prefix` flag value when provided. Omitted when the flag is omitted (the child defaults to `./` under libFuzzer compat mode).
-- `corpusDirs` — array of corpus directory paths.
-- `dictionaryPath` — resolved absolute path to the dictionary file.
-- `forkExplicit` — set to `true` when the user passes any `-fork=N` flag. Omitted otherwise. Used by the child to resolve `stopOnCrash: "auto"` correctly.
+- `libfuzzerCompat: true` - signals that the fuzz loop SHALL use libFuzzer path conventions for corpus writes and artifact paths.
+- `corpusOutputDir` - set to the first positional corpus directory when provided. Omitted when no corpus dirs are given.
+- `artifactPrefix` - set to the `-artifact_prefix` flag value when provided. Omitted when the flag is omitted (the child defaults to `./` under libFuzzer compat mode).
+- `corpusDirs` - array of corpus directory paths.
+- `dictionaryPath` - resolved absolute path to the dictionary file.
+- `forkExplicit` - set to `true` when the user passes any `-fork=N` flag. Omitted otherwise. Used by the child to resolve `stopOnCrash: "auto"` correctly.
 
 These fields SHALL be read via helper functions in `config.ts` (e.g., `isLibfuzzerCompat()`, `getCorpusOutputDir()`, `getArtifactPrefix()`) which delegate to `getCliIpc()`.
 
@@ -200,7 +200,7 @@ In Vitest mode, `VITIATE_CLI_IPC` SHALL NOT be set. The fuzz loop SHALL use the 
 - **AND** all entries from all three directories are loaded as seeds
 - **AND** new interesting inputs are written to `./corpus/{contentHash}`
 
-#### Scenario: No corpus directories — in-memory only
+#### Scenario: No corpus directories - in-memory only
 
 - **WHEN** `npx vitiate ./test.ts` is executed without corpus directories
 - **THEN** new interesting inputs are kept in the in-memory corpus only
@@ -234,7 +234,7 @@ In Vitest mode, `VITIATE_CLI_IPC` SHALL NOT be set. The fuzz loop SHALL use the 
 
 ### Requirement: -detectors CLI flag
 
-The standalone CLI SHALL accept a `-detectors` flag (single-hyphen, consistent with the existing libFuzzer-compatible flag convention) that configures which bug detectors are active. When `-detectors` is specified, ALL detector defaults are disabled — only explicitly listed detectors are enabled. This makes the flag self-contained: you get exactly what you list.
+The standalone CLI SHALL accept a `-detectors` flag (single-hyphen, consistent with the existing libFuzzer-compatible flag convention) that configures which bug detectors are active. When `-detectors` is specified, ALL detector defaults are disabled - only explicitly listed detectors are enabled. This makes the flag self-contained: you get exactly what you list.
 
 The flag value SHALL be a comma-separated list of directives:
 

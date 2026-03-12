@@ -11,15 +11,15 @@ When positional corpus directories are provided:
 
 When no positional corpus directories are provided in CLI mode:
 - The fuzz loop SHALL NOT write new interesting inputs to disk. The in-memory corpus in the LibAFL engine retains all interesting inputs for the duration of the process, matching libFuzzer's behavior when no corpus directory is given.
-- Interesting inputs discovered before a crash/respawn are lost. This is expected — users who want corpus persistence must provide a corpus directory.
+- Interesting inputs discovered before a crash/respawn are lost. This is expected - users who want corpus persistence must provide a corpus directory.
 
 The CLI SHALL ensure the following environment variables are set before the fuzz loop runs (following the existing pattern where the child process sets its own environment before starting Vitest):
 
-- `VITIATE_LIBFUZZER_COMPAT=1` — signals that the fuzz loop SHALL use libFuzzer path conventions for corpus writes and artifact paths.
-- `VITIATE_CORPUS_OUTPUT_DIR` — set to the first positional corpus directory when provided. Not set when no corpus dirs are given.
-- `VITIATE_ARTIFACT_PREFIX` — set to the `-artifact_prefix` flag value when provided. Not set when the flag is omitted (the child defaults to `./` under libFuzzer compat mode).
+- `VITIATE_LIBFUZZER_COMPAT=1` - signals that the fuzz loop SHALL use libFuzzer path conventions for corpus writes and artifact paths.
+- `VITIATE_CORPUS_OUTPUT_DIR` - set to the first positional corpus directory when provided. Not set when no corpus dirs are given.
+- `VITIATE_ARTIFACT_PREFIX` - set to the `-artifact_prefix` flag value when provided. Not set when the flag is omitted (the child defaults to `./` under libFuzzer compat mode).
 
-These env vars SHALL be read via helper functions in `config.ts` (e.g., `isLibfuzzerCompat()`, `getCorpusOutputDir()`, `getArtifactPrefix()`), following the established pattern of `isFuzzingMode()` and `isSupervisorChild()` which use the private `envTruthy()` helper. `FuzzOptions` is defined via a valibot schema (`FuzzOptionsSchema`) and parsed by `getCliOptions()` using `v.safeParse` — the new env vars are separate from `VITIATE_FUZZ_OPTIONS` and do not require schema validation (they are simple string/boolean values).
+These env vars SHALL be read via helper functions in `config.ts` (e.g., `isLibfuzzerCompat()`, `getCorpusOutputDir()`, `getArtifactPrefix()`), following the established pattern of `isFuzzingMode()` and `isSupervisorChild()` which use the private `envTruthy()` helper. `FuzzOptions` is defined via a valibot schema (`FuzzOptionsSchema`) and parsed by `getCliOptions()` using `v.safeParse` - the new env vars are separate from `VITIATE_FUZZ_OPTIONS` and do not require schema validation (they are simple string/boolean values).
 
 In Vitest mode, none of these environment variables SHALL be set. The fuzz loop SHALL use the cache directory layout for corpus and `testdata/fuzz/{sanitizedName}/` for artifacts.
 
@@ -37,7 +37,7 @@ In Vitest mode, none of these environment variables SHALL be set. The fuzz loop 
 - **AND** all entries from all three directories are loaded as seeds
 - **AND** new interesting inputs are written to `./corpus/{contentHash}`
 
-#### Scenario: No corpus directories — in-memory only
+#### Scenario: No corpus directories - in-memory only
 
 - **WHEN** `npx vitiate ./test.ts` is executed without corpus directories
 - **THEN** new interesting inputs are kept in the in-memory corpus only
@@ -64,7 +64,7 @@ The CLI SHALL accept a `-test=<name>` flag that selects exactly one fuzz test by
 1. The name SHALL be escaped and anchored as `^{escaped}$` before being passed to `startVitest()` as the `testNamePattern` option, ensuring exact-match semantics (e.g., `-test=parse-url` matches only "parse-url", not "parse-url-v2").
 2. The name SHALL be used as the `testName` for `runSupervisor()`, for logging and for Vitest-mode artifact path determination.
 
-In CLI mode, the test name does NOT determine the artifact path — artifact paths are determined by the resolved artifact prefix (see `cli-artifact-prefix` capability). The `testName` is still passed to `SupervisorOptions` for log messages and as a fallback when `artifactPrefix` is not set.
+In CLI mode, the test name does NOT determine the artifact path - artifact paths are determined by the resolved artifact prefix (see `cli-artifact-prefix` capability). The `testName` is still passed to `SupervisorOptions` for log messages and as a fallback when `artifactPrefix` is not set.
 
 When `-test` is not provided, all fuzz tests in the file enter the fuzz loop. The parent SHALL derive `testName` from the filename (current behavior), which is correct for the single-test-per-file convention used in libFuzzer/OSS-Fuzz.
 

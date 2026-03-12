@@ -21,7 +21,7 @@ warnUnknownVitiateEnvVars();
 // Install detector hooks before test files are imported so that module
 // property accesses (e.g., `import cp from "child_process"; cp.execSync()`)
 // see the patched wrappers. Hooks are installed in all modes (fuzz and
-// regression) but are gated by detectorActive — they are no-ops outside
+// regression) but are gated by detectorActive - they are no-ops outside
 // the iteration window set by beforeIteration()/afterIteration().
 {
   const options = isFuzzingMode() ? getCliOptions() : {};

@@ -4,7 +4,7 @@
 
 The system SHALL use a hash-prefixed directory name scheme for all corpus and artifact paths keyed by test name. The `sanitizeTestName(name)` function SHALL produce a directory name in the format `{hash}-{slug}` where:
 
-- `{hash}` is the first 8 characters of the SHA-256 hex digest of the original unsanitized test name. This guarantees uniqueness — distinct test names always produce distinct directory names.
+- `{hash}` is the first 8 characters of the SHA-256 hex digest of the original unsanitized test name. This guarantees uniqueness - distinct test names always produce distinct directory names.
 - `{slug}` is a lossy human-readable hint derived from the original name: non-`[a-zA-Z0-9\-_.]` characters replaced with `_`, consecutive underscores collapsed, leading/trailing underscores stripped. The slug is never used for uniqueness; it exists only so humans can identify the test from a directory listing.
 
 If the slug is empty after sanitization, only the hash SHALL be used (no trailing dash).

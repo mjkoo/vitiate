@@ -13,7 +13,7 @@ When `stopOnCrash` is `"auto"`, the value SHALL be resolved to `true` or `false`
 - **libFuzzer CLI mode with explicit `-fork` flag**: resolves to `false`
 - **libFuzzer CLI mode without `-fork` flag**: resolves to `true`
 
-The fuzz loop SHALL only receive a resolved `true` or `false` value — it SHALL NOT perform auto-resolution itself.
+The fuzz loop SHALL only receive a resolved `true` or `false` value - it SHALL NOT perform auto-resolution itself.
 
 #### Scenario: Default auto resolves to false in vitest mode
 

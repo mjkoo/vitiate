@@ -15,7 +15,7 @@ The fuzz loop SHALL implement the following cycle for each iteration:
 9. If `reportResult` returns `Interesting`: enter the calibration loop (see Requirement: Calibration loop in fuzz loop).
 10. If `reportResult` returns `Solution` and `exitKind` is `Crash`, attempt in-process crash minimization before writing the artifact. Pass the watchdog, target, input, and timeout to the minimizer. Write the minimized (or original, on failure) input as the crash artifact.
 
-The shmem stash (step 2) SHALL occur whenever the `VITIATE_SUPERVISOR` environment variable is set, regardless of whether the supervisor was spawned by the CLI entry point or by the `fuzz()` test callback. The fuzz loop does not need to know which entry point spawned the supervisor — the `VITIATE_SUPERVISOR` env var is the sole indicator.
+The shmem stash (step 2) SHALL occur whenever the `VITIATE_SUPERVISOR` environment variable is set, regardless of whether the supervisor was spawned by the CLI entry point or by the `fuzz()` test callback. The fuzz loop does not need to know which entry point spawned the supervisor - the `VITIATE_SUPERVISOR` env var is the sole indicator.
 
 The loop SHALL terminate when any of these conditions is met:
 
@@ -126,12 +126,12 @@ When `reportResult()` returns `Interesting`, the fuzz loop SHALL enter a calibra
 5. If the target crashes or times out during a calibration run, break out of the loop immediately.
 6. Call `fuzzer.calibrateFinish()` after the loop completes (whether normally or interrupted).
 
-The calibration loop SHALL use the same watchdog and timeout configuration as the main iteration cycle. The calibration re-runs SHALL be identical to the normal target invocation — same input buffer, same timeout, same watchdog protection.
+The calibration loop SHALL use the same watchdog and timeout configuration as the main iteration cycle. The calibration re-runs SHALL be identical to the normal target invocation - same input buffer, same timeout, same watchdog protection.
 
 #### Scenario: Calibration runs after interesting result
 
 - **WHEN** `reportResult()` returns `Interesting`
-- **THEN** the fuzz loop SHALL re-run the target 3–7 additional times for calibration
+- **THEN** the fuzz loop SHALL re-run the target 3-7 additional times for calibration
 - **AND** `calibrateRun()` SHALL be called after each re-run
 - **AND** `calibrateFinish()` SHALL be called after the loop completes
 - **AND** the next normal iteration SHALL not begin until calibration is complete

@@ -43,13 +43,13 @@ fn test_extract_tokens_from_mixed_cmpvalues() {
 #[test]
 fn test_extract_tokens_filters_empty_null_and_0xff() {
     let entries: Vec<CmpLogEntry> = vec![
-        // Empty left operand — should be skipped.
+        // Empty left operand - should be skipped.
         (
             CmpValues::Bytes((make_cmplog_bytes(b""), make_cmplog_bytes(b"valid"))),
             0,
             CmpLogOperator::Equal,
         ),
-        // All-null operands — both should be skipped.
+        // All-null operands - both should be skipped.
         (
             CmpValues::Bytes((
                 make_cmplog_bytes(&[0x00, 0x00, 0x00, 0x00]),
@@ -58,7 +58,7 @@ fn test_extract_tokens_filters_empty_null_and_0xff() {
             0,
             CmpLogOperator::Equal,
         ),
-        // All-0xFF operand — should be skipped.
+        // All-0xFF operand - should be skipped.
         (
             CmpValues::Bytes((
                 make_cmplog_bytes(b"keep_this"),
@@ -67,7 +67,7 @@ fn test_extract_tokens_filters_empty_null_and_0xff() {
             0,
             CmpLogOperator::Equal,
         ),
-        // Mixed-with-nulls — should be kept (not all-null).
+        // Mixed-with-nulls - should be kept (not all-null).
         (
             CmpValues::Bytes((
                 make_cmplog_bytes(&[0x00, 0x41, 0x00]),

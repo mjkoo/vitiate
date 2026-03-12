@@ -173,7 +173,7 @@ impl Fuzzer {
     /// advances to the next phase/position, constructs the next candidate.
     /// Returns `None` when generalization is complete.
     pub(super) fn advance_generalization(&mut self, exec_time_ns: f64) -> Result<Option<Buffer>> {
-        // Drain CmpLog (discard — generalization doesn't use CmpLog data).
+        // Drain CmpLog (discard - generalization doesn't use CmpLog data).
         let _ = crate::cmplog::drain();
 
         // Extract state (we'll put it back or replace it).
@@ -194,7 +194,7 @@ impl Fuzzer {
 
         let novelties_survived = self.check_novelties_survived(&novelties);
 
-        // The target was invoked — count the execution before the fallible
+        // The target was invoked - count the execution before the fallible
         // evaluate_coverage call so counters stay accurate on error.
         self.total_execs += 1;
         *self.state.executions_mut() += 1;
@@ -213,7 +213,7 @@ impl Fuzzer {
             }
         } else {
             self.last_stage_input = None;
-            // Zero coverage map — Verify doesn't call evaluate_coverage (which does its own zero).
+            // Zero coverage map - Verify doesn't call evaluate_coverage (which does its own zero).
             // SAFETY: map_ptr is valid for map_len bytes, backed by _coverage_map Buffer.
             unsafe {
                 std::ptr::write_bytes(self.map_ptr, 0, self.map_len);
@@ -223,11 +223,11 @@ impl Fuzzer {
         match phase {
             GeneralizationPhase::Verify => {
                 if !novelties_survived {
-                    // Verification failed — unstable input. Abort generalization.
+                    // Verification failed - unstable input. Abort generalization.
                     self.stage_state = StageState::None;
                     return Ok(None);
                 }
-                // Verification passed — begin offset-based gap-finding.
+                // Verification passed - begin offset-based gap-finding.
                 let next_phase = GeneralizationPhase::Offset { level: 0, _pos: 0 };
                 self.generate_next_candidate(corpus_id, novelties, payload, next_phase)
             }
@@ -238,7 +238,7 @@ impl Fuzzer {
                 let offset = GENERALIZATION_OFFSETS[level as usize];
                 let next_pos = candidate_range.map_or(0, |(_, e)| e);
                 if next_pos >= payload.len() {
-                    // Pass complete — trim and move to next level or delimiter phase.
+                    // Pass complete - trim and move to next level or delimiter phase.
                     trim_payload(&mut payload);
                     let next_phase = if (level + 1) < GENERALIZATION_OFFSETS.len() as u8 {
                         GeneralizationPhase::Offset {
@@ -272,7 +272,7 @@ impl Fuzzer {
 
                 let next_pos = candidate_range.map_or(0, |(_, e)| e);
                 if next_pos >= payload.len() {
-                    // Pass complete — trim and move to next delimiter or bracket phase.
+                    // Pass complete - trim and move to next delimiter or bracket phase.
                     trim_payload(&mut payload);
                     let next_phase = if (index + 1) < GENERALIZATION_DELIMITERS.len() as u8 {
                         GeneralizationPhase::Delimiter {
@@ -338,7 +338,7 @@ impl Fuzzer {
                         endings,
                     )
                 } else {
-                    // First entry into bracket phase — start scanning.
+                    // First entry into bracket phase - start scanning.
                     self.find_next_bracket_opener(
                         corpus_id,
                         novelties,
@@ -365,7 +365,7 @@ impl Fuzzer {
                 let offset = GENERALIZATION_OFFSETS[level as usize];
                 let start = 0;
                 if start >= payload.len() {
-                    // Empty payload — skip to next phase.
+                    // Empty payload - skip to next phase.
                     return self
                         .advance_to_next_offset_or_delimiter(corpus_id, novelties, payload, level);
                 }
@@ -412,7 +412,7 @@ impl Fuzzer {
             }
             GeneralizationPhase::Bracket { pair_index, .. } => {
                 if pair_index as usize >= GENERALIZATION_BRACKETS.len() {
-                    // All bracket passes done — finalize.
+                    // All bracket passes done - finalize.
                     return self.finalize_generalization(corpus_id, &payload);
                 }
                 // Start bracket scanning from index=0.
@@ -515,7 +515,7 @@ impl Fuzzer {
                 index += 1;
             }
             if index >= payload.len() {
-                // No more openers for this pair — advance to next pair.
+                // No more openers for this pair - advance to next pair.
                 trim_payload(&mut payload);
                 pair_index += 1;
                 index = 0;
@@ -531,7 +531,7 @@ impl Fuzzer {
             while end > start {
                 if payload[end] == Some(close_char) {
                     endings += 1;
-                    // Found a closer — yield candidate from start..end (exclusive of endpoints
+                    // Found a closer - yield candidate from start..end (exclusive of endpoints
                     // to match LibAFL behavior: the opener and closer themselves are kept).
                     let candidate = build_generalization_candidate(&payload, start + 1, end);
                     self.last_stage_input = Some(candidate.clone());
@@ -555,7 +555,7 @@ impl Fuzzer {
                 end -= 1;
             }
 
-            // No closer found for this opener — advance to next bracket pair.
+            // No closer found for this opener - advance to next bracket pair.
             trim_payload(&mut payload);
             pair_index += 1;
             index = 0;

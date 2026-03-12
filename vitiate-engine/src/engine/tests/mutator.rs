@@ -392,7 +392,7 @@ fn test_i2s_insertion_at_nonzero_offset() {
 
 #[test]
 fn test_i2s_both_empty_operands_skipped() {
-    // CmpValues::Bytes(("", "")) should be skipped — no useful mutation possible.
+    // CmpValues::Bytes(("", "")) should be skipped - no useful mutation possible.
     let seed = find_i2s_seed(1, 4, 0, 0);
     let entries = vec![CmpValues::Bytes((
         make_cmplog_bytes(b""),

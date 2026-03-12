@@ -7,12 +7,12 @@ The system SHALL provide a `normalizeStackForDedup(stack: string): string | unde
 The normalization SHALL:
 
 1. Parse the V8 stack trace format. Recognized frame formats:
-   - `at functionName (filePath:line:col)` — named function
-   - `at filePath:line:col` — anonymous function (no name before the path)
-   - `at Type.method (filePath:line:col)` — method call (preserve `Type.method` as the function name)
-   - `at new Constructor (filePath:line:col)` — constructor call (preserve `new Constructor` as the function name)
-   - `at Object.<anonymous> (filePath:line:col)` — anonymous in object context (preserve `Object.<anonymous>`)
-   - `at async functionName (filePath:line:col)` — async frame (strip `async` prefix, keep function name)
+   - `at functionName (filePath:line:col)` - named function
+   - `at filePath:line:col` - anonymous function (no name before the path)
+   - `at Type.method (filePath:line:col)` - method call (preserve `Type.method` as the function name)
+   - `at new Constructor (filePath:line:col)` - constructor call (preserve `new Constructor` as the function name)
+   - `at Object.<anonymous> (filePath:line:col)` - anonymous in object context (preserve `Object.<anonymous>`)
+   - `at async functionName (filePath:line:col)` - async frame (strip `async` prefix, keep function name)
 2. Strip line numbers and column numbers from each frame, keeping only `functionName@fileName`.
 3. Strip `async` prefixes from frame descriptors (e.g., `at async foo (...)` → function name is `foo`).
 4. For `eval` frames (`at eval (eval at fn (filePath:line:col), <anonymous>:line:col)`), use `eval` as the function name and the outer file path as the file name. If the eval frame cannot be parsed, treat it as a regular frame.

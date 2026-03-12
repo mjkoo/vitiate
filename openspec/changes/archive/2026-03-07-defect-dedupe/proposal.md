@@ -12,17 +12,17 @@ During long fuzzing campaigns, Vitiate saves every crashing input as a separate 
 ## Capabilities
 
 ### New Capabilities
-- `defect-dedupe`: Crash deduplication by normalized stack hash — maintains a per-process map of seen crash signatures, keeps smallest reproducer per unique defect, fails open when dedup key is unavailable
+- `defect-dedupe`: Crash deduplication by normalized stack hash - maintains a per-process map of seen crash signatures, keeps smallest reproducer per unique defect, fails open when dedup key is unavailable
 
 ### Modified Capabilities
 - `fuzz-loop`: Integrates dedup check before artifact write on crash paths
 - `corpus-management`: Adds `replaceArtifact` for atomic artifact replacement when a smaller reproducer is found
-- `crash-continuation`: Qualifies crash counter and artifact collection — suppressed duplicates are not counted or appended
+- `crash-continuation`: Qualifies crash counter and artifact collection - suppressed duplicates are not counted or appended
 
 ## Impact
 
 - **Code:** `loop.ts` (dedup logic integration), `corpus.ts` (artifact replacement), new stack normalization utility, reporter (new counter display)
-- **No changes to:** `supervisor.ts`, `vitiate-napi`, `vitiate-instrument`, shmem, watchdog — the supervisor/native crash path remains fail-open by construction
+- **No changes to:** `supervisor.ts`, `vitiate-napi`, `vitiate-instrument`, shmem, watchdog - the supervisor/native crash path remains fail-open by construction
 - **APIs:** No public API changes; dedup is automatic and internal. `FuzzLoopResult` gains `duplicateCrashesSkipped` counter.
 - **Prerequisite:** Depends on the `stop-on-crash` change (`stopOnCrash: false` allows the loop to continue after crashes, which is necessary for the dedup map to accumulate entries)
 - **Vitest mode:** Benefits when `stopOnCrash` resolves to `false` (the default via `auto`), allowing dedup across multiple crashes in a single campaign

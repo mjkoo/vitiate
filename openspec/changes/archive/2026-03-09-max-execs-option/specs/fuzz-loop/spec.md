@@ -4,7 +4,7 @@
 
 The `VITIATE_FUZZ_EXECS` environment variable SHALL override `FuzzOptions.fuzzExecs` when set. It accepts a non-negative integer value (plain count, no unit conversion). Invalid values (non-integer, negative, non-finite) SHALL produce a warning on stderr and be ignored, matching the `VITIATE_FUZZ_TIME` / `getFuzzTime()` error handling pattern.
 
-The override SHALL be applied in `getCliOptions()` after parsing `VITIATE_FUZZ_OPTIONS`, following the same pattern as `getFuzzTime()` overriding `fuzzTimeMs`. This applies universally — both CLI and Vitest modes.
+The override SHALL be applied in `getCliOptions()` after parsing `VITIATE_FUZZ_OPTIONS`, following the same pattern as `getFuzzTime()` overriding `fuzzTimeMs`. This applies universally - both CLI and Vitest modes.
 
 `VITIATE_FUZZ_EXECS` SHALL be added to the `KNOWN_VITIATE_ENV_VARS` set so that it does not trigger the unknown-env-var warning.
 
@@ -47,7 +47,7 @@ The fuzz loop SHALL integrate detector lifecycle hooks around target execution. 
 9. If `reportResult` returns `Interesting`, run calibration and then run stages (I2S, Generalization, Grimoire). Detector lifecycle hooks SHALL also wrap target execution during calibration re-runs and stage executions (see requirements below).
 10. Every 1 000 iterations, yield to the event loop.
 
-The shmem stash (step 2) SHALL occur whenever the `VITIATE_SUPERVISOR` environment variable is set, regardless of whether the supervisor was spawned by the CLI entry point or by the `fuzz()` test callback. The fuzz loop does not need to know which entry point spawned the supervisor — the `VITIATE_SUPERVISOR` env var is the sole indicator.
+The shmem stash (step 2) SHALL occur whenever the `VITIATE_SUPERVISOR` environment variable is set, regardless of whether the supervisor was spawned by the CLI entry point or by the `fuzz()` test callback. The fuzz loop does not need to know which entry point spawned the supervisor - the `VITIATE_SUPERVISOR` env var is the sole indicator.
 
 The loop SHALL terminate when any of these conditions is met:
 
@@ -140,7 +140,7 @@ The fuzz loop SHALL NOT import or call `setDetectorActive()` directly. All detec
 - **THEN** no artifact SHALL be written
 - **AND** the `duplicateCrashesSkipped` counter SHALL be incremented
 - **AND** the crash counter SHALL NOT be incremented (suppressed crashes do not count toward `maxCrashes`)
-- **AND** the loop continues to the next iteration (regardless of `stopOnCrash` — a suppressed duplicate is not a "new" crash)
+- **AND** the loop continues to the next iteration (regardless of `stopOnCrash` - a suppressed duplicate is not a "new" crash)
 
 #### Scenario: Duplicate crash with smaller input replaces artifact
 

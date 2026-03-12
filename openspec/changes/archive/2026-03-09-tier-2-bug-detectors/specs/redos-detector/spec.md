@@ -26,7 +26,7 @@ The detector SHALL wrap the following methods in `setup()` by replacing them on 
 Each wrapper SHALL:
 1. Check the iteration-window flag (`isDetectorActive()`). If inactive, call the original method directly.
 2. Record `performance.now()` before calling the original method.
-3. Call the original method with the same `this` context and arguments. If the original method throws (e.g., `replaceAll` TypeError for non-global regex), let the exception propagate immediately — steps 4-5 are skipped.
+3. Call the original method with the same `this` context and arguments. If the original method throws (e.g., `replaceAll` TypeError for non-global regex), let the exception propagate immediately - steps 4-5 are skipped.
 4. Record `performance.now()` after the call returns successfully.
 5. If elapsed time exceeds the threshold, throw a `VulnerabilityError`.
 
@@ -34,7 +34,7 @@ Each wrapper SHALL:
 
 The wrapper SHALL use the module-hook stash helper (`stashAndRethrow`) when throwing a `VulnerabilityError`, so that findings swallowed by target try/catch are recoverable by `DetectorManager.endIteration()`.
 
-The detector only fires for regex operations that return within the iteration timeout. If V8's `TerminateExecution` fires before the operation completes (watchdog timeout), the iteration is classified as a timeout and the ReDoS detector does not fire — the timing check runs after the original call returns.
+The detector only fires for regex operations that return within the iteration timeout. If V8's `TerminateExecution` fires before the operation completes (watchdog timeout), the iteration is classified as a timeout and the ReDoS detector does not fire - the timing check runs after the original call returns.
 
 The wrappers SHALL be installed by storing the original method reference and replacing the prototype property. `teardown()` SHALL restore the original methods.
 
@@ -91,9 +91,9 @@ The `VulnerabilityError` context SHALL include sufficient information to identif
 - `elapsedMs` (number): The wall-clock time of the regex call in milliseconds
 - `method` (string): The method name that was called (e.g., `"exec"`, `"test"`, `"match"`)
 
-For `String.prototype` methods, the regex is extracted from the first argument. If the first argument is a string (not a RegExp), the method is NOT timed — only RegExp arguments trigger timing, since string-to-regex conversion produces simple patterns that cannot cause catastrophic backtracking. If the first argument is `undefined` or missing, the wrapper SHALL call the original method directly without timing (letting the original method handle the error case).
+For `String.prototype` methods, the regex is extracted from the first argument. If the first argument is a string (not a RegExp), the method is NOT timed - only RegExp arguments trigger timing, since string-to-regex conversion produces simple patterns that cannot cause catastrophic backtracking. If the first argument is `undefined` or missing, the wrapper SHALL call the original method directly without timing (letting the original method handle the error case).
 
-Note: `String.prototype.replaceAll` throws a `TypeError` if the first argument is a `RegExp` without the `g` flag. The wrapper times the call by wrapping the original method invocation; if the original method throws (including this `TypeError`), the exception propagates naturally — the timing check only runs after the original call returns successfully.
+Note: `String.prototype.replaceAll` throws a `TypeError` if the first argument is a `RegExp` without the `g` flag. The wrapper times the call by wrapping the original method invocation; if the original method throws (including this `TypeError`), the exception propagates naturally - the timing check only runs after the original call returns successfully.
 
 #### Scenario: String.prototype.match with string argument is not timed
 

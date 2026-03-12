@@ -1,6 +1,6 @@
 ## Context
 
-The vitiate Vite plugin (`plugin.ts`) currently implements two hooks: `config()` for setupFiles injection and environment variable setup, and `transform()` for SWC instrumentation. Fuzzing mode is activated exclusively via the `VITIATE_FUZZ=1` environment variable. The vitest-plugin spec incorrectly requires a `configureVitest` hook for setupFiles injection — this hook fires after Vitest's project config is frozen and cannot modify `setupFiles`.
+The vitiate Vite plugin (`plugin.ts`) currently implements two hooks: `config()` for setupFiles injection and environment variable setup, and `transform()` for SWC instrumentation. Fuzzing mode is activated exclusively via the `VITIATE_FUZZ=1` environment variable. The vitest-plugin spec incorrectly requires a `configureVitest` hook for setupFiles injection - this hook fires after Vitest's project config is frozen and cannot modify `setupFiles`.
 
 The standalone CLI (`cli.ts`) already wraps `startVitest()` and sets `VITIATE_FUZZ=1` internally, so CLI users don't encounter the env var directly. But users running `vitest` with the plugin must set the env var manually: `VITIATE_FUZZ=1 vitest`.
 
@@ -14,9 +14,9 @@ The standalone CLI (`cli.ts`) already wraps `startVitest()` and sets `VITIATE_FU
 
 **Non-Goals:**
 
-- Vitest reporter pipeline integration — the fuzz loop runs in a worker process/thread that cannot access the main-process Vitest instance. Direct stderr writes are the correct approach.
+- Vitest reporter pipeline integration - the fuzz loop runs in a worker process/thread that cannot access the main-process Vitest instance. Direct stderr writes are the correct approach.
 - Custom Vitest reporter implementation for fuzz output
-- Any changes to the standalone CLI (`cli.ts`) — it already handles activation correctly
+- Any changes to the standalone CLI (`cli.ts`) - it already handles activation correctly
 
 ## Decisions
 
@@ -30,7 +30,7 @@ The standalone CLI (`cli.ts`) already wraps `startVitest()` and sets `VITIATE_FU
 
 - *Vitest `--define` flag*: Users could write `vitest --define.__VITIATE_FUZZ__=true`, but this is worse UX than the env var.
 - *Custom Vitest config option*: Users could set `process.env.VITIATE_FUZZ=1` in their `vite.config.ts`, but this requires code changes rather than a CLI flag.
-- *`configureVitest` hook for argv parsing*: This hook fires after setup files have already been resolved and potentially loaded. Setting `VITIATE_FUZZ` there would be too late — `setup.ts` reads `isFuzzingMode()` at import time to decide whether to connect to the napi coverage map.
+- *`configureVitest` hook for argv parsing*: This hook fires after setup files have already been resolved and potentially loaded. Setting `VITIATE_FUZZ` there would be too late - `setup.ts` reads `isFuzzingMode()` at import time to decide whether to connect to the napi coverage map.
 
 ### 2. Argv parsing approach: simple sequential scan
 
@@ -47,7 +47,7 @@ The scan handles three forms:
 
 **Decision:** Replace the `configureVitest` setupFiles requirement with a `config()` hook requirement (which matches the working implementation).
 
-**Rationale:** Vitest's `configureVitest` hook fires at project initialization time, after the `config()` and `configResolved()` hooks have already merged plugin configs and resolved `setupFiles`. The `config()` hook is the correct Vite-idiomatic mechanism for injecting configuration — it runs during config resolution and its return value is deep-merged into the final config.
+**Rationale:** Vitest's `configureVitest` hook fires at project initialization time, after the `config()` and `configResolved()` hooks have already merged plugin configs and resolved `setupFiles`. The `config()` hook is the correct Vite-idiomatic mechanism for injecting configuration - it runs during config resolution and its return value is deep-merged into the final config.
 
 The original spec was written based on the PRD's description of `configureVitest`, but Vitest's actual lifecycle makes this hook unsuitable for config injection.
 
@@ -55,7 +55,7 @@ The original spec was written based on the PRD's description of `configureVitest
 
 **Decision:** Keep direct stderr writes in the progress reporter. Do not attempt Vitest reporter integration.
 
-**Rationale:** The fuzz loop executes inside a Vitest worker (thread or child process). The `configureVitest` hook runs in the main Vitest process. There is no mechanism to pass the `vitest` instance or its logger across the process/thread boundary. Even if there were, Vitest does not produce output during test execution — it collects results and reports them after tests complete. Interleaving is not a practical concern.
+**Rationale:** The fuzz loop executes inside a Vitest worker (thread or child process). The `configureVitest` hook runs in the main Vitest process. There is no mechanism to pass the `vitest` instance or its logger across the process/thread boundary. Even if there were, Vitest does not produce output during test execution - it collects results and reports them after tests complete. Interleaving is not a practical concern.
 
 ### 5. Env var precedence: explicit env vars always win
 

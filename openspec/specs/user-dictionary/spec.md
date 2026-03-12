@@ -127,7 +127,7 @@ When a dictionary file is provided (by convention or flag), the parsed tokens SH
 
 If a dictionary file exists but contains malformed content (lines that are not comments, blank lines, or valid quoted token entries), `Fuzzer` construction SHALL fail with an error. The error message SHALL indicate the file path and the nature of the parse failure. Since dictionary loading occurs during `Fuzzer` construction (see fuzzing-engine spec), this error surfaces before any fuzz iterations execute.
 
-This applies in both Vitest mode and CLI mode. In Vitest mode, the error occurs during `runFuzzLoop()` when it constructs the `Fuzzer` — not during plugin initialization or test discovery.
+This applies in both Vitest mode and CLI mode. In Vitest mode, the error occurs during `runFuzzLoop()` when it constructs the `Fuzzer` - not during plugin initialization or test discovery.
 
 #### Scenario: Invalid dictionary syntax
 

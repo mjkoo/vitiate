@@ -14,7 +14,7 @@ If the selected entry is `CmpValues::Bytes`, the mutator SHALL handle it directl
 
 For `CmpValues::Bytes` entries where a match is found in the input (see "Partial prefix matching" below for how `matched_prefix_len` is determined), the mutator SHALL randomly choose between two strategies with equal probability (`state.rand_mut().below(2) == 0`):
 
-- **Overwrite**: Write `matched_prefix_len` bytes of the replacement operand over the match position. Input length is unchanged. This matches existing `I2SRandReplace` behavior — the replacement is truncated to the matched prefix length.
+- **Overwrite**: Write `matched_prefix_len` bytes of the replacement operand over the match position. Input length is unchanged. This matches existing `I2SRandReplace` behavior - the replacement is truncated to the matched prefix length.
 - **Splice**: Delete the `matched_prefix_len` matched bytes and insert the full replacement operand at the match position. Input length changes by `replacement_len - matched_prefix_len`. This uses `resize`, `buffer_self_copy` (to shift the tail), and `buffer_copy` (to write the full replacement).
 
 When operand lengths are equal, the mutator SHALL always use overwrite (splice and overwrite produce identical results for same-length operands, so the coin flip is unnecessary).

@@ -4,7 +4,7 @@
 
 The system SHALL use a hash-prefixed directory name scheme for all corpus and artifact paths keyed by test name. The `sanitizeTestName(name)` function SHALL produce a directory name in the format `{hash}-{slug}` where:
 
-- `{hash}` is the first 8 characters of the SHA-256 hex digest of the original unsanitized test name. This guarantees uniqueness — distinct test names always produce distinct directory names.
+- `{hash}` is the first 8 characters of the SHA-256 hex digest of the original unsanitized test name. This guarantees uniqueness - distinct test names always produce distinct directory names.
 - `{slug}` is a lossy human-readable hint derived from the original name: non-`[a-zA-Z0-9\-_.]` characters replaced with `_`, consecutive underscores collapsed, leading/trailing underscores stripped. The slug is never used for uniqueness; it exists only so humans can identify the test from a directory listing.
 
 If the slug is empty after sanitization, only the hash SHALL be used (no trailing dash).
@@ -34,7 +34,7 @@ If the slug is empty after sanitization, only the hash SHALL be used (no trailin
 
 The system SHALL provide a function to resolve the dictionary file path for a fuzz test. The dictionary file SHALL be located at `testdata/fuzz/{sanitizedTestName}.dict` relative to the test file's directory, where `{sanitizedTestName}` uses the same hash-prefixed format as seed corpus directories.
 
-This file is a sibling to the seed corpus directory (`testdata/fuzz/{sanitizedTestName}/`). It is NOT a file within the seed corpus directory — seed corpus loading SHALL NOT read `.dict` files as seed inputs.
+This file is a sibling to the seed corpus directory (`testdata/fuzz/{sanitizedTestName}/`). It is NOT a file within the seed corpus directory - seed corpus loading SHALL NOT read `.dict` files as seed inputs.
 
 The function SHALL return the path if the file exists, or `undefined` if it does not. No error SHALL be raised for a missing dictionary file.
 

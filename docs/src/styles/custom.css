@@ -1,0 +1,12 @@
+/* Swap card border/background colors for cards 1 and 3 on the landing page.
+   Starlight assigns colors via nth-child: 1st=orange, 2nd=purple, 3rd=green, 4th=red.
+   We want: 1st (Vitest)=green, 3rd (SWC)=orange. */
+.card:nth-child(4n + 1) {
+  --sl-card-border: var(--sl-color-green);
+  --sl-card-bg: var(--sl-color-green-low);
+}
+
+.card:nth-child(4n + 3) {
+  --sl-card-border: var(--sl-color-orange);
+  --sl-card-bg: var(--sl-color-orange-low);
+}

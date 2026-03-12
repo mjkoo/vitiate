@@ -18,20 +18,20 @@ testdata/fuzz/<sanitized-test-name>/
 └── timeout-def456...  (timeout artifacts, auto-generated)
 ```
 
-The directory name is a sanitized form of the test name (hash prefix + slug, e.g., `8fcacc40-parse_url`). Run the fuzzer briefly with `-runs 1` to create the directory, then add your seeds to it.
+The directory name is a sanitized form of the test name (hash prefix + slug, e.g., `8fcacc40-parse_url`). Run the fuzzer briefly to create the directory, then add your seeds to it.
 
 ### What Makes Good Seeds
 
 - **Cover different code paths.** A JSON parser benefits from seeds with objects, arrays, strings, numbers, nested structures, and empty inputs.
 - **Include edge cases.** Empty input, very long input, inputs with special characters.
-- **Be minimal.** Small seeds are more useful than large ones — the fuzzer can build complexity through mutation.
 - **Be valid *and* invalid.** Valid inputs exercise normal code paths; slightly invalid inputs exercise error handling.
+- **Don't worry about quantity.** It's fine to add many seeds - after fuzzing, run `VITIATE_OPTIMIZE=1 npx vitest run` to [minimize the corpus](/vitiate/concepts/corpus/#corpus-minimization) down to the smallest set that maintains coverage.
 
 ### Example Seeds for a URL Parser
 
 ```bash
-# Run once to create the seed directory
-npx vitiate test/url-parser.fuzz.ts -runs 1
+# Run the fuzzer briefly to create the seed directory, then Ctrl+C
+VITIATE_FUZZ=1 npx vitest run test/url-parser.fuzz.ts
 
 # Find the created directory
 SEED_DIR=$(ls -d test/testdata/fuzz/*parseUrl*)
@@ -48,18 +48,18 @@ echo -n ':///' > "$SEED_DIR/seed-minimal"
 
 ## Dictionaries
 
-A dictionary is a file containing tokens — short byte sequences that are meaningful to your target. The fuzzer uses these tokens during mutation, inserting them into inputs to help reach code paths that depend on specific keywords or delimiters.
+A dictionary is a file containing tokens - short byte sequences that are meaningful to your target. The fuzzer uses these tokens during mutation, inserting them into inputs to help reach code paths that depend on specific keywords or delimiters.
 
 ### Dictionary File Format
 
-One token per line. Tokens can be quoted or unquoted:
+Vitiate uses the standard AFL/libFuzzer dictionary format. One token per line, enclosed in double quotes. Lines starting with `#` are comments. Empty lines are ignored.
 
 ```
 # URL dictionary
-"://"
-"http"
-"https"
+protocol_http="http"
+protocol_https="https"
 "ftp"
+"://"
 "@"
 ":"
 "/"
@@ -74,13 +74,25 @@ One token per line. Tokens can be quoted or unquoted:
 "[::1]"
 ```
 
-Lines starting with `#` are comments.
+Tokens can have an optional `name=` prefix (e.g., `protocol_http="http"`) which serves as a human-readable label and is ignored by the parser. Use `\xHH` hex escapes for binary bytes:
+
+```
+# Binary magic bytes
+jpeg_magic="\xff\xd8\xff\xe0"
+null="\x00"
+```
+
+### Premade Dictionaries
+
+The [AFLplusplus dictionaries collection](https://github.com/AFLplusplus/AFLplusplus/tree/stable/dictionaries) contains ready-to-use dictionaries for many common formats (JSON, XML, HTML, HTTP, SQL, and more). These are directly compatible with Vitiate's `-dict` flag.
 
 ### Automatic Discovery
 
 Place the dictionary at `testdata/fuzz/<sanitized-test-name>.dict` (next to the seed directory, same name with `.dict` extension) and it will be loaded automatically. No CLI flag needed.
 
 ### CLI Flag
+
+When using the [standalone CLI](/vitiate/guides/cli/), you can also specify a dictionary explicitly:
 
 ```bash
 npx vitiate test/parser.fuzz.ts -dict path/to/custom.dict
@@ -94,5 +106,5 @@ When detectors are active, they automatically contribute relevant tokens to the 
 
 - **Target-specific tokens are best.** A JSON parser benefits from `{`, `}`, `[`, `]`, `:`, `"`, `true`, `false`, `null`. A CSV parser benefits from `,`, `\n`, `"`.
 - **Include encoding variations.** URL-encoded versions (`%2e%2e`), Unicode escapes, null bytes.
-- **Keep tokens short.** The fuzzer combines and mutates them — long tokens reduce the mutation space.
+- **Keep tokens short.** The fuzzer combines and mutates them - long tokens reduce the mutation space.
 - **Do not overload the dictionary.** 10-50 tokens is typical. Hundreds of tokens slow down mutation and dilute effectiveness.

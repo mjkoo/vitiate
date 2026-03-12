@@ -4,7 +4,7 @@
 
 The system SHALL provide a function to resolve the dictionary file path for a fuzz test. The dictionary file SHALL be located at `testdata/fuzz/{sanitizedTestName}.dict` relative to the test file's directory, where `{sanitizedTestName}` uses the same hash-prefixed format as seed corpus directories.
 
-This file is a sibling to the seed corpus directory (`testdata/fuzz/{sanitizedTestName}/`). It is NOT a file within the seed corpus directory — seed corpus loading SHALL NOT read `.dict` files as seed inputs.
+This file is a sibling to the seed corpus directory (`testdata/fuzz/{sanitizedTestName}/`). It is NOT a file within the seed corpus directory - seed corpus loading SHALL NOT read `.dict` files as seed inputs.
 
 The function SHALL return the path if the file exists, or `undefined` if it does not. No error SHALL be raised for a missing dictionary file.
 

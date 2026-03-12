@@ -55,7 +55,7 @@ function getCachedCliOptions(): FuzzOptions {
 
 type FuzzTarget = (data: Buffer) => void | Promise<void>;
 
-/** INT32_MAX — disables Vitest's built-in timeout so vitiate manages its own. */
+/** INT32_MAX - disables Vitest's built-in timeout so vitiate manages its own. */
 const VITEST_NO_TIMEOUT = 2_147_483_647;
 
 function getTestDir(): string {
@@ -94,7 +94,7 @@ export function resolveVitestCli(): string {
  * Build a --test-name-pattern regex string from a hierarchy of suite/test
  * names. Vitest's internal `getTaskFullName` (used by `interpretTaskModes` for
  * `--test-name-pattern` matching) produces `"<suite1> <suite2> <testName>"`
- * with space separators — it does NOT include the file path. The supervisor
+ * with space separators - it does NOT include the file path. The supervisor
  * already restricts the child vitest to the correct file via a positional
  * argument, so the pattern only needs to match the test hierarchy.
  */
@@ -222,7 +222,7 @@ function registerFuzzTest(
     // CLI options (env-based) take precedence over per-test options
     const mergedOptions = { ...options, ...getCachedCliOptions() };
     if (isSupervisorChild()) {
-      // Child mode: supervised — enter the fuzz loop directly
+      // Child mode: supervised - enter the fuzz loop directly
       register(
         name,
         async () => {

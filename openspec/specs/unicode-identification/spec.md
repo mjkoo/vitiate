@@ -6,7 +6,7 @@ Unicode identification analyzes byte inputs to extract valid UTF-8 string region
 
 ### Requirement: UTF-8 region identification extracts character boundary metadata
 
-The system SHALL provide a UTF-8 identification algorithm that analyzes a byte input and produces `UnicodeIdentificationMetadata` containing all valid UTF-8 string regions with precomputed character boundaries. The metadata is stored as `Rc<Vec<(usize, BitVec)>>` — a reference-counted list of `(region_start_offset, character_boundary_bitvec)` tuples. The algorithm SHALL:
+The system SHALL provide a UTF-8 identification algorithm that analyzes a byte input and produces `UnicodeIdentificationMetadata` containing all valid UTF-8 string regions with precomputed character boundaries. The metadata is stored as `Rc<Vec<(usize, BitVec)>>` - a reference-counted list of `(region_start_offset, character_boundary_bitvec)` tuples. The algorithm SHALL:
 
 1. Use a BFS traversal starting at byte offset 0.
 2. At each unvisited position, attempt to parse the remaining bytes as UTF-8.
@@ -15,7 +15,7 @@ The system SHALL provide a UTF-8 identification algorithm that analyzes a byte i
 5. After recording a region, queue any unset BitVec positions within the region (continuation bytes within multi-byte characters).
 6. Continue until all byte positions are visited or queued.
 
-The result SHALL be an `Rc<Vec<(usize, BitVec)>>` — a reference-counted list of tuples, one per contiguous UTF-8 region found in the input. The BitVec for each region SHALL have length equal to the region's byte length, with set bits at character boundary positions (the byte offset where each character starts).
+The result SHALL be an `Rc<Vec<(usize, BitVec)>>` - a reference-counted list of tuples, one per contiguous UTF-8 region found in the input. The BitVec for each region SHALL have length equal to the region's byte length, with set bits at character boundary positions (the byte offset where each character starts).
 
 #### Scenario: Fully valid UTF-8 input
 

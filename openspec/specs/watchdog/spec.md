@@ -94,7 +94,7 @@ When `TerminateExecution` is unavailable or ineffective (V8 symbols not found on
 
 When V8 termination is available, the `_exit` deadline SHALL be 5x the configured timeout (giving `TerminateExecution` ample time to propagate through JS frames). When V8 termination is unavailable, the `_exit` deadline SHALL equal the configured timeout (since `_exit` is the primary mechanism). This multiplier SHALL be determined by the result of `vitiate_v8_init()`, not by the target OS.
 
-The `Watchdog` constructor and `installExceptionHandler` SHALL accept an `artifactPrefix` string parameter (replacing the previous `artifactDir` directory parameter). The artifact prefix is a path prefix — not necessarily a directory — and the artifact filename is appended directly to it:
+The `Watchdog` constructor and `installExceptionHandler` SHALL accept an `artifactPrefix` string parameter (replacing the previous `artifactDir` directory parameter). The artifact prefix is a path prefix - not necessarily a directory - and the artifact filename is appended directly to it:
 
 - The timeout artifact path SHALL be `{artifactPrefix}timeout-{contentHash}`.
 - The crash artifact path (SEH handler) SHALL be `{artifactPrefix}crash-{contentHash}`.

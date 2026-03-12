@@ -3,7 +3,7 @@ use std::time::Duration;
 use libafl::HasMetadata;
 
 /// Nominal execution time assigned to seeds when manually constructing
-/// testcases in test helpers (not used in production — seeds are evaluated
+/// testcases in test helpers (not used in production - seeds are evaluated
 /// through the normal coverage pipeline).
 pub(crate) const SEED_EXEC_TIME: Duration = Duration::from_millis(1);
 use libafl::corpus::{Corpus, CorpusId, InMemoryCorpus, SchedulerTestcaseMetadata, Testcase};
@@ -38,7 +38,7 @@ use crate::types::{ExitKind, FuzzerConfig, IterationResult};
 // pointer into a `Vec<u8>` or napi `Buffer`. This is sound because:
 //
 // 1. The backing allocation (`Vec` / `Buffer`) is kept alive for the entire
-//    lifetime of the `Fuzzer` or the test scope — the observer never outlives
+//    lifetime of the `Fuzzer` or the test scope - the observer never outlives
 //    the allocation it points into.
 // 2. Only one `StdMapObserver` over the same pointer is live at any time.
 //    Temporary observers (used to seed feedback history) are dropped inside

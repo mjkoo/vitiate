@@ -6,7 +6,7 @@ fuzz("parse-url-async", async (data: Buffer) => {
   try {
     parseUrl(data.toString("utf-8"));
   } catch (error) {
-    // Expected parse validation errors on malformed input are fine —
+    // Expected parse validation errors on malformed input are fine -
     // re-throw only unexpected internal errors (like the planted port-0 bug).
     if (!(error instanceof ParseError)) {
       throw error;

@@ -28,7 +28,7 @@ impl CmpLogOperator {
     ///
     /// Returns `None` for unknown operators. The SWC plugin only emits known
     /// operators, but `trace_cmp` is a public NAPI function that can be called
-    /// with arbitrary strings from JS — returning `None` lets callers skip
+    /// with arbitrary strings from JS - returning `None` lets callers skip
     /// CmpLog recording gracefully while the operator match in `trace_cmp`
     /// returns the appropriate JS error.
     pub fn from_op(op: &str) -> Option<Self> {

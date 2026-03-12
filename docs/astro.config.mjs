@@ -11,6 +11,7 @@ export default defineConfig({
     starlight({
       plugins: [starlightThemeRapide()],
       title: "Vitiate",
+      customCss: ["./src/styles/custom.css"],
       social: [
         {
           icon: "github",
@@ -46,18 +47,15 @@ export default defineConfig({
               slug: "guides/structure-aware-fuzzing",
             },
             {
-              label: "Vulnerability Detectors",
-              slug: "guides/detectors",
-            },
-            { label: "Using the CLI", slug: "guides/cli" },
-            {
               label: "Dictionaries and Seeds",
               slug: "guides/dictionaries-and-seeds",
             },
             {
-              label: "CI Fuzzing and libFuzzer Compatibility",
-              slug: "guides/ci-fuzzing",
+              label: "Vulnerability Detectors",
+              slug: "guides/detectors",
             },
+            { label: "CI Fuzzing", slug: "guides/ci-fuzzing" },
+            { label: "Standalone CLI", slug: "guides/cli" },
           ],
         },
         {

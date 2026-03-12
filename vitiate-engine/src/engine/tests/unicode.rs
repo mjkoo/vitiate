@@ -139,7 +139,7 @@ fn test_unicode_category_token_replace_skipped_when_no_tokens() {
     let (map_ptr, _map) = make_coverage_map(256);
     let (mut state, _feedback, _objective) = make_state_and_feedback(map_ptr, 256);
     state.set_max_size(4096);
-    // No Tokens metadata added — mutator should skip.
+    // No Tokens metadata added - mutator should skip.
 
     let input = BytesInput::new(b"hello".to_vec());
     let metadata = UnicodeIdentificationMetadata::new(b"hello");
@@ -508,7 +508,7 @@ fn test_unicode_stage_non_cumulative_mutations() {
         };
     }
 
-    // Advance — the original corpus entry should be preserved (non-cumulative).
+    // Advance - the original corpus entry should be preserved (non-cumulative).
     let second = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
     assert!(second.is_some());
 

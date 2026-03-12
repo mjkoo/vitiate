@@ -1,6 +1,6 @@
 ## Why
 
-Fuzzing campaigns accumulate redundant corpus entries over time — multiple inputs that cover the same code edges. This bloats the corpus, slows seed loading, and wastes disk space. Users need a way to reduce their corpus to the minimal subset that preserves full coverage. LibFuzzer provides `-merge=1` for this; OSS-Fuzz invokes it regularly. Vitiate already parses `-merge=1` but prints a "not yet supported" warning.
+Fuzzing campaigns accumulate redundant corpus entries over time - multiple inputs that cover the same code edges. This bloats the corpus, slows seed loading, and wastes disk space. Users need a way to reduce their corpus to the minimal subset that preserves full coverage. LibFuzzer provides `-merge=1` for this; OSS-Fuzz invokes it regularly. Vitiate already parses `-merge=1` but prints a "not yet supported" warning.
 
 ## What Changes
 
@@ -21,11 +21,11 @@ Fuzzing campaigns accumulate redundant corpus entries over time — multiple inp
 
 ## Impact
 
-- **New file**: `vitiate/src/merge.ts` — set cover algorithm, coverage collection helper, merge/optimize orchestration.
-- **Modified**: `vitiate/src/cli.ts` — replace `-merge=1` warning with `runMergeMode()` call.
-- **Modified**: `vitiate/src/corpus.ts` — add path-returning load variants and corpus entry deletion.
-- **Modified**: `vitiate/src/config.ts` — add `VITIATE_OPTIMIZE` and `VITIATE_MERGE` env var detection, mutual exclusion check for `VITIATE_OPTIMIZE` + `VITIATE_FUZZ`.
-- **Modified**: `vitiate/src/fuzz.ts` — add optimize mode branch alongside existing fuzz mode.
+- **New file**: `vitiate/src/merge.ts` - set cover algorithm, coverage collection helper, merge/optimize orchestration.
+- **Modified**: `vitiate/src/cli.ts` - replace `-merge=1` warning with `runMergeMode()` call.
+- **Modified**: `vitiate/src/corpus.ts` - add path-returning load variants and corpus entry deletion.
+- **Modified**: `vitiate/src/config.ts` - add `VITIATE_OPTIMIZE` and `VITIATE_MERGE` env var detection, mutual exclusion check for `VITIATE_OPTIMIZE` + `VITIATE_FUZZ`.
+- **Modified**: `vitiate/src/fuzz.ts` - add optimize mode branch alongside existing fuzz mode.
 - **Merge control file**: Temp file for crash-resilient merge replay. Parent creates path, passes via `VITIATE_MERGE_CONTROL_FILE` env var, cleans up after supervisor completes.
 - **Dependencies**: No new dependencies. Uses existing coverage map (`globalThis.__vitiate_cov`), corpus I/O, and supervisor architecture.
 - **No napi changes**: Coverage is read directly from the shared Buffer in TypeScript.

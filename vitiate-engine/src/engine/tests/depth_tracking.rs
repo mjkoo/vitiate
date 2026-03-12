@@ -129,7 +129,7 @@ fn test_depth_increments_from_parent() {
 #[test]
 fn test_depth_parent_without_metadata_defaults_to_one() {
     // Exercises the fallback in coverage.rs where a parent testcase exists
-    // but has no SchedulerTestcaseMetadata — parent depth defaults to 1,
+    // but has no SchedulerTestcaseMetadata - parent depth defaults to 1,
     // so the child's depth should be 2 (parent_depth + 1).
     let mut fuzzer = TestFuzzerBuilder::new(1024).build();
 

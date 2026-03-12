@@ -1,7 +1,7 @@
 ## 1. Config Schema and Helpers
 
 - [x] 1.1 Rename `runs` to `fuzzExecs` in `FuzzOptionsSchema` in `vitiate/src/config.ts`
-- [x] 1.2 Add `getFuzzExecs()` helper mirroring `getFuzzTime()` — reads `VITIATE_FUZZ_EXECS` env var, validates as non-negative integer, returns `number | undefined`
+- [x] 1.2 Add `getFuzzExecs()` helper mirroring `getFuzzTime()` - reads `VITIATE_FUZZ_EXECS` env var, validates as non-negative integer, returns `number | undefined`
 - [x] 1.3 Add `VITIATE_FUZZ_EXECS` to `KNOWN_VITIATE_ENV_VARS` set
 - [x] 1.4 Apply `getFuzzExecs()` override in `getCliOptions()` (same pattern as `getFuzzTime()` override for `fuzzTimeMs`)
 
@@ -17,7 +17,7 @@
 
 - [x] 4.1 Update all `runs:` references in `vitiate/src/loop.test.ts` to `fuzzExecs:` (~40 occurrences)
 - [x] 4.2 Update any config tests that reference `runs` to use `fuzzExecs`
-- [x] 4.3 Add unit test for `getFuzzExecs()` — valid integer, zero, negative, non-integer, empty string
+- [x] 4.3 Add unit test for `getFuzzExecs()` - valid integer, zero, negative, non-integer, empty string
 - [x] 4.4 Add unit test for `getCliOptions()` verifying `VITIATE_FUZZ_EXECS` overrides `fuzzExecs`
 
 ## 5. Specs

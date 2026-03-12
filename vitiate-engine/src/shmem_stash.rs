@@ -40,7 +40,7 @@ pub const MAGIC: u32 = 0x56495449;
 /// Environment variable name for the shmem identifier.
 const SHMEM_ENV_NAME: &str = "VITIATE_SHMEM";
 
-/// Header layout for computing offsets. Not instantiated directly —
+/// Header layout for computing offsets. Not instantiated directly -
 /// the shmem region is raw bytes accessed via pointer arithmetic.
 #[repr(C)]
 struct ShmemHeader {
@@ -64,7 +64,7 @@ pub(crate) fn shmem_size(max_input_len: usize) -> usize {
 /// Lightweight, thread-safe view into a shmem region.
 ///
 /// Provides atomic read/write access to the layout fields.
-/// Does not own the underlying mapping — the caller must ensure
+/// Does not own the underlying mapping - the caller must ensure
 /// the mapping outlives all views.
 #[derive(Clone, Copy)]
 pub(crate) struct ShmemView {
@@ -79,7 +79,7 @@ pub(crate) struct ShmemView {
 //
 // Lifetime invariant: The `ShmemStash` (which owns the `StdShMem` mapping)
 // must outlive all `ShmemView` instances. In practice, both are held within
-// `runFuzzLoop`'s scope — the `ShmemHandle` (NAPI wrapper around `ShmemStash`)
+// `runFuzzLoop`'s scope - the `ShmemHandle` (NAPI wrapper around `ShmemStash`)
 // is created first and dropped last.
 unsafe impl Send for ShmemView {}
 unsafe impl Sync for ShmemView {}
@@ -162,9 +162,9 @@ impl ShmemView {
     /// so no consistency check is needed beyond the acquire fence.
     ///
     /// Returns an empty vec when:
-    /// - `generation == 0` (no input was ever stashed — after allocation or
+    /// - `generation == 0` (no input was ever stashed - after allocation or
     ///   `reset_generation()`)
-    /// - `generation` is odd (child died mid-write — torn data, not safe to read)
+    /// - `generation` is odd (child died mid-write - torn data, not safe to read)
     pub fn read_stashed_input(&self) -> Vec<u8> {
         // Acquire fence pairs with the child's release on generation increment.
         let generation = self.generation().load(Ordering::Acquire);
@@ -189,18 +189,18 @@ impl ShmemView {
     ///
     /// Used by the watchdog thread before `_exit`. Returns `None` if:
     /// - The generation is zero (no input ever stashed)
-    /// - The generation is odd (write in progress — seqlock protocol)
+    /// - The generation is odd (write in progress - seqlock protocol)
     /// - The generation changed between the two reads (torn read)
     pub fn read_consistent(&self) -> Option<Vec<u8>> {
         let gen_before = self.generation().load(Ordering::Acquire);
 
-        // Generation 0 means no input was ever stashed — avoid returning
+        // Generation 0 means no input was ever stashed - avoid returning
         // Some(empty) which would produce a phantom timeout artifact.
         if gen_before == 0 {
             return None;
         }
 
-        // Odd generation means a write is in progress — bail immediately.
+        // Odd generation means a write is in progress - bail immediately.
         if !gen_before.is_multiple_of(2) {
             return None;
         }
@@ -534,7 +534,7 @@ mod tests {
         let (_buf, view) = make_test_view(1024);
         view.stash_input(b"data");
 
-        // After stash_input, generation is 2 (even) — read should succeed.
+        // After stash_input, generation is 2 (even) - read should succeed.
         assert_eq!(view.generation().load(Ordering::Relaxed), 2);
         let data = view.read_consistent().expect("should succeed on even gen");
         assert_eq!(data, b"data");
@@ -553,7 +553,7 @@ mod tests {
     #[test]
     fn read_stashed_input_returns_empty_on_zero_generation() {
         let (_buf, view) = make_test_view(1024);
-        // Generation starts at 0 — no input ever stashed
+        // Generation starts at 0 - no input ever stashed
         assert!(view.read_stashed_input().is_empty());
     }
 
@@ -572,7 +572,7 @@ mod tests {
     #[test]
     fn read_consistent_returns_none_on_zero_generation() {
         let (_buf, view) = make_test_view(1024);
-        // Generation starts at 0 — read_consistent should return None,
+        // Generation starts at 0 - read_consistent should return None,
         // not Some(empty), to avoid phantom timeout artifacts.
         assert!(view.read_consistent().is_none());
     }

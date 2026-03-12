@@ -84,7 +84,7 @@ fn all_auto_seeds_without_coverage_returns_error() {
         );
     }
 
-    // Next call should error — all auto-seeds exhausted with zero coverage.
+    // Next call should error - all auto-seeds exhausted with zero coverage.
     let result = fuzzer.get_next_input();
     assert!(result.is_err(), "expected error after all auto-seeds fail");
     let msg = result.err().unwrap().to_string();
@@ -95,7 +95,7 @@ fn all_auto_seeds_without_coverage_returns_error() {
 }
 
 /// When user-provided seeds all fail to produce coverage, auto-seeds are
-/// NOT tried — the error fires immediately.
+/// NOT tried - the error fires immediately.
 #[test]
 fn user_seeds_without_coverage_skips_auto_seeds_and_errors() {
     cmplog::disable();
@@ -117,7 +117,7 @@ fn user_seeds_without_coverage_skips_auto_seeds_and_errors() {
         assert_eq!(result, IterationResult::None);
     }
 
-    // Next call should error — user seeds exhausted, auto-seeds skipped.
+    // Next call should error - user seeds exhausted, auto-seeds skipped.
     let result = fuzzer.get_next_input();
     assert!(result.is_err(), "expected error after all user seeds fail");
     let msg = result.err().unwrap().to_string();
@@ -159,7 +159,7 @@ fn all_seeds_crash_without_coverage_returns_clear_error() {
         assert_eq!(result, IterationResult::Solution);
     }
 
-    // Next call should error — all seeds crashed, corpus empty.
+    // Next call should error - all seeds crashed, corpus empty.
     let result = fuzzer.get_next_input();
     assert!(
         result.is_err(),
@@ -212,7 +212,7 @@ fn seed_with_coverage_transitions_to_normal_fuzzing() {
     }
     fuzzer.calibrate_finish().unwrap();
 
-    // Next get_next_input should succeed — scheduler selects from corpus.
+    // Next get_next_input should succeed - scheduler selects from corpus.
     let input = fuzzer.get_next_input();
     assert!(
         input.is_ok(),

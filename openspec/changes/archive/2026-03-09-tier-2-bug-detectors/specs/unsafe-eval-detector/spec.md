@@ -14,7 +14,7 @@ The goal string SHALL be `"vitiate_eval_inject"`.
 
 The detector SHALL hook the following in `setup()`:
 
-- `globalThis.eval`: Replace with a wrapper that checks the first argument for the goal string before calling the original `eval`. The goal-string check SHALL only run when the first argument satisfies `typeof arg === "string"` — non-string arguments SHALL pass through to the original `eval` without checking.
+- `globalThis.eval`: Replace with a wrapper that checks the first argument for the goal string before calling the original `eval`. The goal-string check SHALL only run when the first argument satisfies `typeof arg === "string"` - non-string arguments SHALL pass through to the original `eval` without checking.
 - `globalThis.Function`: Replace the `Function` constructor with a wrapper that checks all string arguments (which form the function body and parameter list) for the goal string before calling the original constructor. The wrapper SHALL intercept both `new Function(...)` and `Function(...)` calling conventions (both produce the same result in JavaScript). The wrapper SHALL use `Reflect.construct(OriginalFunction, args, new.target || OriginalFunction)` to correctly handle both calling conventions and preserve prototype chain behavior.
 
 Each wrapper SHALL check `isDetectorActive()` and pass through without checking when the iteration window is inactive.
@@ -25,7 +25,7 @@ Each wrapper SHALL use the module-hook stash helper (`stashAndRethrow`) when thr
 
 **Known limitations:**
 
-- **Indirect eval:** Expressions like `(0, eval)("code")` or `var e = eval; e("code")` may bypass the `globalThis.eval` wrapper in some engines because indirect eval resolves the original `eval` reference at call time. The goal-string approach still provides coverage — if fuzz input reaches any eval path containing the goal string, the finding is meaningful regardless of the call convention.
+- **Indirect eval:** Expressions like `(0, eval)("code")` or `var e = eval; e("code")` may bypass the `globalThis.eval` wrapper in some engines because indirect eval resolves the original `eval` reference at call time. The goal-string approach still provides coverage - if fuzz input reaches any eval path containing the goal string, the finding is meaningful regardless of the call convention.
 - **`Function` via prototype chain:** Accessing the `Function` constructor via `({}).constructor.constructor("code")()` bypasses the `globalThis.Function` wrapper. This is an uncommon pattern in real-world code and is out of scope.
 
 #### Scenario: Detect goal string in eval argument

@@ -43,7 +43,7 @@ impl FeatureDetection {
             grimoire_needs_detection || unicode_needs_detection || redqueen_needs_detection;
 
         let (corpus_is_utf8, deferred_detection_count) = if !needs_deferred {
-            // All features are explicitly configured — no detection needed.
+            // All features are explicitly configured - no detection needed.
             (false, None)
         } else if corpus_count == 0 {
             // Empty corpus: defer detection until DEFERRED_DETECTION_THRESHOLD
@@ -60,7 +60,7 @@ impl FeatureDetection {
 
         let grimoire_enabled = grimoire_override.unwrap_or(corpus_is_utf8);
         let unicode_enabled = unicode_override.unwrap_or(corpus_is_utf8);
-        // REDQUEEN: inverted polarity — enabled for binary (non-UTF-8) corpus.
+        // REDQUEEN: inverted polarity - enabled for binary (non-UTF-8) corpus.
         let redqueen_enabled =
             redqueen_override.unwrap_or(!corpus_is_utf8 && deferred_detection_count.is_none());
 
@@ -92,7 +92,7 @@ impl FeatureDetection {
                 if self.unicode_override.is_none() {
                     self.unicode_enabled = is_utf8;
                 }
-                // REDQUEEN: inverted polarity — enabled for binary corpus.
+                // REDQUEEN: inverted polarity - enabled for binary corpus.
                 if self.redqueen_override.is_none() {
                     self.redqueen_enabled = !is_utf8;
                 }

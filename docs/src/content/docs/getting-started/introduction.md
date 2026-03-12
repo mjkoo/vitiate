@@ -5,13 +5,13 @@ description: What is Vitiate and why you should use it.
 
 Vitiate is a coverage-guided fuzzer for JavaScript and TypeScript projects. It runs as a Vitest plugin, so you can write fuzz tests in the same files and with the same patterns as your unit tests.
 
-Under the hood, Vitiate uses [SWC](https://swc.rs/) to insert coverage instrumentation at build time and [LibAFL](https://github.com/AFLplusplus/LibAFL) to drive mutation-based fuzzing at runtime. The coverage map is shared between JavaScript and Rust via zero-copy memory, so there is no serialization overhead in the hot loop.
+Under the hood, Vitiate uses an [SWC](https://swc.rs/) WASM plugin to insert coverage instrumentation during Vite's module transformation and [LibAFL](https://github.com/AFLplusplus/LibAFL) to drive mutation-based fuzzing. The coverage map is shared between JavaScript and Rust via zero-copy memory - both sides read and write the same buffer with no serialization overhead in the hot loop.
 
 ## Why Fuzz Your JavaScript?
 
 Unit tests verify behavior you anticipate. Fuzzing finds behavior you didn't.
 
-If your code processes untrusted input — parsers, validators, serializers, template engines, API handlers, URL routers — a fuzzer can generate millions of inputs per minute and explore code paths you would never write by hand. Common findings include:
+If your code processes untrusted input - parsers, validators, serializers, template engines, API handlers, URL routers - a fuzzer can generate millions of inputs per minute and explore code paths you would never write by hand. Common findings include:
 
 - Uncaught exceptions on malformed input
 - Prototype pollution via crafted object keys
