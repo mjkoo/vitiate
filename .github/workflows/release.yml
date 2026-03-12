@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish to npm (disable for dry-run)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -230,7 +235,7 @@ jobs:
         run: |
           set -e
           PUBLISH_FLAGS="--no-git-checks --access public"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.publish }}" != "true" ]; then
             PUBLISH_FLAGS="$PUBLISH_FLAGS --dry-run"
             echo "DRY RUN: packages will NOT be published to npm"
           else
