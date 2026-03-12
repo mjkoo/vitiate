@@ -119,8 +119,8 @@ importers:
         specifier: workspace:*
         version: link:../vitiate-swc-plugin
       es-module-lexer:
-        specifier: ^1.7.0
-        version: 1.7.0
+        specifier: ^2.0.0
+        version: 2.0.0
       escape-string-regexp:
         specifier: ^5.0.0
         version: 5.0.0
