@@ -21,15 +21,15 @@ If your code processes untrusted input - parsers, validators, serializers, templ
 
 ## What Vitiate Provides
 
-Vitiate consists of three packages:
+Vitiate consists of the following packages:
 
 | Package | Role |
 |---------|------|
+| `vitiate` | Wrapper package with the `vitiate` CLI binary |
 | `@vitiate/core` | Vitest plugin, `fuzz()` API, CLI, corpus management |
 | `@vitiate/engine` | Native Node.js addon wrapping LibAFL (ships prebuilt binaries) |
 | `@vitiate/swc-plugin` | SWC WASM plugin for edge coverage and comparison tracing |
-
-An optional fourth package, `@vitiate/fuzzed-data-provider`, provides a structured input API for targets that need typed values instead of raw bytes.
+| `@vitiate/fuzzed-data-provider` | Structured input API for targets that need typed values instead of raw bytes (optional) |
 
 ## Prerequisites
 

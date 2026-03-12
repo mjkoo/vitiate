@@ -24,9 +24,9 @@ Set to `true` to enable with defaults, `false` to disable, or an options object 
 
 Detects modifications to built-in JavaScript prototypes.
 
-**How it works:** Snapshots all built-in prototypes (Object, Array, String, Number, Boolean, Function, RegExp, Date, Map, Set, WeakMap, WeakSet, Promise, Error, and subtypes) before each fuzzing iteration. After execution, diffs property descriptors to detect additions, modifications, or deletions.
+**How it works:** Snapshots all built-in prototypes (Object, Array, String, Number, Boolean, Function, RegExp, Date, Map, Set, WeakMap, WeakSet, Promise, Error, ArrayBuffer, Int8Array, Uint8Array, Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array, BigInt64Array, BigUint64Array, and subtypes) before each fuzzing iteration. After execution, diffs property descriptors to detect additions, modifications, or deletions.
 
-**Tokens contributed:** `__proto__`, `constructor`, `prototype`, `toString`, `valueOf`, `hasOwnProperty`
+**Tokens contributed:** `__proto__`, `constructor`, `prototype`, `__defineGetter__`, `__defineSetter__`, `__lookupGetter__`, `__lookupSetter__`
 
 **Options:** None
 
@@ -59,7 +59,7 @@ interface PathTraversalOptions {
 
 Evaluation order: denied paths are checked first, then allowed paths, then default deny.
 
-**Platform note:** Tier 2 (disabled by default) on Windows due to case-insensitive cross-drive path complexity.
+**Platform note:** Tier 2 (disabled by default) on Windows. Case-insensitive filesystem matching and cross-drive path resolution (e.g., `D:\` vs `\\?\`) make the default deny policy prone to false positives.
 
 ## Tier 2 (Disabled by Default)
 
@@ -79,7 +79,6 @@ interface RedosOptions {
 }
 ```
 
-**Platform note:** Tier 2 (disabled by default) on Windows.
 
 ### ssrf
 

@@ -1,6 +1,8 @@
 [package]
 name = "vitiate-swc-plugin"
 version.workspace = true
+description = "SWC WASM plugin for coverage instrumentation in Vitiate"
+repository = "https://github.com/mjkoo/vitiate"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

@@ -1,7 +1,7 @@
 {
   "name": "@vitiate/swc-plugin",
   "version": "0.1.0",
-  "description": "SWC WASM plugin for vitiate instrumentation",
+  "description": "A modern fuzzer for the JavaScript ecosystem - SWC coverage instrumentation plugin",
   "license": "MIT",
   "repository": {
     "type": "git",

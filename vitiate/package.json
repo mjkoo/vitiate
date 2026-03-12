@@ -1,7 +1,7 @@
 {
   "name": "vitiate",
   "version": "0.1.0",
-  "description": "Coverage-guided fuzzing for JavaScript and TypeScript, built as a Vitest plugin.",
+  "description": "A modern fuzzer for the JavaScript ecosystem",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -15,6 +15,9 @@
     "security",
     "vitest"
   ],
+  "engines": {
+    "node": ">= 18"
+  },
   "type": "module",
   "bin": {
     "vitiate": "bin.mjs"

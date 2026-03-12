@@ -1,7 +1,7 @@
 {
   "name": "@vitiate/core",
   "version": "0.1.0",
-  "description": "Vitiate - JavaScript instrumentation toolkit",
+  "description": "A modern fuzzer for the JavaScript ecosystem - Vitest plugin, fuzz API, CLI, and corpus management",
   "license": "MIT",
   "repository": {
     "type": "git",

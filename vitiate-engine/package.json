@@ -1,9 +1,10 @@
 {
   "name": "@vitiate/engine",
   "version": "0.1.0",
-  "description": "Native Node.js addon for vitiate",
+  "description": "A modern fuzzer for the JavaScript ecosystem - native LibAFL engine addon",
   "type": "commonjs",
   "main": "index.js",
+  "types": "index.d.ts",
   "license": "MIT",
   "repository": {
     "type": "git",

@@ -7,22 +7,30 @@ The corpus is the set of inputs that the fuzzer has found useful. Understanding 
 
 ## Corpus Locations
 
-Vitiate loads inputs from two locations:
+Vitiate loads inputs from two locations. Both use a **sanitized test name** for the directory: an 8-character hash prefix followed by the name with special characters replaced by underscores (e.g., `8fcacc40-parse_url` for a test named `"parse-url"`).
 
 ### Seed Corpus
 
 ```
-testdata/fuzz/<sanitized-test-name>/
+<test-dir>/testdata/fuzz/<sanitized-test-name>/
 ```
+
+Here `<test-dir>` is the directory containing the test file. For example, a test in `test/parser.fuzz.ts` named `"parse does not crash"` would have its seed corpus at `test/testdata/fuzz/a1b2c3d4-parse_does_not_crash/`.
 
 Files you create manually to give the fuzzer a starting point. Good seeds exercise different code paths in your target. Crash artifacts are also stored here (prefixed with `crash-` or `timeout-`).
 
-The directory name is a sanitized form of the test name: an 8-character hash prefix followed by the name with special characters replaced by underscores (e.g., `8fcacc40-parse_url` for a test named `"parse-url"`). The easiest way to discover the directory path is to run the fuzzer briefly - it creates the directory automatically and prints the path in crash output. You can also list existing directories with `ls testdata/fuzz/` (see the [Tutorial](/vitiate/getting-started/tutorial/#step-3-add-seed-inputs) for a walkthrough).
+The easiest way to discover the directory path is to run the fuzzer briefly - it creates the directory automatically and prints the path in crash output. You can also list existing directories with `ls test/testdata/fuzz/` (see the [Tutorial](/vitiate/getting-started/tutorial/#step-3-add-seed-inputs) for a walkthrough).
 
 ### Cached Corpus
 
 ```
 .vitiate-corpus/<test-file>/<sanitized-test-name>/
+```
+
+Here `<test-file>` is the relative path of the test file from the project root. For example, a test in `test/parser.fuzz.ts` named `"parse does not crash"` would have its cached corpus at:
+
+```
+.vitiate-corpus/test/parser.fuzz.ts/a1b2c3d4-parse_does_not_crash/
 ```
 
 Generated automatically during fuzzing. Each file is named by its SHA-256 hash for deduplication. This directory grows as the fuzzer discovers new coverage and can be deleted safely - the fuzzer will rebuild it. Add `.vitiate-corpus/` to your `.gitignore`.

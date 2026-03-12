@@ -4,6 +4,8 @@ rust-version.workspace = true
 license.workspace = true
 name = "vitiate_engine"
 version.workspace = true
+description = "LibAFL-based fuzzing engine with Node.js bindings for Vitiate"
+repository = "https://github.com/mjkoo/vitiate"
 
 [lints]
 workspace = true

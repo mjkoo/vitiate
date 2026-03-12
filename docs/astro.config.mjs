@@ -56,6 +56,7 @@ export default defineConfig({
             },
             { label: "CI Fuzzing", slug: "guides/ci-fuzzing" },
             { label: "Standalone CLI", slug: "guides/cli" },
+            { label: "Troubleshooting", slug: "guides/troubleshooting" },
           ],
         },
         {

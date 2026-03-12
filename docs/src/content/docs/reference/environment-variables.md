@@ -19,6 +19,7 @@ When neither is set, `fuzz()` runs in [regression mode](/vitiate/concepts/corpus
 | `VITIATE_FUZZ_TIME` | integer | Total fuzzing time in seconds. Overrides `fuzzTimeMs` from code and `-max_total_time` from CLI. |
 | `VITIATE_FUZZ_EXECS` | integer | Maximum fuzzing iterations. Overrides `fuzzExecs` from code and `-runs` from CLI. |
 | `VITIATE_DEBUG` | `1` | Enable debug output (logs mode, coverage map size, and internal state). |
+| `VITIATE_MAX_CRASHES` | integer | Maximum crashes to collect before stopping. Overrides `maxCrashes` from code. |
 
 ## Internal
 

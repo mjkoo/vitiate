@@ -7,10 +7,10 @@ The fuzzer works without any manual input, but you can significantly improve its
 
 ## Seed Inputs
 
-Seeds are example inputs that give the fuzzer a starting point. Place them in your test's seed directory:
+Seeds are example inputs that give the fuzzer a starting point. Place them in your test's seed directory (relative to the test file's directory):
 
 ```
-testdata/fuzz/<sanitized-test-name>/
+<test-dir>/testdata/fuzz/<sanitized-test-name>/
 ├── seed-valid-basic
 ├── seed-valid-complex
 ├── seed-edge-case
@@ -18,7 +18,7 @@ testdata/fuzz/<sanitized-test-name>/
 └── timeout-def456...  (timeout artifacts, auto-generated)
 ```
 
-The directory name is a sanitized form of the test name (hash prefix + slug, e.g., `8fcacc40-parse_url`). Run the fuzzer briefly to create the directory, then add your seeds to it.
+The directory name is a sanitized form of the test name (hash prefix + slug, e.g., `8fcacc40-parse_url`). Run the fuzzer once to create the directory, then add your seeds to it.
 
 ### What Makes Good Seeds
 

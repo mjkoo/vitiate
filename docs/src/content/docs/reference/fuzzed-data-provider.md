@@ -28,6 +28,7 @@ Creates a provider that consumes bytes from `data`. A `Buffer` (which extends `U
 | Method | Return Type | Description |
 |--------|-------------|-------------|
 | `consumeBoolean()` | `boolean` | Consume one byte as a boolean |
+| `consumeBooleans(maxLength)` | `boolean[]` | Consume up to `maxLength` bytes, interpreting each byte's LSB as a boolean |
 
 ## Integers
 

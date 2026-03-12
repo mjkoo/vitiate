@@ -6,8 +6,11 @@ description: Get from zero to your first fuzz-discovered bug in five minutes.
 ## 1. Install
 
 ```bash
-npm install --save-dev @vitiate/core
+npm install --save-dev vitiate
 ```
+
+This installs the Vitest plugin, the standalone CLI, and all required dependencies.
+If you only need the Vitest plugin and not the CLI, you can install `@vitiate/core` instead.
 
 ## 2. Configure Vitest
 
@@ -75,7 +78,7 @@ fuzz: CRASH FOUND: TypeError: Cannot read properties of undefined (reading 'leng
 fuzz: crash artifact written to: test/testdata/fuzz/a1b2c3d4-parse_does_not_crash/crash-e5f6...
 ```
 
-Press `Ctrl+C` to stop fuzzing at any time.
+Press `Ctrl+C` to stop fuzzing at any time. Add `.vitiate-corpus/` to your `.gitignore` - this directory can grow large and is regenerated automatically.
 
 ## 5. Replay as Regression Tests
 

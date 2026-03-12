@@ -39,7 +39,7 @@ npx vitiate <test-file> [corpus-dirs...] [flags]
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `-artifact_prefix <path>` | string | `./` | Path prefix for crash artifact output |
+| `-artifact_prefix <path>` | string | `./` | Path prefix for crash artifact output. In Vitest-integrated mode, defaults to the seed corpus directory. |
 
 ### Crash Minimization
 
