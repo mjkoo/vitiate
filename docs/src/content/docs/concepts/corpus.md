@@ -19,7 +19,7 @@ Here `<test-dir>` is the directory containing the test file. For example, a test
 
 Files you create manually to give the fuzzer a starting point. Good seeds exercise different code paths in your target. Crash artifacts are also stored here (prefixed with `crash-` or `timeout-`).
 
-The easiest way to discover the directory path is to run the fuzzer briefly - it creates the directory automatically and prints the path in crash output. You can also list existing directories with `ls test/testdata/fuzz/` (see the [Tutorial](/vitiate/getting-started/tutorial/#step-3-add-seed-inputs) for a walkthrough).
+The easiest way to discover the directory path is to run the fuzzer briefly - it creates the directory automatically and prints the path in crash output. You can also list existing directories with `ls test/testdata/fuzz/` (see the [Tutorial](/vitiate/getting-started/tutorial/#step-7-add-seed-inputs-optional) for a walkthrough).
 
 ### Cached Corpus
 

@@ -3,6 +3,7 @@ import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
 import starlightThemeRapide from "starlight-theme-rapide";
 import starlightLlmsTxt from "starlight-llms-txt";
+import starlightLinksValidator from "starlight-links-validator";
 
 // https://astro.build/config
 export default defineConfig({
@@ -47,9 +48,11 @@ export default defineConfig({
             },
           ],
         }),
+        starlightLinksValidator(),
       ],
       title: "Vitiate",
       customCss: ["./src/styles/custom.css"],
+      routeMiddleware: "./src/routeData.ts",
       social: [
         {
           icon: "github",
