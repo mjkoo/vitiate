@@ -222,6 +222,8 @@ jobs:
           done
           echo "All artifacts verified."
 
+      # NPM_TOKEN must have access to both @vitiate scoped packages and
+      # the unscoped "vitiate" package.
       - name: Publish all packages
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -250,5 +252,16 @@ jobs:
           )
           for pkg in "${packages[@]}"; do
             echo "Publishing $pkg..."
-            (cd "$pkg" && pnpm publish $PUBLISH_FLAGS)
+            cd "$pkg"
+            pnpm publish $PUBLISH_FLAGS || {
+              PKG_NAME=$(node -p "require('./package.json').name")
+              PKG_VERSION=$(node -p "require('./package.json').version")
+              if npm view "$PKG_NAME@$PKG_VERSION" version; then
+                echo "$PKG_NAME@$PKG_VERSION already published, skipping."
+              else
+                echo "ERROR: $PKG_NAME@$PKG_VERSION failed to publish."
+                exit 1
+              fi
+            }
+            cd "$GITHUB_WORKSPACE"
           done
