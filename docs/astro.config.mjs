@@ -7,8 +7,7 @@ import starlightLinksValidator from "starlight-links-validator";
 
 // https://astro.build/config
 export default defineConfig({
-  site: "https://mjkoo.github.io",
-  base: "/vitiate",
+  site: "https://vitiate.js.org",
   integrations: [
     starlight({
       plugins: [

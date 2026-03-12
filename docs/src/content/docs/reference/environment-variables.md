@@ -7,10 +7,10 @@ description: All environment variables recognized by Vitiate.
 
 | Variable | Type | Description |
 |----------|------|-------------|
-| `VITIATE_FUZZ` | `1` | Enables [fuzzing mode](/vitiate/concepts/corpus/#fuzzing-mode). Each `fuzz()` call becomes a supervisor and enters the mutation-driven fuzz loop. Also set internally by the `npx vitiate` CLI. |
-| `VITIATE_OPTIMIZE` | `1` | Enables [corpus minimization mode](/vitiate/concepts/corpus/#corpus-minimization). Replays all corpus entries, runs set cover, and deletes redundant cached entries. |
+| `VITIATE_FUZZ` | `1` | Enables [fuzzing mode](/concepts/corpus/#fuzzing-mode). Each `fuzz()` call becomes a supervisor and enters the mutation-driven fuzz loop. Also set internally by the `npx vitiate` CLI. |
+| `VITIATE_OPTIMIZE` | `1` | Enables [corpus minimization mode](/concepts/corpus/#corpus-minimization). Replays all corpus entries, runs set cover, and deletes redundant cached entries. |
 
-When neither is set, `fuzz()` runs in [regression mode](/vitiate/concepts/corpus/#regression-mode) - replaying saved corpus entries as test cases.
+When neither is set, `fuzz()` runs in [regression mode](/concepts/corpus/#regression-mode) - replaying saved corpus entries as test cases.
 
 ## Configuration
 

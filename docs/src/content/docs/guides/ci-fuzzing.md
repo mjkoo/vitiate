@@ -3,7 +3,7 @@ title: CI Fuzzing
 description: Integrating Vitiate into your CI pipeline for regression testing and continuous fuzzing.
 ---
 
-Fuzzing delivers the most value when it is integrated into your CI pipeline at two levels: fast feedback on every change and deep exploration on a schedule. This guide covers the primary approach using `vitiate` CLI subcommands. If your CI pipeline needs libFuzzer-compatible flags or integration with a fuzzing platform, see [Standalone CLI](/vitiate/guides/cli/).
+Fuzzing delivers the most value when it is integrated into your CI pipeline at two levels: fast feedback on every change and deep exploration on a schedule. This guide covers the primary approach using `vitiate` CLI subcommands. If your CI pipeline needs libFuzzer-compatible flags or integration with a fuzzing platform, see [Standalone CLI](/guides/cli/).
 
 ## Branches and Pull Requests
 
@@ -33,7 +33,7 @@ Run **long nightly fuzzing sessions** (minutes to hours) on main or release bran
 npx vitiate fuzz --fuzz-time 3600
 ```
 
-After a nightly session, optionally [minimize and checkpoint the corpus](/vitiate/concepts/corpus/#checkpointing-fuzzer-progress) to feed coverage gains back into the regression suite so that every subsequent PR benefits from the fuzzer's discoveries.
+After a nightly session, optionally [minimize and checkpoint the corpus](/concepts/corpus/#checkpointing-fuzzer-progress) to feed coverage gains back into the regression suite so that every subsequent PR benefits from the fuzzer's discoveries.
 
 ## GitHub Actions Example
 
@@ -100,7 +100,7 @@ The cache key strategy in the example above ensures each CI run builds on previo
 - `restore-keys` falls back to the most recent cache for the same test files, then to any previous cache
 - If fuzz test files change, the cache starts fresh (since coverage maps may be incompatible)
 
-For background on corpus locations and what gets cached, see [Corpus Locations](/vitiate/concepts/corpus/#corpus-locations). For periodic cleanup of the cached corpus, see [Corpus Minimization](/vitiate/concepts/corpus/#corpus-minimization).
+For background on corpus locations and what gets cached, see [Corpus Locations](/concepts/corpus/#corpus-locations). For periodic cleanup of the cached corpus, see [Corpus Minimization](/concepts/corpus/#corpus-minimization).
 
 ## Summary
 

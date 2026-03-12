@@ -149,7 +149,7 @@ npx vitiate libfuzzer test/parser.fuzz.ts -dict ./tokens.dict
 npx vitiate libfuzzer test/parser.fuzz.ts -artifact_prefix ./crashes/
 ```
 
-When using `vitiate fuzz`, place dictionary files directly in `.vitiate/testdata/<hashdir>/` for automatic discovery instead. See [Dictionaries and Seeds](/vitiate/guides/dictionaries-and-seeds/) for details.
+When using `vitiate fuzz`, place dictionary files directly in `.vitiate/testdata/<hashdir>/` for automatic discovery instead. See [Dictionaries and Seeds](/guides/dictionaries-and-seeds/) for details.
 
 ### Merge mode
 
@@ -179,7 +179,7 @@ All flags use the libFuzzer naming scheme (`-max_total_time`, `-runs`, `-dict`, 
 | `-fork` | Parsed, ignored (always 1 - Vitiate uses a single supervised worker) |
 | `-jobs` | Parsed, ignored (always 1 - Vitiate runs a single job at a time) |
 
-See the [CLI Flags Reference](/vitiate/reference/cli-flags/) for the complete list of libFuzzer-compatible flags.
+See the [CLI Flags Reference](/reference/cli-flags/) for the complete list of libFuzzer-compatible flags.
 
 ## Output format
 

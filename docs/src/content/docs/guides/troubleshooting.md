@@ -52,11 +52,11 @@ vitiatePlugin({
 
 1. **Add seed inputs.** Place representative inputs in `.vitiate/testdata/<hashdir>/seeds/`. Run `npx vitiate init` to create the directories. Seeds give the fuzzer a starting point closer to valid inputs.
 
-2. **Add a dictionary.** Place a dictionary file in `.vitiate/testdata/<hashdir>/` with domain-specific tokens. See [Dictionaries and Seeds](/vitiate/guides/dictionaries-and-seeds/) for syntax details.
+2. **Add a dictionary.** Place a dictionary file in `.vitiate/testdata/<hashdir>/` with domain-specific tokens. See [Dictionaries and Seeds](/guides/dictionaries-and-seeds/) for syntax details.
 
 3. **Check that coverage is increasing.** If edge count stays flat from the start, verify that the target code is actually being instrumented. Enable debug output with `VITIATE_DEBUG=1` to confirm.
 
-4. **Use structured fuzzing.** If the target expects typed input rather than raw bytes, use [`FuzzedDataProvider`](/vitiate/reference/fuzzed-data-provider/) to consume structured values from the fuzzer's byte stream.
+4. **Use structured fuzzing.** If the target expects typed input rather than raw bytes, use [`FuzzedDataProvider`](/reference/fuzzed-data-provider/) to consume structured values from the fuzzer's byte stream.
 
 ## Corpus Growing Too Large
 
@@ -68,7 +68,7 @@ vitiatePlugin({
 npx vitiate optimize
 ```
 
-See [Corpus and Regression Testing](/vitiate/concepts/corpus/#corpus-minimization) for details.
+See [Corpus and Regression Testing](/concepts/corpus/#corpus-minimization) for details.
 
 ## Debug Mode
 

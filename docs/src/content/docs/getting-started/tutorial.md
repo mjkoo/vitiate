@@ -28,7 +28,7 @@ This is a classic fuzzing target: it takes untrusted string input and does compl
 
 ## Step 1: Set Up the Project
 
-If you have not already, install the packages and configure Vitest as described in the [Quickstart](/vitiate/getting-started/quickstart/).
+If you have not already, install the packages and configure Vitest as described in the [Quickstart](/getting-started/quickstart/).
 
 ## Step 2: Write the Fuzz Target
 
@@ -125,7 +125,7 @@ If the fuzzer is slow to find coverage, add domain-specific tokens. Place a dict
 "localhost"
 ```
 
-The fuzzer will use these tokens during mutation, making it much more likely to generate structurally valid URLs that exercise deep parsing paths. See [Dictionaries and Seeds](/vitiate/guides/dictionaries-and-seeds/) for the full dictionary syntax, hex escapes for binary tokens, and links to premade dictionaries for common formats.
+The fuzzer will use these tokens during mutation, making it much more likely to generate structurally valid URLs that exercise deep parsing paths. See [Dictionaries and Seeds](/guides/dictionaries-and-seeds/) for the full dictionary syntax, hex escapes for binary tokens, and links to premade dictionaries for common formats.
 
 ## Step 9: Tighten the Target (Optional)
 

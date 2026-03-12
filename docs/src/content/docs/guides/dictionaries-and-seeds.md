@@ -28,7 +28,7 @@ The directory name is a Nix base32 encoded hash followed by the test name (e.g.,
 - **Cover different code paths.** A JSON parser benefits from seeds with objects, arrays, strings, numbers, nested structures, and empty inputs.
 - **Include edge cases.** Empty input, very long input, inputs with special characters.
 - **Be valid *and* invalid.** Valid inputs exercise normal code paths; slightly invalid inputs exercise error handling.
-- **Don't worry about quantity.** It's fine to add many seeds - after fuzzing, run `npx vitiate optimize` to [minimize the corpus](/vitiate/concepts/corpus/#corpus-minimization) down to the smallest set that maintains coverage.
+- **Don't worry about quantity.** It's fine to add many seeds - after fuzzing, run `npx vitiate optimize` to [minimize the corpus](/concepts/corpus/#corpus-minimization) down to the smallest set that maintains coverage.
 
 ### Example Seeds for a URL Parser
 
@@ -95,7 +95,7 @@ Place the dictionary file directly in the test's data directory at `.vitiate/tes
 
 ### CLI Flag
 
-When using the [standalone CLI](/vitiate/guides/cli/), you can also specify a dictionary explicitly:
+When using the [standalone CLI](/guides/cli/), you can also specify a dictionary explicitly:
 
 ```bash
 npx vitiate libfuzzer test/parser.fuzz.ts -dict path/to/custom.dict

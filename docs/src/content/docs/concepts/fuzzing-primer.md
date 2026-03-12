@@ -3,7 +3,7 @@ title: Fuzzing Primer
 description: What coverage-guided fuzzing is, how it works, and when to use it.
 ---
 
-This page explains coverage-guided fuzzing from first principles. If you already know what fuzzing is and want to learn how Vitiate implements it, skip to [How Vitiate Works](/vitiate/concepts/how-it-works/).
+This page explains coverage-guided fuzzing from first principles. If you already know what fuzzing is and want to learn how Vitiate implements it, skip to [How Vitiate Works](/concepts/how-it-works/).
 
 ## What Is Fuzzing?
 

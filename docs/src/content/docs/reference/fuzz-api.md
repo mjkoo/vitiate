@@ -83,4 +83,4 @@ All fields are optional. Unset fields inherit from plugin-level `fuzz` configura
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `detectors` | `DetectorsConfig` | tier 1 enabled | Object mapping detector names to `boolean` or options. See [Detectors Reference](/vitiate/reference/detectors/). |
+| `detectors` | `DetectorsConfig` | tier 1 enabled | Object mapping detector names to `boolean` or options. See [Detectors Reference](/reference/detectors/). |

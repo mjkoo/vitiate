@@ -66,7 +66,7 @@ Default `FuzzOptions` applied to all `fuzz()` calls. Per-test options override t
 fuzz?: FuzzOptions
 ```
 
-See [fuzz() API Reference](/vitiate/reference/fuzz-api/) for the complete `FuzzOptions` type.
+See [fuzz() API Reference](/reference/fuzz-api/) for the complete `FuzzOptions` type.
 
 ### dataDir
 

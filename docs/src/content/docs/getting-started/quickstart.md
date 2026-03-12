@@ -98,7 +98,7 @@ Vitiate automatically replays saved crash artifacts and corpus entries in regres
 
 ## Next Steps
 
-- Read the [Fuzzing Primer](/vitiate/concepts/fuzzing-primer/) if you are new to coverage-guided fuzzing
-- Follow the [Tutorial](/vitiate/getting-started/tutorial/) for a longer guided walkthrough
-- Learn about [Structure-Aware Fuzzing](/vitiate/guides/structure-aware-fuzzing/) for targets that need typed inputs
-- Enable [Vulnerability Detectors](/vitiate/guides/detectors/) to find security issues beyond crashes
+- Read the [Fuzzing Primer](/concepts/fuzzing-primer/) if you are new to coverage-guided fuzzing
+- Follow the [Tutorial](/getting-started/tutorial/) for a longer guided walkthrough
+- Learn about [Structure-Aware Fuzzing](/guides/structure-aware-fuzzing/) for targets that need typed inputs
+- Enable [Vulnerability Detectors](/guides/detectors/) to find security issues beyond crashes

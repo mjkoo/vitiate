@@ -65,7 +65,7 @@ The corpus is managed by the Rust engine using LibAFL's `MaxMapFeedback`:
 - An input is "interesting" if it triggers an edge counter value higher than any previous input for that edge
 - Interesting inputs are added to the corpus
 - The scheduler selects inputs for mutation based on recency and execution speed
-- [Corpus minimization](/vitiate/concepts/corpus/#corpus-minimization) uses set-cover to find the smallest subset that maintains the same total coverage
+- [Corpus minimization](/concepts/corpus/#corpus-minimization) uses set-cover to find the smallest subset that maintains the same total coverage
 
 ## 4. Crash Recovery
 

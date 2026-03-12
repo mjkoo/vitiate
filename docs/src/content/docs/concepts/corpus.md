@@ -19,7 +19,7 @@ For example, a test named `"parse does not crash"` would have its seed corpus at
 
 Files you create manually to give the fuzzer a starting point. Good seeds exercise different code paths in your target. Crash and timeout artifacts are stored in sibling directories (`crashes/` and `timeouts/`).
 
-The easiest way to discover the directory path is to run `npx vitiate init`, which creates seed directories for all discovered fuzz tests. You can also list existing directories with `ls .vitiate/testdata/` (see the [Tutorial](/vitiate/getting-started/tutorial/#step-7-add-seed-inputs-optional) for a walkthrough).
+The easiest way to discover the directory path is to run `npx vitiate init`, which creates seed directories for all discovered fuzz tests. You can also list existing directories with `ls .vitiate/testdata/` (see the [Tutorial](/getting-started/tutorial/#step-7-add-seed-inputs-optional) for a walkthrough).
 
 ### Cached Corpus
 
@@ -106,7 +106,7 @@ Seed corpus entries are never deleted - they serve as the coverage baseline. Onl
 
 Minimize periodically, especially after long fuzzing sessions. A smaller corpus means faster regression test runs and faster seed evaluation at the start of the next fuzzing session.
 
-For libFuzzer-compatible corpus minimization across arbitrary directories, see the [standalone CLI's merge mode](/vitiate/guides/cli/#merge-mode).
+For libFuzzer-compatible corpus minimization across arbitrary directories, see the [standalone CLI's merge mode](/guides/cli/#merge-mode).
 
 ### Checkpointing Fuzzer Progress
 
@@ -132,4 +132,4 @@ After checkpointing, you can safely delete `.vitiate/corpus/` and start the next
 - **Commit seed corpus and crash artifacts.** They are small and valuable. Other developers get the fuzzer's accumulated knowledge when they clone the repository.
 - **Do not commit the cached corpus.** It can be large and is regenerated automatically. Add `.vitiate/corpus/` to `.gitignore`.
 - **Checkpoint after long sessions.** Run `npx vitiate optimize`, then copy surviving cached entries to the seed corpus and commit them. This preserves coverage gains permanently.
-- **Integrate fuzzing into CI.** Run regression tests on every PR and long fuzzing sessions nightly on main. See [CI Fuzzing](/vitiate/guides/ci-fuzzing/) for setup details.
+- **Integrate fuzzing into CI.** Run regression tests on every PR and long fuzzing sessions nightly on main. See [CI Fuzzing](/guides/ci-fuzzing/) for setup details.
