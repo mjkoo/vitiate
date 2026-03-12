@@ -41,7 +41,7 @@ jobs:
           args: --base docs/dist/vitiate --no-progress docs/dist/**/*.html
           fail: true
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v4
         with:
           path: docs/dist/
 
