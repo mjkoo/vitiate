@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.1](https://github.com/mjkoo/vitiate/compare/v0.1.0...v0.1.1) (2026-03-12)
+
+
+### Bug Fixes
+
+* add override to force publishing from the release pipeline ([df38334](https://github.com/mjkoo/vitiate/commit/df3833434162a7273590e5a4599f788432a0ee99))
+* fix pipeline issue preventing release ([4b04d47](https://github.com/mjkoo/vitiate/commit/4b04d4788f007e9a33d39043669752774a928457))
+
+
+### Continuous Integration
+
+* fix publish pipeline ([530ffca](https://github.com/mjkoo/vitiate/commit/530ffca8c16fd8a91c79a5cd497de5cfe5f2e5c6))
+
 ## 0.1.0 (2026-03-12)
 
 
