@@ -36,7 +36,7 @@ const CRASH_EXIT_CODES = new Set([
 
 export interface SupervisorOptions {
   shmem: ShmemHandle;
-  testDir: string;
+  relativeTestFilePath: string;
   testName: string;
   artifactPrefix?: string;
   spawnChild: () => ChildProcess;
@@ -90,7 +90,7 @@ export async function runSupervisor(
 ): Promise<SupervisorResult> {
   const {
     shmem,
-    testDir,
+    relativeTestFilePath,
     testName,
     artifactPrefix,
     spawnChild,
@@ -133,7 +133,7 @@ export async function runSupervisor(
 
           const result = recoverAndRespawn(
             shmem,
-            testDir,
+            relativeTestFilePath,
             testName,
             "crash",
             respawnCount,
@@ -164,7 +164,7 @@ export async function runSupervisor(
 
         const result = recoverAndRespawn(
           shmem,
-          testDir,
+          relativeTestFilePath,
           testName,
           "crash",
           respawnCount,
@@ -207,7 +207,7 @@ export async function runSupervisor(
 
         const result = recoverAndRespawn(
           shmem,
-          testDir,
+          relativeTestFilePath,
           testName,
           "timeout",
           respawnCount,
@@ -233,7 +233,7 @@ export async function runSupervisor(
 
         const result = recoverAndRespawn(
           shmem,
-          testDir,
+          relativeTestFilePath,
           testName,
           "crash",
           respawnCount,
@@ -266,7 +266,7 @@ export async function runSupervisor(
  */
 function recoverAndRespawn(
   shmem: ShmemHandle,
-  testDir: string,
+  relativeTestFilePath: string,
   testName: string,
   kind: ArtifactKind,
   respawnCount: number,
@@ -279,7 +279,7 @@ function recoverAndRespawn(
     crashArtifactPath =
       artifactPrefix !== undefined
         ? writeArtifactWithPrefix(artifactPrefix, input, kind)
-        : writeArtifact(testDir, testName, input, kind);
+        : writeArtifact(relativeTestFilePath, testName, input, kind);
     process.stderr.write(
       `vitiate: ${kind} artifact written to ${crashArtifactPath}\n`,
     );

@@ -1,9 +1,18 @@
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { parseArgs, parseDetectorsFlag } from "./cli.js";
+import { parseArgs, parseDetectorsFlag, main } from "./cli.js";
 import { getCliOptions } from "./config.js";
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...original,
+    spawnSync: vi.fn(original.spawnSync),
+  };
+});
 
 function argv(...args: string[]): string[] {
   return ["node", "vitiate", ...args];
@@ -515,5 +524,104 @@ describe("CLI env var forwarding", () => {
   it("getCliOptions returns empty object when env var is not set", () => {
     delete process.env["VITIATE_FUZZ_OPTIONS"];
     expect(getCliOptions()).toEqual({});
+  });
+});
+
+describe("subcommand dispatch", () => {
+  let savedArgv: string[];
+  let savedExitCode: typeof process.exitCode;
+
+  beforeEach(() => {
+    savedArgv = [...process.argv];
+    savedExitCode = process.exitCode;
+  });
+
+  afterEach(() => {
+    process.argv = savedArgv;
+    process.exitCode = savedExitCode;
+  });
+
+  it("prints usage and exits 0 when no subcommand given", async () => {
+    process.argv = ["node", "vitiate"];
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      await main();
+      expect(process.exitCode).toBe(0);
+      expect(stderrSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Usage: vitiate"),
+      );
+      // All subcommands should be listed
+      expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining("init"));
+      expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining("fuzz"));
+      expect(stderrSpy).toHaveBeenCalledWith(
+        expect.stringContaining("libfuzzer"),
+      );
+    } finally {
+      stderrSpy.mockRestore();
+    }
+  });
+
+  it("prints error and exits 1 for unknown subcommand", async () => {
+    process.argv = ["node", "vitiate", "bogus"];
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      await main();
+      expect(process.exitCode).toBe(1);
+      expect(stderrSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Unknown subcommand: bogus"),
+      );
+    } finally {
+      stderrSpy.mockRestore();
+    }
+  });
+
+  it("usage lists all known subcommands", async () => {
+    process.argv = ["node", "vitiate"];
+    const calls: string[] = [];
+    const stderrSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk) => {
+        calls.push(String(chunk));
+        return true;
+      });
+    try {
+      await main();
+      const output = calls.join("");
+      expect(output).toContain("init");
+      expect(output).toContain("fuzz");
+      expect(output).toContain("regression");
+      expect(output).toContain("optimize");
+      expect(output).toContain("libfuzzer");
+    } finally {
+      stderrSpy.mockRestore();
+    }
+  });
+
+  it("fuzz subcommand passes .fuzz.ts as a positional filter to vitest", async () => {
+    process.argv = ["node", "vitiate", "fuzz", "--reporter", "verbose"];
+    const mockSpawnSync = vi.mocked(spawnSync);
+    mockSpawnSync.mockReturnValue({
+      status: 0,
+      signal: null,
+      output: [],
+      pid: 0,
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.alloc(0),
+    });
+    try {
+      await main();
+      expect(mockSpawnSync).toHaveBeenCalledOnce();
+      const [, args] = mockSpawnSync.mock.calls[0]!;
+      const argsList = args as string[];
+      // Should contain "run", ".fuzz.ts" as positional filter, and forwarded args
+      expect(argsList).toContain("run");
+      expect(argsList).toContain(".fuzz.ts");
+      expect(argsList).toContain("--reporter");
+      expect(argsList).toContain("verbose");
+      // Should NOT use --include (not a valid vitest CLI flag)
+      expect(argsList).not.toContain("--include");
+    } finally {
+      mockSpawnSync.mockRestore();
+    }
   });
 });

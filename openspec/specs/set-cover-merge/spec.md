@@ -160,15 +160,19 @@ Merge mode SHALL NOT use the Rust fuzzing engine (`Fuzzer`), watchdog, or calibr
 
 When the `VITIATE_OPTIMIZE=1` environment variable is set, the system SHALL enter optimize mode instead of fuzzing mode. For each fuzz test discovered by Vitest:
 
-1. Load seed corpus from `testdata/fuzz/{sanitizedTestName}/`.
-2. Load cached corpus from the cache directory.
-3. Replay all seed entries, collect edges, add to a pre-covered set.
-4. Replay all cached entries, collect edges.
-5. Run set cover over cached entries only, with the seed edges as pre-covered.
-6. Delete cached entries not in the surviving set.
-7. Report per-test stats to stderr.
+1. Load seed corpus from `<dataDir>/testdata/<hashdir>/seeds/`.
+2. Load crash artifacts from `<dataDir>/testdata/<hashdir>/crashes/`.
+3. Load timeout artifacts from `<dataDir>/testdata/<hashdir>/timeouts/`.
+4. Load cached corpus from `<dataDir>/corpus/<hashdir>/`.
+5. Replay all seed, crash, and timeout entries, collect edges, add to a pre-covered set.
+6. Replay all cached entries, collect edges.
+7. Run set cover over cached entries only, with the seed/crash/timeout edges as pre-covered.
+8. Delete cached entries not in the surviving set.
+9. Report per-test stats to stderr.
 
-Seed corpus entries SHALL never be removed. They are user-curated regression tests.
+Where `<hashdir>` is the output of `hashTestPath(relativeTestFilePath, testName)` and `<dataDir>` is the global test data root.
+
+Seed, crash, and timeout entries SHALL never be removed. They are user-curated or machine-discovered regression tests committed to version control. Only cached corpus entries are subject to minimization.
 
 The `isOptimizeMode()` function in `config.ts` SHALL detect `VITIATE_OPTIMIZE=1` using the same `envTruthy()` pattern as `isFuzzingMode()`.
 
@@ -181,17 +185,16 @@ The test SHALL pass after optimization (optimization is not a failure mode). If 
 #### Scenario: Optimize reduces cached corpus
 
 - **WHEN** `VITIATE_OPTIMIZE=1 pnpm vitest run` is executed
-- **AND** test "parsesJson" has 10 seed entries and 300 cached entries
-- **AND** set cover selects 40 cached entries (with seed pre-coverage)
-- **THEN** 260 cached entry files are deleted from the cache directory
-- **AND** 10 seed entries remain untouched in `testdata/fuzz/`
-- **AND** stderr reports: kept 40, removed 260
+- **AND** test "parsesJson" has 10 seed entries, 3 crash entries, and 300 cached entries
+- **AND** set cover selects 40 cached entries (with seed+crash pre-coverage)
+- **THEN** 260 cached entry files are deleted from `.vitiate/corpus/<hashdir>/`
+- **AND** seed and crash entries remain untouched in `.vitiate/testdata/<hashdir>/`
 
-#### Scenario: Seeds cover all edges
+#### Scenario: Seeds and crashes cover all edges
 
-- **WHEN** seed corpus entries cover all edges that cached entries also cover
-- **THEN** all cached entries are removed (fully redundant with seeds)
-- **AND** seed entries remain untouched
+- **WHEN** seed and crash corpus entries cover all edges that cached entries also cover
+- **THEN** all cached entries are removed (fully redundant)
+- **AND** seed and crash entries remain untouched
 
 #### Scenario: Empty cached corpus
 

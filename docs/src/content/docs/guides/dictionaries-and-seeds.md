@@ -7,34 +7,37 @@ The fuzzer works without any manual input, but you can significantly improve its
 
 ## Seed Inputs
 
-Seeds are example inputs that give the fuzzer a starting point. Place them in your test's seed directory (relative to the test file's directory):
+Seeds are example inputs that give the fuzzer a starting point. Place them in your test's seed directory:
 
 ```
-<test-dir>/testdata/fuzz/<sanitized-test-name>/
-├── seed-valid-basic
-├── seed-valid-complex
-├── seed-edge-case
-├── crash-abc123...    (crash artifacts, auto-generated)
-└── timeout-def456...  (timeout artifacts, auto-generated)
+.vitiate/testdata/<hashdir>/
+├── seeds/
+│   ├── seed-valid-basic
+│   ├── seed-valid-complex
+│   └── seed-edge-case
+├── crashes/
+│   └── crash-abc123...    (crash artifacts, auto-generated)
+└── timeouts/
+    └── timeout-def456...  (timeout artifacts, auto-generated)
 ```
 
-The directory name is a sanitized form of the test name (hash prefix + slug, e.g., `8fcacc40-parse_url`). Run the fuzzer once to create the directory, then add your seeds to it.
+The directory name is a Nix base32 encoded hash followed by the test name (e.g., `vxr4kpqyb12fza1gv81bjj8k3i64mlqn-parse_url`). Run `npx vitiate init` to create the directories, then add your seeds to the `seeds/` subdirectory.
 
 ### What Makes Good Seeds
 
 - **Cover different code paths.** A JSON parser benefits from seeds with objects, arrays, strings, numbers, nested structures, and empty inputs.
 - **Include edge cases.** Empty input, very long input, inputs with special characters.
 - **Be valid *and* invalid.** Valid inputs exercise normal code paths; slightly invalid inputs exercise error handling.
-- **Don't worry about quantity.** It's fine to add many seeds - after fuzzing, run `VITIATE_OPTIMIZE=1 npx vitest run` to [minimize the corpus](/vitiate/concepts/corpus/#corpus-minimization) down to the smallest set that maintains coverage.
+- **Don't worry about quantity.** It's fine to add many seeds - after fuzzing, run `npx vitiate optimize` to [minimize the corpus](/vitiate/concepts/corpus/#corpus-minimization) down to the smallest set that maintains coverage.
 
 ### Example Seeds for a URL Parser
 
 ```bash
-# Run the fuzzer briefly to create the seed directory, then Ctrl+C
-VITIATE_FUZZ=1 npx vitest run test/url-parser.fuzz.ts
+# Initialize test data directories (creates seed directories for all fuzz tests)
+npx vitiate init
 
 # Find the created directory
-SEED_DIR=$(ls -d test/testdata/fuzz/*parseUrl*)
+SEED_DIR=$(ls -d .vitiate/testdata/*parseUrl*/seeds)
 
 # Valid URLs of different shapes
 echo -n 'https://example.com' > "$SEED_DIR/seed-https"
@@ -88,14 +91,14 @@ The [AFLplusplus dictionaries collection](https://github.com/AFLplusplus/AFLplus
 
 ### Automatic Discovery
 
-Place the dictionary at `testdata/fuzz/<sanitized-test-name>.dict` (next to the seed directory, same name with `.dict` extension) and it will be loaded automatically. No CLI flag needed.
+Place the dictionary file directly in the test's data directory at `.vitiate/testdata/<hashdir>/` and it will be discovered automatically by convention. No CLI flag needed.
 
 ### CLI Flag
 
 When using the [standalone CLI](/vitiate/guides/cli/), you can also specify a dictionary explicitly:
 
 ```bash
-npx vitiate test/parser.fuzz.ts -dict path/to/custom.dict
+npx vitiate libfuzzer test/parser.fuzz.ts -dict path/to/custom.dict
 ```
 
 ### Detector Tokens

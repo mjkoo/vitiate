@@ -50,9 +50,9 @@ vitiatePlugin({
 
 **Possible fixes:**
 
-1. **Add seed inputs.** Place representative inputs in `testdata/fuzz/<test-name>/`. Seeds give the fuzzer a starting point closer to valid inputs.
+1. **Add seed inputs.** Place representative inputs in `.vitiate/testdata/<hashdir>/seeds/`. Run `npx vitiate init` to create the directories. Seeds give the fuzzer a starting point closer to valid inputs.
 
-2. **Add a dictionary.** Create `testdata/fuzz/<test-name>.dict` with domain-specific tokens. See [Dictionaries and Seeds](/vitiate/guides/dictionaries-and-seeds/) for syntax details.
+2. **Add a dictionary.** Place a dictionary file in `.vitiate/testdata/<hashdir>/` with domain-specific tokens. See [Dictionaries and Seeds](/vitiate/guides/dictionaries-and-seeds/) for syntax details.
 
 3. **Check that coverage is increasing.** If edge count stays flat from the start, verify that the target code is actually being instrumented. Enable debug output with `VITIATE_DEBUG=1` to confirm.
 
@@ -60,12 +60,12 @@ vitiatePlugin({
 
 ## Corpus Growing Too Large
 
-**Symptoms:** The cached corpus directory (`.vitiate-corpus/`) grows large over extended fuzzing sessions, slowing down regression test runs.
+**Symptoms:** The cached corpus directory (`.vitiate/corpus/`) grows large over extended fuzzing sessions, slowing down regression test runs.
 
 **Fix:** Run corpus minimization to reduce the corpus to a minimal set that preserves coverage:
 
 ```bash
-VITIATE_OPTIMIZE=1 npx vitest run test/target.fuzz.ts
+npx vitiate optimize
 ```
 
 See [Corpus and Regression Testing](/vitiate/concepts/corpus/#corpus-minimization) for details.
@@ -75,7 +75,7 @@ See [Corpus and Regression Testing](/vitiate/concepts/corpus/#corpus-minimizatio
 Set `VITIATE_DEBUG=1` to enable verbose diagnostic output:
 
 ```bash
-VITIATE_DEBUG=1 VITIATE_FUZZ=1 npx vitest run test/target.fuzz.ts
+VITIATE_DEBUG=1 npx vitiate fuzz test/target.fuzz.ts
 ```
 
 This logs:

@@ -20,7 +20,7 @@ The `options` parameter SHALL accept:
   - `fuzzExecs` (number, optional): Maximum number of fuzzing iterations.
   - `seed` (number, optional): RNG seed for reproducible fuzzing.
 
-- `cacheDir` (string, optional): Cache directory path, resolved relative to project root.
+- `dataDir` (string, optional): Test data root directory path, resolved relative to project root. When set, the value SHALL be resolved relative to the Vite project root and stored as the global test data root directory. When not set, the default is `.vitiate/` relative to the project root. This replaces the previous `cacheDir` option.
 
 - `coverageMapSize` (number, optional, default 65536): Number of edge counter slots in the coverage map. Must be an integer in [256, 4194304]. Larger values reduce hash collisions for large applications. A warning is emitted if the value is not a power of two.
 
@@ -47,11 +47,21 @@ Vitiate's own packages (`@vitiate/core`, `@vitiate/engine`, `@vitiate/swc-plugin
 - **THEN** the plugin's `config()` hook sets `VITIATE_FUZZ_OPTIONS` to `{"maxLen":4096,"timeoutMs":5000}` if the env var is not already set
 - **AND** fuzz tests that do not specify per-test options inherit these defaults
 
-#### Scenario: Plugin with cacheDir
+#### Scenario: Plugin with dataDir
+
+- **WHEN** `vitiatePlugin({ dataDir: ".fuzzing" })` is called
+- **THEN** the plugin's `config()` hook stores the absolute path of `.fuzzing` resolved relative to the Vite project root as module-scoped state
+- **AND** the corpus management module uses this value as the test data root
+
+#### Scenario: Plugin without dataDir uses default
+
+- **WHEN** `vitiatePlugin()` is called without `dataDir`
+- **THEN** the test data root defaults to `.vitiate/` relative to the project root
+
+#### Scenario: cacheDir option no longer recognized
 
 - **WHEN** `vitiatePlugin({ cacheDir: ".fuzz-cache" })` is called
-- **THEN** the plugin's `config()` hook stores the absolute path of `.fuzz-cache` resolved relative to the Vite project root as module-scoped state
-- **AND** the corpus management module uses this value for cache directory resolution
+- **THEN** the `cacheDir` option SHALL be ignored or produce a warning (it is no longer a valid option)
 
 #### Scenario: Explicit VITIATE_FUZZ_OPTIONS env var takes precedence
 

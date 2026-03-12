@@ -55,7 +55,7 @@ fuzz("parse does not crash", (data: Buffer) => {
 Run the fuzzer:
 
 ```bash
-npx vitiate test/parser.fuzz.ts
+npx vitiate fuzz test/parser.fuzz.ts
 ```
 
 Or via Vitest directly:
@@ -64,7 +64,7 @@ Or via Vitest directly:
 VITIATE_FUZZ=1 npx vitest run test/parser.fuzz.ts
 ```
 
-Crashes are saved to `testdata/fuzz/<name>/crash-<sha256>` (relative to the test file's directory, where `<name>` is a sanitized form of the test name like `a1b2c3d4-parse_does_not_crash`).
+Crashes are saved to `.vitiate/testdata/<hashdir>/crashes/crash-<sha256>` (where `<hashdir>` is a Nix base32 encoded name like `vxr4kpqyb12fza1gv81bjj8k3i64mlqn-parse_does_not_crash`).
 Run your test suite normally and they are replayed as regression tests automatically.
 
 ## How It Works
@@ -72,7 +72,7 @@ Run your test suite normally and they are replayed as regression tests automatic
 1. **Transform time:** Vite's plugin hooks run every JS/TS module through the SWC plugin as it is imported, inserting edge coverage counters and comparison tracing calls. No separate build step required.
 2. **Runtime:** A shared coverage map (zero-copy between JS and Rust) tracks which edges are hit.
 3. **Fuzz loop:** LibAFL reads the coverage map after each execution, evaluates feedback, updates the corpus, and generates the next input using havoc mutations, CmpLog-guided byte replacement, Grimoire structure-aware mutations, and Unicode-aware mutations.
-4. **Crashes:** Inputs that cause uncaught exceptions are saved as crash artifacts and minimized automatically.
+4. **Crashes:** Inputs that cause uncaught exceptions are saved as crash artifacts under `.vitiate/testdata/` and minimized automatically.
 
 ## Platform Support
 

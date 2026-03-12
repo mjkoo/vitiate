@@ -49,7 +49,7 @@ This is the simplest form: pass every input to the parser and let any uncaught e
 ## Step 3: Run the Fuzzer
 
 ```bash
-VITIATE_FUZZ=1 npx vitest run test/url-parser.fuzz.ts
+npx vitiate fuzz test/url-parser.fuzz.ts
 ```
 
 Watch the output. The `edges` counter shows how many unique code edges the fuzzer has reached. The `corpus` counter shows how many inputs have been kept because they found new coverage.
@@ -67,8 +67,8 @@ When a crash is found, the fuzzer prints the error, minimizes the crashing input
 Look at the crash artifact (the path is printed in the crash output):
 
 ```bash
-ls test/testdata/fuzz/*parseUrl*/crash-*
-xxd test/testdata/fuzz/*parseUrl*/crash-*
+ls .vitiate/testdata/*parseUrl*/crashes/crash-*
+xxd .vitiate/testdata/*parseUrl*/crashes/crash-*
 ```
 
 The file contains the raw bytes that triggered the crash. The filename includes a SHA-256 hash for deduplication - if the fuzzer finds the same crash twice, it will not create a duplicate file.
@@ -89,10 +89,14 @@ If you revert the fix, the test fails immediately - the crash artifact is a perm
 
 ## Step 7: Add Seed Inputs (Optional)
 
-Seed inputs give the fuzzer a head start by providing representative examples to mutate from. After running the fuzzer at least once, it will have created the seed directory automatically. Find it and add your seeds:
+Seed inputs give the fuzzer a head start by providing representative examples to mutate from. Use `vitiate init` to create the seed directories, then add your seeds:
 
 ```bash
-SEED_DIR=$(ls -d test/testdata/fuzz/*parseUrl*)
+# Initialize test data directories (creates seed directories for all fuzz tests)
+npx vitiate init
+
+# Find the created directory
+SEED_DIR=$(ls -d .vitiate/testdata/*parseUrl*/seeds)
 echo -n 'https://example.com' > "$SEED_DIR/seed-basic"
 echo -n 'http://user:pass@host.com:8080/path?key=value&foo=bar#section' > "$SEED_DIR/seed-full"
 echo -n 'ftp://[::1]:21/file' > "$SEED_DIR/seed-ipv6"
@@ -102,7 +106,7 @@ Seeds do not need to trigger bugs - they just need to exercise different code pa
 
 ## Step 8: Add a Dictionary (Optional)
 
-If the fuzzer is slow to find coverage, add domain-specific tokens. Create a dictionary file next to the seed directory (same name with `.dict` extension):
+If the fuzzer is slow to find coverage, add domain-specific tokens. Place a dictionary file directly in the test's data directory (it will be discovered automatically by convention):
 
 ```
 "://"
@@ -154,7 +158,7 @@ This finds a different class of bugs: inputs that parse successfully but produce
 The fuzzing workflow is:
 
 1. Write a fuzz target that exercises the code under test
-2. Run `VITIATE_FUZZ=1 npx vitest run` and let it find crashes
+2. Run `npx vitiate fuzz` (or `VITIATE_FUZZ=1 npx vitest run`) and let it find crashes
 3. Fix the bugs; crash artifacts become regression tests automatically
 4. Optionally add seed inputs and a dictionary to improve coverage
 5. Tighten assertions over time as the code matures

@@ -6,10 +6,20 @@ description: Complete reference for all vitiate CLI flags and arguments.
 ## Usage
 
 ```
-npx vitiate <test-file> [corpus-dirs...] [flags]
+npx vitiate <subcommand> [options]
 ```
 
-### Positional Arguments
+### Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `init` | Discover fuzz tests and create seed directories |
+| `fuzz` | Run `VITIATE_FUZZ=1 vitest run` |
+| `regression` | Run `vitest run` (no special env) |
+| `optimize` | Run `VITIATE_OPTIMIZE=1 vitest run` |
+| `libfuzzer <test-file> [corpus-dirs...] [flags]` | libFuzzer-compatible mode |
+
+### libFuzzer Positional Arguments
 
 | Argument | Description |
 |----------|-------------|
@@ -39,7 +49,7 @@ npx vitiate <test-file> [corpus-dirs...] [flags]
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `-artifact_prefix <path>` | string | `./` | Path prefix for crash artifact output. In Vitest-integrated mode, defaults to the seed corpus directory. |
+| `-artifact_prefix <path>` | string | `./` | Path prefix for crash artifact output. When using `vitiate fuzz`, defaults to `.vitiate/testdata/<hashdir>/crashes/`. |
 
 ### Crash Minimization
 

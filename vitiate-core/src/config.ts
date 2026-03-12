@@ -2,6 +2,7 @@
  * Mode detection and configuration for vitiate.
  */
 
+import { createRequire } from "node:module";
 import path from "node:path";
 import * as v from "valibot";
 import { KNOWN_DETECTOR_KEYS } from "./detectors/index.js";
@@ -172,8 +173,8 @@ export interface VitiatePluginOptions {
   instrument?: InstrumentOptions;
   /** Default fuzz options applied to all `fuzz()` tests (overridden by per-test and env options). */
   fuzz?: FuzzOptions;
-  /** Cache directory path, resolved relative to project root. */
-  cacheDir?: string;
+  /** Test data root directory, resolved relative to project root. Default: `.vitiate/`. */
+  dataDir?: string;
   /** Coverage map size (number of edge counter slots). Default: 65536. Must be in [256, 4194304]. */
   coverageMapSize?: number;
 }
@@ -378,18 +379,30 @@ export function resetProjectRoot(): void {
   resolvedProjectRoot = undefined;
 }
 
-let resolvedCacheDir: string | undefined;
+let resolvedDataDir: string | undefined;
 
-export function setCacheDir(dir: string): void {
-  resolvedCacheDir = dir;
+export function setDataDir(dir: string): void {
+  resolvedDataDir = dir;
 }
 
-export function getResolvedCacheDir(): string | undefined {
-  return resolvedCacheDir;
+export function getResolvedDataDir(): string | undefined {
+  return resolvedDataDir;
 }
 
-export function resetCacheDir(): void {
-  resolvedCacheDir = undefined;
+export function resetDataDir(): void {
+  resolvedDataDir = undefined;
+}
+
+/**
+ * Resolve the test data root directory.
+ * Uses the plugin-configured dataDir or defaults to `.vitiate/` relative
+ * to the project root (or cwd if no project root is set).
+ */
+export function getDataDir(): string {
+  if (resolvedDataDir) {
+    return resolvedDataDir;
+  }
+  return path.resolve(getProjectRoot(), ".vitiate");
 }
 
 const KNOWN_VITIATE_ENV_VARS = new Set([
@@ -561,6 +574,12 @@ export function resolveStopOnCrash(
   }
   // CLI mode: depends on fork flag
   return !forkExplicit;
+}
+
+/** Resolve the vitest CLI entry point from the current module context. */
+export function resolveVitestCli(): string {
+  const require = createRequire(import.meta.url);
+  return require.resolve("vitest/vitest.mjs");
 }
 
 /** Default max input length in bytes for shmem allocation. */

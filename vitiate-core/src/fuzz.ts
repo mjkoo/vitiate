@@ -2,7 +2,6 @@
  * fuzz() test registrar - like Vitest's bench() but for fuzz testing.
  */
 import { spawn } from "node:child_process";
-import { createRequire } from "node:module";
 import path from "node:path";
 import { test } from "vitest";
 // Vitest coupling: getCurrentTest() is expected to return a Test object with
@@ -28,15 +27,15 @@ import {
   getCliIpc,
   getProjectRoot,
   resolveStopOnCrash,
+  resolveVitestCli,
   DEFAULT_MAX_INPUT_LEN,
 } from "./config.js";
 import {
-  loadSeedCorpus,
+  loadTestDataCorpus,
   loadCachedCorpus,
   loadCachedCorpusWithPaths,
   loadCorpusFromDirs,
-  getCacheDir,
-  getFuzzTestDataDir,
+  getTestDataDir,
 } from "./corpus.js";
 import {
   installDetectorModuleHooks,
@@ -58,15 +57,6 @@ type FuzzTarget = (data: Buffer) => void | Promise<void>;
 /** INT32_MAX - disables Vitest's built-in timeout so vitiate manages its own. */
 const VITEST_NO_TIMEOUT = 2_147_483_647;
 
-function getTestDir(): string {
-  const current = getCurrentTest();
-  const filepath = current?.file?.filepath;
-  if (filepath) {
-    return path.dirname(filepath);
-  }
-  return process.cwd();
-}
-
 function getTestFilePath(): string {
   const current = getCurrentTest();
   const filepath = current?.file?.filepath;
@@ -82,12 +72,6 @@ function getRelativeTestFilePath(): string {
   const absolutePath = getTestFilePath();
   const projectRoot = getProjectRoot();
   return path.relative(projectRoot, absolutePath);
-}
-
-/** Resolve the vitest CLI entry point from the current module context. */
-export function resolveVitestCli(): string {
-  const require = createRequire(import.meta.url);
-  return require.resolve("vitest/vitest.mjs");
 }
 
 /**
@@ -136,12 +120,12 @@ function buildTestNamePattern(): string {
  */
 function translateSupervisorResult(
   result: SupervisorResult,
-  testDir: string,
+  relativeTestFilePath: string,
   testName: string,
 ): void {
   if (!result.crashed) return;
 
-  const artifactDir = getFuzzTestDataDir(testDir, testName);
+  const artifactDir = getTestDataDir(relativeTestFilePath, testName);
 
   if (result.crashArtifactPath) {
     throw new Error(`Crash found, artifact: ${result.crashArtifactPath}`);
@@ -168,15 +152,14 @@ function registerFuzzTest(
     register(
       name,
       async () => {
-        const testDir = getTestDir();
-        const cacheDir = getCacheDir();
         const relativeTestFilePath = getRelativeTestFilePath();
-        const seedEntries = loadSeedCorpus(testDir, name).map((data, i) => ({
-          path: `seed-${i}`,
-          data,
-        }));
+        const seedEntries = loadTestDataCorpus(relativeTestFilePath, name).map(
+          (data, i) => ({
+            path: `seed-${i}`,
+            data,
+          }),
+        );
         const cachedEntries = loadCachedCorpusWithPaths(
-          cacheDir,
           relativeTestFilePath,
           name,
         );
@@ -226,7 +209,6 @@ function registerFuzzTest(
       register(
         name,
         async () => {
-          const testDir = getTestDir();
           const relativeTestFilePath = getRelativeTestFilePath();
           const libfuzzerCompat = isLibfuzzerCompat();
           const corpusOutputDir = getCorpusOutputDir();
@@ -239,7 +221,6 @@ function registerFuzzTest(
           );
           const result = await runFuzzLoop(
             target,
-            testDir,
             name,
             relativeTestFilePath,
             mergedOptions,
@@ -274,7 +255,7 @@ function registerFuzzTest(
       register(
         name,
         async () => {
-          const testDir = getTestDir();
+          const relativeTestFilePath = getRelativeTestFilePath();
           const testFilePath = getTestFilePath();
           const maxInputLen = mergedOptions.maxLen ?? DEFAULT_MAX_INPUT_LEN;
           const shmem = ShmemHandle.allocate(maxInputLen);
@@ -284,7 +265,7 @@ function registerFuzzTest(
 
           const result = await runSupervisor({
             shmem,
-            testDir,
+            relativeTestFilePath,
             testName: name,
             spawnChild: () =>
               spawn(
@@ -307,7 +288,7 @@ function registerFuzzTest(
               ),
           });
 
-          translateSupervisorResult(result, testDir, name);
+          translateSupervisorResult(result, relativeTestFilePath, name);
         },
         VITEST_NO_TIMEOUT,
       );
@@ -318,14 +299,12 @@ function registerFuzzTest(
     // pollution) and module-hook detectors (command injection, path
     // traversal) catch the same vulnerabilities they would in fuzz mode.
     register(name, async () => {
-      const testDir = getTestDir();
-      const cacheDir = getCacheDir();
       const relativeTestFilePath = getRelativeTestFilePath();
-      const seeds = loadSeedCorpus(testDir, name);
-      const cached = loadCachedCorpus(cacheDir, relativeTestFilePath, name);
+      const testDataEntries = loadTestDataCorpus(relativeTestFilePath, name);
+      const cached = loadCachedCorpus(relativeTestFilePath, name);
       const extraDirs = getCorpusDirs();
       const extra = extraDirs ? loadCorpusFromDirs(extraDirs) : [];
-      const corpus = [...seeds, ...cached, ...extra];
+      const corpus = [...testDataEntries, ...cached, ...extra];
 
       // Install detector hooks, reconfiguring if the user specified
       // per-test detector options that differ from setup.ts defaults.

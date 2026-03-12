@@ -3,37 +3,55 @@ title: Standalone CLI
 description: Running fuzz tests from the command line with npx vitiate.
 ---
 
-The `vitiate` standalone CLI runs fuzz tests directly from the command line. Its flags follow libFuzzer conventions, so it works as a drop-in replacement for workflows and platforms that expect a libFuzzer-style interface.
+The `vitiate` CLI provides subcommands for managing and running fuzz tests. For libFuzzer-compatible workflows, the `libfuzzer` subcommand follows libFuzzer conventions and works as a drop-in replacement for platforms that expect a libFuzzer-style interface.
 
-For most development workflows, the Vitest-integrated approach (`VITIATE_FUZZ=1 npx vitest run`) is simpler - it handles corpus and artifact paths automatically and runs all fuzz tests in a single command. The CLI is useful when you want direct control over a single target, need to pass libFuzzer-style flags, or are integrating with a fuzzing platform.
+## Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `vitiate init` | Discovers fuzz tests and creates seed directories |
+| `vitiate fuzz` | Runs `VITIATE_FUZZ=1 vitest run` |
+| `vitiate regression` | Runs `vitest run` (no special env) |
+| `vitiate optimize` | Runs `VITIATE_OPTIMIZE=1 vitest run` |
+| `vitiate libfuzzer` | libFuzzer-compatible mode with direct control over a single target |
+
+For most development workflows, `vitiate fuzz` and `vitiate regression` are the simplest options - they handle corpus and artifact paths automatically and run all fuzz tests in a single command. The `libfuzzer` subcommand is useful when you want direct control over a single target, need to pass libFuzzer-style flags, or are integrating with a fuzzing platform.
 
 ## Basic Usage
 
 ```bash
-npx vitiate test/parser.fuzz.ts
+npx vitiate fuzz
 ```
 
-This fuzzes all `fuzz()` targets in the specified file indefinitely (until you press Ctrl+C or a crash is found). The CLI sets `VITIATE_FUZZ=1` internally.
+This fuzzes all `fuzz()` targets indefinitely (until you press Ctrl+C or a crash is found).
+
+### libFuzzer Mode
+
+```bash
+npx vitiate libfuzzer test/parser.fuzz.ts
+```
+
+This fuzzes all `fuzz()` targets in the specified file using the libFuzzer-compatible interface.
 
 ### Targeting a Specific Test
 
 If your file contains multiple `fuzz()` calls, target one by name:
 
 ```bash
-npx vitiate test/parser.fuzz.ts -test "parse does not crash"
+npx vitiate libfuzzer test/parser.fuzz.ts -test "parse does not crash"
 ```
 
 ### Setting Limits
 
 ```bash
 # Stop after 60 seconds
-npx vitiate test/parser.fuzz.ts -max_total_time 60
+npx vitiate libfuzzer test/parser.fuzz.ts -max_total_time 60
 
 # Stop after 100,000 iterations
-npx vitiate test/parser.fuzz.ts -runs 100000
+npx vitiate libfuzzer test/parser.fuzz.ts -runs 100000
 
 # Both (whichever comes first)
-npx vitiate test/parser.fuzz.ts -max_total_time 60 -runs 100000
+npx vitiate libfuzzer test/parser.fuzz.ts -max_total_time 60 -runs 100000
 ```
 
 ### Providing Corpus Directories
@@ -41,27 +59,27 @@ npx vitiate test/parser.fuzz.ts -max_total_time 60 -runs 100000
 Pass additional corpus directories as positional arguments after the test file:
 
 ```bash
-npx vitiate test/parser.fuzz.ts corpus/ shared-corpus/
+npx vitiate libfuzzer test/parser.fuzz.ts corpus/ shared-corpus/
 ```
 
-The fuzzer loads inputs from these directories alongside the seed corpus and cached corpus. In Vitest-integrated mode, corpus directories are managed automatically.
+The fuzzer loads inputs from these directories alongside the seed corpus and cached corpus. When using `vitiate fuzz`, corpus directories are managed automatically.
 
 ### Using Dictionaries
 
 Point to a dictionary file with domain-specific tokens:
 
 ```bash
-npx vitiate test/parser.fuzz.ts -dict ./tokens.dict
+npx vitiate libfuzzer test/parser.fuzz.ts -dict ./tokens.dict
 ```
 
-In Vitest-integrated mode, place the dictionary at `testdata/fuzz/<test-name>.dict` for automatic discovery instead. See [Dictionaries and Seeds](/vitiate/guides/dictionaries-and-seeds/) for details.
+When using `vitiate fuzz`, place the dictionary file directly in `.vitiate/testdata/<hashdir>/` for automatic discovery instead. See [Dictionaries and Seeds](/vitiate/guides/dictionaries-and-seeds/) for details.
 
 ### Controlling Artifact Output
 
 By default, crash and timeout artifacts are written to the seed corpus directory. Override the output location with `-artifact_prefix`:
 
 ```bash
-npx vitiate test/parser.fuzz.ts -artifact_prefix ./crashes/
+npx vitiate libfuzzer test/parser.fuzz.ts -artifact_prefix ./crashes/
 ```
 
 ## Reading the Output
@@ -85,16 +103,16 @@ The `-merge 1` flag minimizes a corpus across arbitrary directories:
 
 ```bash
 # Merge multiple corpus directories into a minimized set
-npx vitiate test/parser.fuzz.ts -merge 1 minimized-corpus/ .vitiate-corpus/ extra-corpus/
+npx vitiate libfuzzer test/parser.fuzz.ts -merge 1 minimized-corpus/ .vitiate/corpus/ extra-corpus/
 
 # Replace the old corpus with the minimized one
-rm -rf .vitiate-corpus/
-mv minimized-corpus/ .vitiate-corpus/
+rm -rf .vitiate/corpus/
+mv minimized-corpus/ .vitiate/corpus/
 ```
 
 The merge operation evaluates every input's coverage contribution and keeps only the smallest set that maintains the same total coverage. The first positional directory is the output; the rest are inputs.
 
-For Vitest-integrated corpus minimization (without the CLI), see [Corpus Minimization](/vitiate/concepts/corpus/#corpus-minimization).
+For integrated corpus minimization, use `npx vitiate optimize` or see [Corpus Minimization](/vitiate/concepts/corpus/#corpus-minimization).
 
 ## Supervisor Process
 

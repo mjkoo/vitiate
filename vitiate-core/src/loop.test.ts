@@ -10,8 +10,13 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 import { runFuzzLoop, checkDedupPolicy } from "./loop.js";
 import { initGlobals } from "./globals.js";
-import { sanitizeTestName } from "./corpus.js";
-import { setCacheDir, resetCacheDir } from "./config.js";
+import { hashTestPath } from "./nix-base32.js";
+import {
+  setDataDir,
+  resetDataDir,
+  setProjectRoot,
+  resetProjectRoot,
+} from "./config.js";
 import { resetDetectorHooks } from "./detectors/index.js";
 
 describe("fuzz loop", () => {
@@ -27,7 +32,8 @@ describe("fuzz loop", () => {
     } else {
       process.env["VITIATE_FUZZ"] = originalFuzz;
     }
-    resetCacheDir();
+    resetDataDir();
+    resetProjectRoot();
     if (originalCliIpc === undefined) {
       delete process.env["VITIATE_CLI_IPC"];
     } else {
@@ -49,7 +55,8 @@ describe("fuzz loop", () => {
       `vitiate-loop-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     );
     mkdirSync(tmpDir, { recursive: true });
-    setCacheDir(path.join(tmpDir, ".cache"));
+    setDataDir(tmpDir);
+    setProjectRoot(tmpDir);
   }
 
   /**
@@ -76,13 +83,11 @@ describe("fuzz loop", () => {
       callCount++;
     };
 
-    const result = await runFuzzLoop(
-      target,
-      tmpDir,
-      "trivial",
-      "test.fuzz.ts",
-      { fuzzExecs: 100, grimoire: false, unicode: false },
-    );
+    const result = await runFuzzLoop(target, "trivial", "test.fuzz.ts", {
+      fuzzExecs: 100,
+      grimoire: false,
+      unicode: false,
+    });
 
     expect(result.crashed).toBe(false);
     // callCount >= fuzzExecs because calibration re-runs also call the target.
@@ -100,15 +105,9 @@ describe("fuzz loop", () => {
       }
     };
 
-    const result = await runFuzzLoop(
-      target,
-      tmpDir,
-      "crashme",
-      "test.fuzz.ts",
-      {
-        fuzzExecs: 1_000_000,
-      },
-    );
+    const result = await runFuzzLoop(target, "crashme", "test.fuzz.ts", {
+      fuzzExecs: 1_000_000,
+    });
 
     expect(result.crashed).toBe(true);
     expect(result.error).toBeInstanceOf(Error);
@@ -117,7 +116,7 @@ describe("fuzz loop", () => {
     expect(existsSync(result.crashArtifactPath!)).toBe(true);
 
     // Verify crash artifact is in the testdata dir (hash-prefixed)
-    expect(result.crashArtifactPath!).toContain(path.join("testdata", "fuzz"));
+    expect(result.crashArtifactPath!).toContain("testdata");
     expect(result.crashArtifactPath!).toContain("crashme");
     expect(path.basename(result.crashArtifactPath!)).toMatch(/^crash-/);
 
@@ -134,17 +133,11 @@ describe("fuzz loop", () => {
       await Promise.resolve();
     };
 
-    const result = await runFuzzLoop(
-      target,
-      tmpDir,
-      "async-trivial",
-      "test.fuzz.ts",
-      {
-        fuzzExecs: 100,
-        grimoire: false,
-        unicode: false,
-      },
-    );
+    const result = await runFuzzLoop(target, "async-trivial", "test.fuzz.ts", {
+      fuzzExecs: 100,
+      grimoire: false,
+      unicode: false,
+    });
 
     expect(result.crashed).toBe(false);
     // callCount >= fuzzExecs because calibration re-runs also call the target.
@@ -162,15 +155,9 @@ describe("fuzz loop", () => {
       }
     };
 
-    const result = await runFuzzLoop(
-      target,
-      tmpDir,
-      "async-crash",
-      "test.fuzz.ts",
-      {
-        fuzzExecs: 1_000_000,
-      },
-    );
+    const result = await runFuzzLoop(target, "async-crash", "test.fuzz.ts", {
+      fuzzExecs: 1_000_000,
+    });
 
     expect(result.crashed).toBe(true);
     expect(result.error).toBeInstanceOf(Error);
@@ -188,16 +175,10 @@ describe("fuzz loop", () => {
       }
     };
 
-    const result = await runFuzzLoop(
-      target,
-      tmpDir,
-      "sync-timeout",
-      "test.fuzz.ts",
-      {
-        fuzzExecs: 1,
-        timeoutMs: 200,
-      },
-    );
+    const result = await runFuzzLoop(target, "sync-timeout", "test.fuzz.ts", {
+      fuzzExecs: 1,
+      timeoutMs: 200,
+    });
 
     expect(result.crashed).toBe(true);
     expect(result.error).toBeInstanceOf(Error);
@@ -205,7 +186,7 @@ describe("fuzz loop", () => {
   });
 
   // NOTE: Async timeout (busy microtask loop) is enforced by the _exit
-  // fallback at 5× timeout - V8 TerminateExecution cascades through all JS
+  // fallback at 5x timeout - V8 TerminateExecution cascades through all JS
   // frames and cannot be caught, so the process terminates. This is tested
   // as an integration test rather than in-process.
 
@@ -218,16 +199,10 @@ describe("fuzz loop", () => {
       await Promise.resolve();
     };
 
-    const result = await runFuzzLoop(
-      target,
-      tmpDir,
-      "no-timeout",
-      "test.fuzz.ts",
-      {
-        fuzzExecs: 10,
-        timeoutMs: 5000,
-      },
-    );
+    const result = await runFuzzLoop(target, "no-timeout", "test.fuzz.ts", {
+      fuzzExecs: 10,
+      timeoutMs: 5000,
+    });
 
     expect(result.crashed).toBe(false);
     // callCount >= fuzzExecs because calibration re-runs also call the target.
@@ -250,16 +225,10 @@ describe("fuzz loop", () => {
         await Promise.resolve();
       };
 
-      const result = await runFuzzLoop(
-        target,
-        tmpDir,
-        "no-leak",
-        "test.fuzz.ts",
-        {
-          fuzzExecs: 50,
-          timeoutMs: 5000,
-        },
-      );
+      const result = await runFuzzLoop(target, "no-leak", "test.fuzz.ts", {
+        fuzzExecs: 50,
+        timeoutMs: 5000,
+      });
 
       // Flush pending event-loop callbacks (setImmediate fires on the next
       // event-loop turn without relying on wall-clock timing).
@@ -284,16 +253,10 @@ describe("fuzz loop", () => {
       }
     };
 
-    const result = await runFuzzLoop(
-      target,
-      tmpDir,
-      "not-timeout",
-      "test.fuzz.ts",
-      {
-        fuzzExecs: 1_000_000,
-        timeoutMs: 5000, // Long timeout - should never fire
-      },
-    );
+    const result = await runFuzzLoop(target, "not-timeout", "test.fuzz.ts", {
+      fuzzExecs: 1_000_000,
+      timeoutMs: 5000, // Long timeout - should never fire
+    });
 
     expect(result.crashed).toBe(true);
     expect(result.error).toBeInstanceOf(Error);
@@ -308,15 +271,9 @@ describe("fuzz loop", () => {
 
     try {
       await expect(
-        runFuzzLoop(
-          (_data: Buffer): void => {},
-          tmpDir,
-          "no-cov",
-          "test.fuzz.ts",
-          {
-            fuzzExecs: 1,
-          },
-        ),
+        runFuzzLoop((_data: Buffer): void => {}, "no-cov", "test.fuzz.ts", {
+          fuzzExecs: 1,
+        }),
       ).rejects.toThrow("coverage map not initialized");
     } finally {
       globalThis.__vitiate_cov = saved;
@@ -331,7 +288,7 @@ describe("fuzz loop", () => {
     };
 
     await expect(
-      runFuzzLoop(target, tmpDir, "no-cov-seeds", "test.fuzz.ts", {
+      runFuzzLoop(target, "no-cov-seeds", "test.fuzz.ts", {
         fuzzExecs: 100,
       }),
     ).rejects.toThrow(/none produced coverage/);
@@ -354,7 +311,6 @@ describe("fuzz loop", () => {
 
     const result = await runFuzzLoop(
       target,
-      tmpDir,
       "corpus-dirs-test",
       "test.fuzz.ts",
       { fuzzExecs: 1_000_000 },
@@ -397,18 +353,12 @@ describe("fuzz loop", () => {
       }
     };
 
-    const result = await runFuzzLoop(
-      target,
-      tmpDir,
-      "minimize-test",
-      "test.fuzz.ts",
-      {
-        fuzzExecs: 1_000_000,
-        fuzzTimeMs: 30_000,
-        minimizeBudget: 50_000,
-        minimizeTimeLimitMs: 30_000,
-      },
-    );
+    const result = await runFuzzLoop(target, "minimize-test", "test.fuzz.ts", {
+      fuzzExecs: 1_000_000,
+      fuzzTimeMs: 30_000,
+      minimizeBudget: 50_000,
+      minimizeTimeLimitMs: 30_000,
+    });
 
     expect(result.crashed).toBe(true);
     expect(result.error!.message).toBe("found DEAD pattern");
@@ -431,16 +381,10 @@ describe("fuzz loop", () => {
     };
 
     // fuzzExecs=0 should mean unlimited; fuzzTimeMs is the safety net
-    const result = await runFuzzLoop(
-      target,
-      tmpDir,
-      "runs-zero",
-      "test.fuzz.ts",
-      {
-        fuzzExecs: 0,
-        fuzzTimeMs: 30_000,
-      },
-    );
+    const result = await runFuzzLoop(target, "runs-zero", "test.fuzz.ts", {
+      fuzzExecs: 0,
+      fuzzTimeMs: 30_000,
+    });
 
     // The loop should not exit immediately at iteration 0;
     // it should keep going and eventually find the crash
@@ -471,18 +415,12 @@ describe("fuzz loop", () => {
       }
     };
 
-    const result = await runFuzzLoop(
-      target,
-      tmpDir,
-      "cal-loop",
-      "test.fuzz.ts",
-      {
-        fuzzExecs: 50,
-        grimoire: false,
-        unicode: false,
-        redqueen: false,
-      },
-    );
+    const result = await runFuzzLoop(target, "cal-loop", "test.fuzz.ts", {
+      fuzzExecs: 50,
+      grimoire: false,
+      unicode: false,
+      redqueen: false,
+    });
 
     expect(result.crashed).toBe(false);
     expect(result.totalExecs).toBe(50);
@@ -505,18 +443,12 @@ describe("fuzz loop", () => {
       }
     };
 
-    const result = await runFuzzLoop(
-      target,
-      tmpDir,
-      "async-cov",
-      "test.fuzz.ts",
-      {
-        fuzzExecs: 50,
-        grimoire: false,
-        unicode: false,
-        redqueen: false,
-      },
-    );
+    const result = await runFuzzLoop(target, "async-cov", "test.fuzz.ts", {
+      fuzzExecs: 50,
+      grimoire: false,
+      unicode: false,
+      redqueen: false,
+    });
 
     expect(result.crashed).toBe(false);
     expect(result.totalExecs).toBe(50);
@@ -541,7 +473,6 @@ describe("fuzz loop", () => {
 
     const result = await runFuzzLoop(
       target,
-      tmpDir,
       "async-cov-timeout",
       "test.fuzz.ts",
       {
@@ -570,16 +501,10 @@ describe("fuzz loop", () => {
     };
 
     // fuzzTimeMs=0 should mean unlimited; fuzzExecs is the safety net
-    const result = await runFuzzLoop(
-      target,
-      tmpDir,
-      "time-zero",
-      "test.fuzz.ts",
-      {
-        fuzzTimeMs: 0,
-        fuzzExecs: 1_000_000,
-      },
-    );
+    const result = await runFuzzLoop(target, "time-zero", "test.fuzz.ts", {
+      fuzzTimeMs: 0,
+      fuzzExecs: 1_000_000,
+    });
 
     // The loop should not exit immediately at time 0;
     // it should keep going and eventually find the crash
@@ -607,13 +532,11 @@ describe("fuzz loop", () => {
         );
       };
 
-      const result = await runFuzzLoop(
-        target,
-        tmpDir,
-        "stage-execs",
-        "test.fuzz.ts",
-        { fuzzExecs: 50, timeoutMs: 5000, grimoire: false },
-      );
+      const result = await runFuzzLoop(target, "stage-execs", "test.fuzz.ts", {
+        fuzzExecs: 50,
+        timeoutMs: 5000,
+        grimoire: false,
+      });
 
       expect(result.crashed).toBe(false);
       // I2S stage iterations increment totalExecs beyond the main-loop count.
@@ -634,13 +557,12 @@ describe("fuzz loop", () => {
         }
       };
 
-      const result = await runFuzzLoop(
-        target,
-        tmpDir,
-        "stage-no-cmp",
-        "test.fuzz.ts",
-        { fuzzExecs: 50, grimoire: false, unicode: false, redqueen: false },
-      );
+      const result = await runFuzzLoop(target, "stage-no-cmp", "test.fuzz.ts", {
+        fuzzExecs: 50,
+        grimoire: false,
+        unicode: false,
+        redqueen: false,
+      });
 
       expect(result.crashed).toBe(false);
       // Without CmpLog data (no I2S) and with Grimoire/REDQUEEN disabled, totalExecs === fuzzExecs.
@@ -674,13 +596,11 @@ describe("fuzz loop", () => {
         }
       };
 
-      const result = await runFuzzLoop(
-        target,
-        tmpDir,
-        "stage-crash",
-        "test.fuzz.ts",
-        { fuzzExecs: 1_000_000, fuzzTimeMs: 30_000, grimoire: false },
-      );
+      const result = await runFuzzLoop(target, "stage-crash", "test.fuzz.ts", {
+        fuzzExecs: 1_000_000,
+        fuzzTimeMs: 30_000,
+        grimoire: false,
+      });
 
       expect(result.crashed).toBe(true);
       expect(result.error).toBeInstanceOf(Error);
@@ -707,13 +627,11 @@ describe("fuzz loop", () => {
         globalThis.__vitiate_trace_cmp(data.toString(), "async_val", 0, "===");
       };
 
-      const result = await runFuzzLoop(
-        target,
-        tmpDir,
-        "stage-async",
-        "test.fuzz.ts",
-        { fuzzExecs: 50, timeoutMs: 5000, grimoire: false },
-      );
+      const result = await runFuzzLoop(target, "stage-async", "test.fuzz.ts", {
+        fuzzExecs: 50,
+        timeoutMs: 5000,
+        grimoire: false,
+      });
 
       expect(result.crashed).toBe(false);
       // Stage ran: totalExecs > fuzzExecs
@@ -748,7 +666,6 @@ describe("fuzz loop", () => {
 
       const result = await runFuzzLoop(
         target,
-        tmpDir,
         "stage-timeout",
         "test.fuzz.ts",
         {
@@ -792,7 +709,6 @@ describe("fuzz loop", () => {
 
       const result = await runFuzzLoop(
         target,
-        tmpDir,
         "stage-execs-abort",
         "test.fuzz.ts",
         { fuzzExecs: 1_000_000, fuzzTimeMs: 30_000, grimoire: false },
@@ -882,13 +798,11 @@ describe("fuzz loop", () => {
         globalThis.__vitiate_trace_cmp(data.toString(), "no_wd", 0, "===");
       };
 
-      const result = await runFuzzLoop(
-        target,
-        tmpDir,
-        "stage-no-wd",
-        "test.fuzz.ts",
-        { fuzzExecs: 50, grimoire: false, unicode: false },
-      );
+      const result = await runFuzzLoop(target, "stage-no-wd", "test.fuzz.ts", {
+        fuzzExecs: 50,
+        grimoire: false,
+        unicode: false,
+      });
 
       expect(result.crashed).toBe(false);
       // Stage ran without watchdog: totalExecs > fuzzExecs
@@ -936,7 +850,6 @@ describe("fuzz loop", () => {
 
       const result = await runFuzzLoop(
         target,
-        tmpDir,
         "stage-cal-crash",
         "test.fuzz.ts",
         { fuzzExecs: 50, grimoire: false, unicode: false, redqueen: false },
@@ -977,7 +890,6 @@ describe("fuzz loop", () => {
 
       const result = await runFuzzLoop(
         target,
-        tmpDir,
         "multi-crash",
         "test.fuzz.ts",
         { fuzzExecs: 1_000_000, fuzzTimeMs: 30_000 },
@@ -1003,7 +915,6 @@ describe("fuzz loop", () => {
 
       const result = await runFuzzLoop(
         target,
-        tmpDir,
         "stop-first",
         "test.fuzz.ts",
         { fuzzExecs: 1_000_000, fuzzTimeMs: 30_000 },
@@ -1019,7 +930,7 @@ describe("fuzz loop", () => {
       await setupFuzzingMode();
 
       // Named throw functions so each crash site produces a distinct
-      // normalized stack trace (different function name → different dedup key).
+      // normalized stack trace (different function name -> different dedup key).
       function crashSiteA(): never {
         throw new Error("crash-site-A");
       }
@@ -1040,11 +951,13 @@ describe("fuzz loop", () => {
       // Pre-seed the corpus with inputs that trigger both crash sites.
       // This makes crash discovery deterministic - no reliance on the
       // mutator generating specific byte patterns.
+      const testName = "unlimited-crash";
+      const relativeTestFilePath = "test.fuzz.ts";
       const seedDir = path.join(
         tmpDir,
         "testdata",
-        "fuzz",
-        sanitizeTestName("unlimited-crash"),
+        hashTestPath(relativeTestFilePath, testName),
+        "seeds",
       );
       mkdirSync(seedDir, { recursive: true });
       writeFileSync(path.join(seedDir, "seed-A"), Buffer.from([0x42]));
@@ -1052,9 +965,8 @@ describe("fuzz loop", () => {
 
       const result = await runFuzzLoop(
         target,
-        tmpDir,
-        "unlimited-crash",
-        "test.fuzz.ts",
+        testName,
+        relativeTestFilePath,
         { fuzzExecs: 5000 },
         { stopOnCrash: false, maxCrashes: 0 },
       );
@@ -1094,7 +1006,6 @@ describe("fuzz loop", () => {
 
         const result = await runFuzzLoop(
           target,
-          tmpDir,
           "limit-warn",
           "test.fuzz.ts",
           { fuzzExecs: 1_000_000, fuzzTimeMs: 30_000 },
@@ -1118,7 +1029,6 @@ describe("fuzz loop", () => {
 
       const result = await runFuzzLoop(
         target,
-        tmpDir,
         "no-crash",
         "test.fuzz.ts",
         { fuzzExecs: 50, grimoire: false, unicode: false },
@@ -1158,7 +1068,6 @@ describe("fuzz loop", () => {
 
       const result = await runFuzzLoop(
         target,
-        tmpDir,
         "stage-continue",
         "test.fuzz.ts",
         { fuzzExecs: 1_000_000, fuzzTimeMs: 30_000, grimoire: false },
@@ -1183,7 +1092,6 @@ describe("fuzz loop", () => {
 
       const result = await runFuzzLoop(
         target,
-        tmpDir,
         "dedup-first",
         "test.fuzz.ts",
         { fuzzExecs: 1_000_000, fuzzTimeMs: 30_000 },
@@ -1216,7 +1124,6 @@ describe("fuzz loop", () => {
 
       const result = await runFuzzLoop(
         target,
-        tmpDir,
         "dedup-suppress",
         "test.fuzz.ts",
         { fuzzExecs: 5000 },
@@ -1249,7 +1156,6 @@ describe("fuzz loop", () => {
 
       const result = await runFuzzLoop(
         target,
-        tmpDir,
         "dedup-failopen",
         "test.fuzz.ts",
         { fuzzExecs: 1_000_000, fuzzTimeMs: 30_000 },
@@ -1280,7 +1186,6 @@ describe("fuzz loop", () => {
 
       const result = await runFuzzLoop(
         target,
-        tmpDir,
         "dedup-replace",
         "test.fuzz.ts",
         { fuzzExecs: 5000 },
@@ -1306,7 +1211,6 @@ describe("fuzz loop", () => {
 
       const result = await runFuzzLoop(
         target,
-        tmpDir,
         "dedup-zero",
         "test.fuzz.ts",
         { fuzzExecs: 50, grimoire: false, unicode: false },
@@ -1330,7 +1234,6 @@ describe("fuzz loop", () => {
 
       const result = await runFuzzLoop(
         target,
-        tmpDir,
         "result-fields",
         "test.fuzz.ts",
         { fuzzExecs: 1_000_000 },
@@ -1350,7 +1253,6 @@ describe("fuzz loop", () => {
 
       const result = await runFuzzLoop(
         target,
-        tmpDir,
         "no-crash-fields",
         "test.fuzz.ts",
         { fuzzExecs: 10, grimoire: false, unicode: false },
@@ -1370,21 +1272,22 @@ describe("fuzz loop", () => {
       // Place a malformed .dict file at the convention path. If loaded, it
       // would cause a parse error. In libfuzzerCompat mode it must be ignored.
       const testName = "dict-compat-test";
-      const dictDir = path.join(tmpDir, "testdata", "fuzz");
-      mkdirSync(dictDir, { recursive: true });
-      writeFileSync(
-        path.join(dictDir, `${sanitizeTestName(testName)}.dict`),
-        "not a valid line",
+      const relativeTestFilePath = "test.fuzz.ts";
+      const dictDir = path.join(
+        tmpDir,
+        "testdata",
+        hashTestPath(relativeTestFilePath, testName),
       );
+      mkdirSync(dictDir, { recursive: true });
+      writeFileSync(path.join(dictDir, `${testName}.dict`), "not a valid line");
 
       const target = (data: Buffer): void => {
         simulateCoverage(data);
       };
       const result = await runFuzzLoop(
         target,
-        tmpDir,
         testName,
-        "test.fuzz.ts",
+        relativeTestFilePath,
         { fuzzExecs: 10, grimoire: false, unicode: false, redqueen: false },
         { libfuzzerCompat: true },
       );
@@ -1400,18 +1303,20 @@ describe("fuzz loop", () => {
       // Same malformed .dict file. In Vitest mode (no libfuzzerCompat),
       // convention-based discovery should find it and fail to parse.
       const testName = "dict-vitest-test";
-      const dictDir = path.join(tmpDir, "testdata", "fuzz");
-      mkdirSync(dictDir, { recursive: true });
-      writeFileSync(
-        path.join(dictDir, `${sanitizeTestName(testName)}.dict`),
-        "not a valid line",
+      const relativeTestFilePath = "test.fuzz.ts";
+      const dictDir = path.join(
+        tmpDir,
+        "testdata",
+        hashTestPath(relativeTestFilePath, testName),
       );
+      mkdirSync(dictDir, { recursive: true });
+      writeFileSync(path.join(dictDir, `${testName}.dict`), "not a valid line");
 
       const target = (data: Buffer): void => {
         simulateCoverage(data);
       };
       await expect(
-        runFuzzLoop(target, tmpDir, testName, "test.fuzz.ts", {
+        runFuzzLoop(target, testName, relativeTestFilePath, {
           fuzzExecs: 10,
           grimoire: false,
           unicode: false,
@@ -1442,7 +1347,6 @@ describe("fuzz loop", () => {
 
     const result = await runFuzzLoop(
       target,
-      tmpDir,
       "proto-pollution",
       "test.fuzz.ts",
       {
@@ -1472,19 +1376,13 @@ describe("fuzz loop", () => {
       });
     };
 
-    const result = await runFuzzLoop(
-      target,
-      tmpDir,
-      "vuln-artifact",
-      "test.fuzz.ts",
-      {
-        fuzzExecs: 10,
-        grimoire: false,
-        unicode: false,
-        redqueen: false,
-        quiet: true,
-      },
-    );
+    const result = await runFuzzLoop(target, "vuln-artifact", "test.fuzz.ts", {
+      fuzzExecs: 10,
+      grimoire: false,
+      unicode: false,
+      redqueen: false,
+      quiet: true,
+    });
 
     expect(result.crashed).toBe(true);
     expect(result.crashArtifactPath).toBeDefined();

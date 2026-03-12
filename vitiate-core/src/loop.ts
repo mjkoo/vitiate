@@ -27,16 +27,15 @@ import {
   resetDetectorHooks,
 } from "./detectors/index.js";
 import {
-  loadSeedCorpus,
+  loadTestDataCorpus,
   loadCachedCorpus,
   loadCorpusFromDirs,
-  getCacheDir,
-  getDictionaryPath,
+  getTestDataDir,
+  discoverDictionaries,
   writeCorpusEntry,
   writeCorpusEntryToDir,
   writeArtifactWithPrefix,
   replaceArtifact,
-  sanitizeTestName,
   type ArtifactKind,
 } from "./corpus.js";
 import { computeDedupKey } from "./dedup.js";
@@ -357,9 +356,8 @@ export interface FuzzLoopOptions {
 
 export async function runFuzzLoop(
   target: (data: Buffer) => void | Promise<void>,
-  testDir: string,
   testName: string,
-  testFilePath: string,
+  relativeTestFilePath: string,
   options: FuzzOptions,
   corpusOptions?: FuzzLoopOptions,
 ): Promise<FuzzLoopResult> {
@@ -382,14 +380,19 @@ export async function runFuzzLoop(
       "vitiate: coverage map must be a Buffer (fuzzing mode). Ensure VITIATE_FUZZ=1 is set.",
     );
   }
-  const cacheDir = getCacheDir();
 
   // Resolve dictionary path: env var (from CLI -dict flag) takes precedence.
   // Convention-based discovery only applies in Vitest mode - CLI mode uses
   // only the explicit -dict flag, never convention-based discovery.
-  const dictionaryPath =
-    getDictionaryPathEnv() ??
-    (libfuzzerCompat ? undefined : getDictionaryPath(testDir, testName));
+  let dictionaryPath = getDictionaryPathEnv();
+  if (!dictionaryPath && !libfuzzerCompat) {
+    const dictPaths = discoverDictionaries(relativeTestFilePath, testName);
+    if (dictPaths.length > 0) {
+      // Use the first discovered dictionary file. Multiple dictionary files
+      // per test are not currently supported; only the first is loaded.
+      dictionaryPath = dictPaths[0];
+    }
+  }
 
   // Install detector hooks (idempotent - no-op if setup.ts already did it).
   // setup.ts calls this early so ESM imports capture patched wrappers.
@@ -440,17 +443,17 @@ export async function runFuzzLoop(
 
   const fuzzer = new Fuzzer(coverageMap, fuzzerConfig);
 
-  // Load seeds
-  const seedCorpus = loadSeedCorpus(testDir, testName);
-  const cachedCorpus = loadCachedCorpus(cacheDir, testFilePath, testName);
+  // Load seeds from testdata (seeds + crashes + timeouts) and cached corpus
+  const testDataCorpus = loadTestDataCorpus(relativeTestFilePath, testName);
+  const cachedCorpus = loadCachedCorpus(relativeTestFilePath, testName);
   const extraCorpus = corpusDirs ? loadCorpusFromDirs(corpusDirs) : [];
-  for (const seed of [...seedCorpus, ...cachedCorpus, ...extraCorpus]) {
+  for (const seed of [...testDataCorpus, ...cachedCorpus, ...extraCorpus]) {
     fuzzer.addSeed(seed);
   }
 
   if (debug) {
     process.stderr.write(
-      `vitiate[debug]: corpus=${JSON.stringify({ seed: seedCorpus.length, cached: cachedCorpus.length, extra: extraCorpus.length })}\n`,
+      `vitiate[debug]: corpus=${JSON.stringify({ testData: testDataCorpus.length, cached: cachedCorpus.length, extra: extraCorpus.length })}\n`,
     );
   }
 
@@ -464,13 +467,16 @@ export async function runFuzzLoop(
 
   // Resolve the artifact prefix for the watchdog and exception handler.
   // In libFuzzer-compat mode, default to "./" (cwd) matching libFuzzer behavior.
-  // In Vitest mode, use testdata/fuzz/{sanitizedName}/ (trailing slash = directory).
+  // In Vitest mode, use separate prefixes for crashes and timeouts.
+  const testDataDir = getTestDataDir(relativeTestFilePath, testName);
   const resolvedArtifactPrefix =
     artifactPrefix ??
-    (libfuzzerCompat
-      ? "./"
-      : path.join(testDir, "testdata", "fuzz", sanitizeTestName(testName)) +
-        path.sep);
+    (libfuzzerCompat ? "./" : path.join(testDataDir, "crashes") + path.sep);
+
+  // Separate timeout artifact prefix for Vitest mode
+  const timeoutArtifactPrefix =
+    artifactPrefix ??
+    (libfuzzerCompat ? "./" : path.join(testDataDir, "timeouts") + path.sep);
 
   if (debug) {
     process.stderr.write(
@@ -490,14 +496,14 @@ export async function runFuzzLoop(
   const timeoutMs = options.timeoutMs;
   const watchdog: Watchdog | null =
     timeoutMs !== undefined && timeoutMs > 0
-      ? new Watchdog(resolvedArtifactPrefix, shmemHandle)
+      ? new Watchdog(timeoutArtifactPrefix, shmemHandle)
       : null;
 
   const quiet = options.quiet === true;
   const showBanner = !quiet && options.banner !== false;
   if (showBanner) {
     const totalCorpusSize =
-      seedCorpus.length + cachedCorpus.length + extraCorpus.length;
+      testDataCorpus.length + cachedCorpus.length + extraCorpus.length;
     const activeDetectors = detectorManager.activeDetectorNames;
     printBanner({
       testName,
@@ -570,12 +576,12 @@ export async function runFuzzLoop(
     }
 
     // action === "save": new crash or fail-open
-    const artifactPath = writeCrashArtifact(
-      input,
-      exitKind,
-      error,
-      resolvedArtifactPrefix,
-    );
+    // Use the correct prefix based on artifact kind
+    const prefix =
+      exitKind === ExitKind.Timeout
+        ? timeoutArtifactPrefix
+        : resolvedArtifactPrefix;
+    const artifactPath = writeCrashArtifact(input, exitKind, error, prefix);
 
     if (dedupKey !== undefined) {
       crashDedupMap.set(dedupKey, { path: artifactPath, size: input.length });
@@ -679,7 +685,7 @@ export async function runFuzzLoop(
           if (corpusOutputDir !== undefined) {
             writeCorpusEntryToDir(corpusOutputDir, input);
           } else if (!libfuzzerCompat) {
-            writeCorpusEntry(cacheDir, testFilePath, testName, input);
+            writeCorpusEntry(relativeTestFilePath, testName, input);
           }
         } catch (writeError) {
           process.stderr.write(

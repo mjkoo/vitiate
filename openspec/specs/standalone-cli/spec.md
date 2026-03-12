@@ -2,49 +2,41 @@
 
 ### Requirement: CLI entry point
 
-The system SHALL provide a `bin` entry (`npx vitiate`) that accepts a fuzz test file path as the first positional argument and starts fuzzing targeting that file.
+The system SHALL provide a `bin` entry (`npx vitiate`) that dispatches to subcommands. The first positional argument SHALL be the subcommand name.
 
-Usage: `npx vitiate <test-file> [corpus_dirs...] [flags]`
+Usage: `npx vitiate <subcommand> [args...]`
 
 The CLI SHALL:
 
-1. Parse the test file path from the first positional argument.
-2. Parse the optional `-test=<name>` flag.
-3. Check for the `VITIATE_SUPERVISOR` environment variable to determine mode:
-   - **If absent (parent mode)**: Allocate shmem, spawn itself as a child process with `VITIATE_SUPERVISOR` set to `"1"` (a boolean flag indicating child mode), and enter the supervisor wait loop. The shmem identifier is passed separately via `VITIATE_SHMEM`. If `-test` is provided, use the name as `testName` for `runSupervisor()`. Otherwise, derive `testName` from the filename.
-   - **If present (child mode)**: Attach to the shmem region (via `VITIATE_SHMEM`), set `VITIATE_FUZZ=1` in the process environment, and call `startVitest('test', [testFile], ...)` with the vitiate plugin loaded. If `-test` is provided, escape and anchor the name as `^{escaped}$` and pass as `testNamePattern` to `startVitest()`.
-4. In parent mode, forward the exit code from the supervisor's exit code protocol (0, 1, or respawn on signal death).
+1. Check `process.argv[2]` against known subcommand names: `init`, `fuzz`, `regression`, `optimize`, `libfuzzer`.
+2. If a known subcommand is matched, dispatch to that subcommand's handler with the remaining arguments (`process.argv.slice(3)`).
+3. If no argument is provided or the argument does not match a known subcommand, print a usage summary and exit.
 
-#### Scenario: Basic invocation (parent mode)
+The previous behavior (accepting a test file path as the first positional argument and directly entering the fuzzer) SHALL be available exclusively via the `libfuzzer` subcommand.
 
-- **WHEN** `npx vitiate ./tests/parser.fuzz.ts` is executed
-- **THEN** the CLI allocates a shmem region
-- **AND** spawns itself as a child with `VITIATE_SUPERVISOR` set
-- **AND** enters the supervisor wait loop
+#### Scenario: Subcommand dispatch
 
-#### Scenario: Child mode invocation
+- **WHEN** `npx vitiate fuzz` is executed
+- **THEN** the `fuzz` subcommand handler SHALL be invoked
 
-- **WHEN** `npx vitiate ./tests/parser.fuzz.ts` is executed with `VITIATE_SUPERVISOR` set
-- **THEN** the CLI attaches to the shmem region
-- **AND** Vitest starts in fuzzing mode with `./tests/parser.fuzz.ts` as the test file
-- **AND** the vitiate plugin is loaded for instrumentation
+#### Scenario: libfuzzer subcommand preserves existing behavior
 
-#### Scenario: No test file provided
+- **WHEN** `npx vitiate libfuzzer ./tests/parser.fuzz.ts` is executed
+- **THEN** the CLI SHALL behave identically to the previous `npx vitiate ./tests/parser.fuzz.ts`
+- **AND** shmem SHALL be allocated, child SHALL be spawned with `VITIATE_SUPERVISOR`
+
+#### Scenario: No arguments shows help
 
 - **WHEN** `npx vitiate` is executed with no arguments
-- **THEN** an error message is printed and the process exits with code 1
+- **THEN** a usage summary SHALL be printed listing all subcommands
+- **AND** the process SHALL exit with code 0
 
-#### Scenario: Child inherits CLI flags
+#### Scenario: Child mode invocation (libfuzzer)
 
-- **WHEN** `npx vitiate ./test.ts -timeout=10 -runs=100000 -seed=42` is executed
-- **THEN** the child process receives the same arguments
-- **AND** the child parses and applies the same flags as if invoked directly
-
-#### Scenario: Test filter passed to child
-
-- **WHEN** `npx vitiate ./test.ts -test=parse-url` is executed in child mode
-- **THEN** `startVitest()` is called with `testNamePattern: "^parse\\-url$"` (escaped and anchored)
-- **AND** only the "parse-url" test callback executes (exact match)
+- **WHEN** `npx vitiate libfuzzer ./tests/parser.fuzz.ts` is executed with `VITIATE_SUPERVISOR` set
+- **THEN** the CLI attaches to the shmem region
+- **AND** Vitest starts in fuzzing mode
+- **AND** the vitiate plugin is loaded for instrumentation
 
 ### Requirement: Test name flag
 
@@ -79,6 +71,10 @@ When `-test` is not provided, all fuzz tests in the file enter the fuzz loop. Th
 
 ### Requirement: libFuzzer-compatible flags
 
+All existing libFuzzer-compatible flags SHALL continue to be accepted exclusively under the `libfuzzer` subcommand. The flag parsing, validation, and behavior SHALL remain unchanged.
+
+The flags (`-max_len`, `-timeout`, `-runs`, `-seed`, `-max_total_time`, `-test`, `-artifact_prefix`, `-dict`, `-detectors`, `-fork`, `-jobs`, `-merge`, `-minimize_budget`, `-minimize_time_limit`) SHALL NOT be accepted by the `fuzz`, `regression`, `optimize`, or `init` subcommands.
+
 The CLI SHALL accept libFuzzer-style flags (hyphen prefix, `=` separator):
 
 - `-max_len=N`: Maximum input length in bytes. Passed to `FuzzerConfig.maxInputLen`.
@@ -100,6 +96,17 @@ The CLI SHALL accept libFuzzer-style flags (hyphen prefix, `=` separator):
 - `-minimize_budget=N`: Maximum iterations for input minimization.
 - `-minimize_time_limit=N`: Time limit for input minimization in seconds.
 - `-merge=1`: Enter corpus merge mode. Load all inputs from all specified corpus directories, replay each through the fuzz target to collect coverage edges, run set cover to select the minimal subset covering all edges, and write surviving entries to the first corpus directory. At least one corpus directory SHALL be required when `-merge=1` is set; the CLI SHALL print an error and exit with code 1 if no corpus directories are provided. See `set-cover-merge` capability for full merge behavior.
+
+#### Scenario: Flags under libfuzzer subcommand
+
+- **WHEN** `npx vitiate libfuzzer ./test.ts -timeout=10 -runs=100000 -seed=42` is executed
+- **THEN** the flags SHALL be parsed and applied identically to the previous CLI behavior
+
+#### Scenario: Flags not accepted by other subcommands
+
+- **WHEN** `npx vitiate fuzz -timeout=10` is executed
+- **THEN** `-timeout=10` SHALL be forwarded to vitest as-is (vitest will handle or reject it)
+- **AND** vitiate SHALL NOT interpret it as a libFuzzer flag
 
 #### Scenario: Artifact prefix flag
 

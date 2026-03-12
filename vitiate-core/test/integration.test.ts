@@ -1,22 +1,53 @@
 /**
  * Integration tests for corpus loading and crash replay.
  */
-import { describe, it, expect, afterEach } from "vitest";
-import { existsSync, rmSync, mkdirSync } from "node:fs";
+import { describe, it, expect, afterEach, beforeEach } from "vitest";
+import { existsSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { initGlobals } from "../src/globals.js";
-import { loadSeedCorpus, writeArtifact } from "../src/corpus.js";
-import { setCacheDir, resetCacheDir } from "../src/config.js";
+import {
+  loadTestDataCorpus,
+  writeArtifact,
+  getTestDataDir,
+} from "../src/corpus.js";
+import { setDataDir, resetDataDir } from "../src/config.js";
 import { parseCommand } from "./parser-target.js";
 
-const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
+const TEST_RELATIVE_PATH = "test/integration.test.ts";
 
 describe("regression mode with seeded corpus", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = path.join(
+      tmpdir(),
+      `vitiate-integ-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    mkdirSync(tmpDir, { recursive: true });
+    setDataDir(tmpDir);
+  });
+
+  afterEach(() => {
+    resetDataDir();
+    if (tmpDir) {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("runs all seed corpus entries without crashing", () => {
-    const seeds = loadSeedCorpus(TEST_DIR, "parse-planted-bug");
-    expect(seeds.length).toBeGreaterThanOrEqual(3);
+    // Create seed files in the new path structure
+    const seedDir = path.join(
+      getTestDataDir(TEST_RELATIVE_PATH, "parse-planted-bug"),
+      "seeds",
+    );
+    mkdirSync(seedDir, { recursive: true });
+    writeFileSync(path.join(seedDir, "seed-get"), "GET");
+    writeFileSync(path.join(seedDir, "seed-set"), "SET");
+    writeFileSync(path.join(seedDir, "seed-empty"), "");
+
+    const seeds = loadTestDataCorpus(TEST_RELATIVE_PATH, "parse-planted-bug");
+    expect(seeds).toHaveLength(3);
 
     // Run the target with each seed - none should crash
     // (seeds are "GET", "SET", "" - none trigger "GET!")
@@ -38,7 +69,7 @@ describe("fuzzing mode discovers planted bug", () => {
     } else {
       process.env["VITIATE_FUZZ"] = originalFuzz;
     }
-    resetCacheDir();
+    resetDataDir();
     globalThis.__vitiate_cov = originalCov;
     globalThis.__vitiate_trace_cmp = originalTrace;
     if (tmpDir) {
@@ -56,19 +87,23 @@ describe("fuzzing mode discovers planted bug", () => {
       `vitiate-e2e-replay-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     );
     mkdirSync(tmpDir, { recursive: true });
-    setCacheDir(path.join(tmpDir, ".cache"));
+    setDataDir(tmpDir);
 
     // Write a known crash input as a crash artifact
     const crashInput = Buffer.from("GET!");
-    const artifactPath = writeArtifact(tmpDir, "parse-planted-bug", crashInput);
+    const artifactPath = writeArtifact(
+      TEST_RELATIVE_PATH,
+      "parse-planted-bug",
+      crashInput,
+    );
     expect(existsSync(artifactPath)).toBe(true);
 
-    // Now load the seed corpus (which includes the crash artifact)
-    const seeds = loadSeedCorpus(tmpDir, "parse-planted-bug");
-    expect(seeds.length).toBe(1); // Just the crash artifact
+    // loadTestDataCorpus loads seeds + crashes + timeouts
+    const corpus = loadTestDataCorpus(TEST_RELATIVE_PATH, "parse-planted-bug");
+    expect(corpus.length).toBe(1); // Just the crash artifact
 
     // Replaying the crash artifact should fail - this is regression mode behavior
-    const crashEntry = seeds[0]!;
+    const crashEntry = corpus[0]!;
     expect(() => parseCommand(crashEntry)).toThrow("parser crash");
   });
 }, 60000);

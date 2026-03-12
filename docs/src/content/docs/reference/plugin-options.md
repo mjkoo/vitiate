@@ -68,12 +68,12 @@ fuzz?: FuzzOptions
 
 See [fuzz() API Reference](/vitiate/reference/fuzz-api/) for the complete `FuzzOptions` type.
 
-### cacheDir
+### dataDir
 
-Directory for the cached corpus, relative to the project root.
+Directory for Vitiate data (corpus, testdata), relative to the project root.
 
 ```ts
-cacheDir?: string  // default: ".vitiate-corpus"
+dataDir?: string  // default: ".vitiate"
 ```
 
 ### coverageMapSize
@@ -107,7 +107,7 @@ export default defineConfig({
         maxLen: 8192,
         timeoutMs: 5000,
       },
-      cacheDir: ".vitiate-corpus",
+      dataDir: ".vitiate",
       coverageMapSize: 65536,
     }),
   ],

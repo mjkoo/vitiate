@@ -2,137 +2,151 @@
 
 ### Requirement: Test name directory format
 
-The system SHALL use a hash-prefixed directory name scheme for all corpus and artifact paths keyed by test name. The `sanitizeTestName(name)` function SHALL produce a directory name in the format `{hash}-{slug}` where:
+The system SHALL use a Nix-style base32 hash directory name scheme for all corpus and artifact paths keyed by test identity. The `hashTestPath(relativeTestFilePath, testName)` function SHALL produce a directory name in the format `{nix32hash}-{slug}` where:
 
-- `{hash}` is the first 8 characters of the SHA-256 hex digest of the original unsanitized test name. This guarantees uniqueness - distinct test names always produce distinct directory names.
-- `{slug}` is a lossy human-readable hint derived from the original name: non-`[a-zA-Z0-9\-_.]` characters replaced with `_`, consecutive underscores collapsed, leading/trailing underscores stripped. The slug is never used for uniqueness; it exists only so humans can identify the test from a directory listing.
+- `{nix32hash}` is the 32-character Nix base32 encoding of the XOR-folded (160-bit) SHA-256 digest of `<relativeTestFilePath>::<testName>`. The hash input includes the test file path to prevent collisions between same-named tests in different files without requiring directory hierarchy namespacing.
+- `{slug}` is a lossy human-readable hint derived from the test name only: non-`[a-zA-Z0-9\-_.]` characters replaced with `_`, consecutive underscores collapsed, leading/trailing underscores stripped. The slug is never used for uniqueness; it exists only so humans can identify the test from a directory listing.
 
 If the slug is empty after sanitization, only the hash SHALL be used (no trailing dash).
 
-#### Scenario: Simple test name
+The previous `sanitizeTestName(name)` function (which used an 8-char truncated SHA-256 hex prefix of the test name only) SHALL be replaced by `hashTestPath`.
 
-- **WHEN** `sanitizeTestName("parse-url")` is called
-- **THEN** the result is `"{hash}-parse-url"` where `{hash}` is the first 8 hex chars of SHA-256 of `"parse-url"`
+#### Scenario: Standard test name
+
+- **WHEN** `hashTestPath("src/parser.fuzz.ts", "parse-url")` is called
+- **THEN** the result matches `^[0-9a-df-np-sv-z]{32}-parse-url$`
+- **AND** the hash is the Nix base32 encoding of the XOR-folded SHA-256 of `"src/parser.fuzz.ts::parse-url"`
 
 #### Scenario: Test name with special characters
 
-- **WHEN** `sanitizeTestName("parse url")` is called
-- **THEN** the result is `"{hash}-parse_url"` where `{hash}` differs from the hash of `"parse-url"`
+- **WHEN** `hashTestPath("src/parser.fuzz.ts", "parse url")` is called
+- **THEN** the result matches `^[0-9a-df-np-sv-z]{32}-parse_url$`
 
 #### Scenario: Names that previously collided are now distinct
 
-- **WHEN** `sanitizeTestName("parse url")` and `sanitizeTestName("parse:url")` are called
+- **WHEN** `hashTestPath("src/a.fuzz.ts", "parse")` and `hashTestPath("src/b.fuzz.ts", "parse")` are called
 - **THEN** both produce different directory names (different hash prefixes)
-- **AND** both have the slug `parse_url` as a human hint
+- **AND** both have the slug `parse` as a human hint
 
 #### Scenario: Empty or degenerate names
 
-- **WHEN** `sanitizeTestName("")` or `sanitizeTestName("...")` is called
-- **THEN** the result is a valid directory name consisting of the hash only (no slug portion)
+- **WHEN** `hashTestPath("test.fuzz.ts", "")` or `hashTestPath("test.fuzz.ts", "...")` is called
+- **THEN** the result is a valid directory name consisting of the 32-char hash only (no slug portion)
 
 ### Requirement: Dictionary file path resolution
 
-The system SHALL provide a function to resolve the dictionary file path for a fuzz test. The dictionary file SHALL be located at `testdata/fuzz/{sanitizedTestName}.dict` relative to the test file's directory, where `{sanitizedTestName}` uses the same hash-prefixed format as seed corpus directories.
+The system SHALL discover dictionary files for a fuzz test by scanning the test's testdata directory (`<root>/testdata/<hashdir>/`) for any file matching `*.dict` or named `dictionary`. Files inside subdirectories (`seeds/`, `crashes/`, `timeouts/`) SHALL NOT be considered.
 
-This file is a sibling to the seed corpus directory (`testdata/fuzz/{sanitizedTestName}/`). It is NOT a file within the seed corpus directory - seed corpus loading SHALL NOT read `.dict` files as seed inputs.
+The previous `getDictionaryPath()` function (which looked for a single `{sanitizedTestName}.dict` file as a sibling of the seed directory) SHALL be replaced by the new convention-based discovery.
 
-The function SHALL return the path if the file exists, or `undefined` if it does not. No error SHALL be raised for a missing dictionary file.
+When multiple dictionary files are found, their contents SHALL be concatenated.
 
-#### Scenario: Dictionary file exists
+#### Scenario: Single dict file discovered
 
-- **WHEN** `getDictionaryPath(testDir, "parse-json")` is called
-- **AND** the file `{testDir}/testdata/fuzz/{sanitizedName}.dict` exists
-- **THEN** the absolute path to the dictionary file SHALL be returned
+- **WHEN** `.vitiate/testdata/<hashdir>/json.dict` exists
+- **THEN** the dictionary path SHALL resolve to that file
 
-#### Scenario: Dictionary file does not exist
+#### Scenario: Multiple dict files concatenated
 
-- **WHEN** `getDictionaryPath(testDir, "parse-json")` is called
-- **AND** no file exists at `{testDir}/testdata/fuzz/{sanitizedName}.dict`
-- **THEN** `undefined` SHALL be returned
+- **WHEN** `.vitiate/testdata/<hashdir>/` contains `tokens.dict` and `keywords.dict`
+- **THEN** both files SHALL be discovered and concatenated
+
+#### Scenario: File named "dictionary" discovered
+
+- **WHEN** `.vitiate/testdata/<hashdir>/dictionary` exists (no extension)
+- **THEN** it SHALL be discovered as a dictionary file
+
+#### Scenario: No dictionary files
+
+- **WHEN** `.vitiate/testdata/<hashdir>/` contains no `*.dict` files and no `dictionary` file
+- **THEN** no dictionary SHALL be loaded (no error raised)
 
 #### Scenario: Dictionary file is not loaded as seed corpus
 
-- **WHEN** `loadSeedCorpus(testDir, "parse-json")` is called
-- **AND** `testdata/fuzz/{sanitizedName}.dict` exists as a sibling file (not inside the corpus directory)
-- **THEN** the `.dict` file SHALL NOT be included in the returned seed corpus entries
+- **WHEN** `loadTestDataCorpus` is called
+- **AND** `.vitiate/testdata/<hashdir>/json.dict` exists at the top level
+- **THEN** the `.dict` file SHALL NOT be included in the returned seed entries (seeds are loaded from the `seeds/` subdirectory only)
 
 ### Requirement: Seed corpus loading
 
-The system SHALL provide a function to load seed corpus entries from `testdata/fuzz/{sanitizedTestName}/` relative to the test file's directory, where `{sanitizedTestName}` uses the hash-prefixed format. Each file in the directory SHALL be read as a raw binary `Buffer`. Files with a `crash-` prefix SHALL be included (they are regression test cases from previous crashes).
+The system SHALL load seed corpus entries from `<root>/testdata/<hashdir>/seeds/` relative to the global test data root, where `<hashdir>` is produced by `hashTestPath(relativeTestFilePath, testName)`. Each regular file in the directory SHALL be read as a raw binary `Buffer`. Hidden files (starting with `.`) SHALL be excluded.
+
+The previous location (`testdata/fuzz/{sanitizedTestName}/` relative to the test file's directory) SHALL no longer be used.
 
 #### Scenario: Load existing seed corpus
 
-- **WHEN** `testdata/fuzz/e7f3a1b2-parse_url/` contains files `seed1`, `seed2`, and `crash-abc123`
-- **THEN** three `Buffer` values are returned, one for each file's contents
+- **WHEN** `.vitiate/testdata/<hashdir>/seeds/` contains files `seed1` and `seed2`
+- **THEN** two `Buffer` values are returned, one for each file's contents
 
-#### Scenario: Corpus directory does not exist
+#### Scenario: Seeds directory does not exist
 
-- **WHEN** `testdata/fuzz/e7f3a1b2-parse_url/` does not exist
+- **WHEN** `.vitiate/testdata/<hashdir>/seeds/` does not exist
 - **THEN** an empty array is returned (no error thrown)
 
-#### Scenario: Corpus directory is empty
+#### Scenario: Seeds directory is empty
 
-- **WHEN** `testdata/fuzz/e7f3a1b2-parse_url/` exists but contains no files
+- **WHEN** `.vitiate/testdata/<hashdir>/seeds/` exists but contains no files
+- **THEN** an empty array is returned
+
+### Requirement: Load testdata corpus for regression and seeding
+
+The system SHALL provide a function to load all testdata entries for a fuzz test by reading from three subdirectories under `<root>/testdata/<hashdir>/`:
+
+1. `seeds/` - user-provided seed inputs
+2. `crashes/` - crash artifact files
+3. `timeouts/` - timeout artifact files
+
+Each regular file in each subdirectory SHALL be read as a raw binary `Buffer`. Hidden files (starting with `.`) SHALL be excluded. Missing subdirectories SHALL be silently skipped (no error). The combined result SHALL be returned as a single array.
+
+This replaces the previous `loadTestDataCorpus` which read from a single flat directory. The new function is used both for seeding the fuzz loop and for regression mode replay.
+
+#### Scenario: Load from all three subdirectories
+
+- **WHEN** `seeds/` contains `input1`, `crashes/` contains `crash-abc`, and `timeouts/` contains `timeout-def`
+- **THEN** three `Buffer` values are returned
+
+#### Scenario: Only seeds exist
+
+- **WHEN** `seeds/` contains files but `crashes/` and `timeouts/` do not exist
+- **THEN** only the seed files are returned (no error for missing subdirectories)
+
+#### Scenario: No testdata exists
+
+- **WHEN** none of the three subdirectories exist
 - **THEN** an empty array is returned
 
 ### Requirement: Cached corpus loading
 
-The system SHALL provide a function to load cached corpus entries from the cache directory. The cache directory SHALL be resolved using the following precedence:
+The system SHALL load cached corpus entries from `<root>/corpus/<hashdir>/` relative to the global test data root. The cache directory path no longer includes the relative test file path as a parent directory component - the file path is encoded in the hash.
 
-1. The resolved cache dir from `getResolvedCacheDir()` (set by the plugin's `cacheDir` option), if set.
-2. `.vitiate-corpus/` resolved relative to the project root from `getProjectRoot()` (set by the plugin, defaults to `process.cwd()`).
-
-Cached entries SHALL be stored at `{cacheDir}/{relativeFilePath}/{sanitizedTestName}/{hash}`, where `relativeFilePath` is the test file's path relative to the project root (or `process.cwd()` if the plugin has not run), and `{sanitizedTestName}` uses the hash-prefixed format. This file-qualified path prevents collisions between tests with the same `fuzz()` name in different files.
-
-The `loadCachedCorpus` function SHALL accept `testFilePath` (the test file's path relative to the project root) and `testName` as parameters.
+The `loadCachedCorpus` function signature SHALL change to accept `(testFilePath: string, testName: string)` without a separate `cacheDir` parameter - the data root is resolved internally.
 
 #### Scenario: Load cached corpus
 
-- **WHEN** `.vitiate-corpus/test/parsers/url.fuzz.ts/e7f3a1b2-parse_url/` contains files `a1b2c3d4` and `e5f6g7h8`
+- **WHEN** `.vitiate/corpus/<hashdir>/` contains files `a1b2c3d4` and `e5f6g7h8`
 - **THEN** two `Buffer` values are returned
-
-#### Scenario: Custom cache directory via plugin option
-
-- **WHEN** `vitiatePlugin({ cacheDir: "/tmp/fuzz-cache" })` is configured
-- **THEN** cached entries are loaded from `/tmp/fuzz-cache/test/parsers/url.fuzz.ts/e7f3a1b2-parse_url/`
 
 #### Scenario: Cache directory does not exist
 
-- **WHEN** the cache directory for a test does not exist
+- **WHEN** the corpus directory for a test does not exist
 - **THEN** an empty array is returned (no error thrown)
-
-#### Scenario: Cache dir resolves to project root when plugin is active
-
-- **WHEN** the plugin has set the project root to `/home/user/project`
-- **AND** no `cacheDir` option is provided
-- **THEN** the cache directory is `/home/user/project/.vitiate-corpus`
-
-#### Scenario: Fallback to cwd when no plugin is active
-
-- **WHEN** the plugin has not run (project root not set)
-- **AND** no cache dir is set
-- **THEN** the cache directory is `path.resolve(".vitiate-corpus")` (relative to cwd)
 
 #### Scenario: Same test name in different files does not collide
 
-- **WHEN** `test/parsers/url.fuzz.ts` has `fuzz("parse", ...)`
-- **AND** `test/parsers/json.fuzz.ts` has `fuzz("parse", ...)`
-- **THEN** cached corpus for the first is at `{cacheDir}/test/parsers/url.fuzz.ts/{hash}-parse/`
-- **AND** cached corpus for the second is at `{cacheDir}/test/parsers/json.fuzz.ts/{hash}-parse/`
-- **AND** both have the same `{hash}` (same test name) but different file path prefixes
-- **AND** no entries are shared between the two
+- **WHEN** `src/a.fuzz.ts` has `fuzz("parse", ...)`
+- **AND** `src/b.fuzz.ts` has `fuzz("parse", ...)`
+- **THEN** cached corpus for the first is at `.vitiate/corpus/<hashA>-parse/`
+- **AND** cached corpus for the second is at `.vitiate/corpus/<hashB>-parse/`
+- **AND** `<hashA>` and `<hashB>` are different (file path is part of hash input)
 
 ### Requirement: Write cached corpus entry
 
-The system SHALL provide a function to write an interesting input to the cached corpus directory. The file name SHALL be the full SHA-256 hex digest of the input data. If a file with the same hash already exists, it SHALL NOT be overwritten (idempotent).
-
-The cached corpus path SHALL be `{cacheDir}/{relativeFilePath}/{sanitizedTestName}/{hash}`, matching the loading path structure.
+The system SHALL write cached corpus entries to `<root>/corpus/<hashdir>/<contenthash>`. The function signature SHALL change to accept `(testFilePath: string, testName: string, data: Buffer)` without a separate `cacheDir` parameter.
 
 #### Scenario: Write new interesting input
 
-- **WHEN** an interesting input `Buffer` is written for test "parse" in file `test/parsers/url.fuzz.ts`
-- **THEN** a file is created at `.vitiate-corpus/test/parsers/url.fuzz.ts/{nameHash}-parse/{contentHash}` with the buffer contents
-- **AND** the file path is returned
+- **WHEN** an interesting input is written for test `"parse"` in `src/a.fuzz.ts`
+- **THEN** a file is created at `.vitiate/corpus/<hashdir>/<contenthash>`
 
 #### Scenario: Duplicate input is not re-written
 
@@ -146,25 +160,31 @@ The cached corpus path SHALL be `{cacheDir}/{relativeFilePath}/{sanitizedTestNam
 
 ### Requirement: Write crash artifact
 
-The system SHALL provide a function to write a crash-triggering input to the seed corpus directory as a permanent regression test case. The file name SHALL be `crash-{hash}` where `{hash}` is the full SHA-256 hex digest of the input data.
-
-Crash artifacts SHALL be written to `testdata/fuzz/{sanitizedTestName}/` relative to the test file's directory, where `{sanitizedTestName}` uses the hash-prefixed format. The directory SHALL be created if it does not exist.
+The system SHALL write crash artifacts to `<root>/testdata/<hashdir>/crashes/crash-<contenthash>`. The function SHALL resolve the data root internally rather than accepting `testDir` as a parameter.
 
 #### Scenario: Write crash artifact
 
-- **WHEN** a crash input is written for test "parse" in test file at `/project/tests/parser.fuzz.ts`
-- **THEN** a file is created at `/project/tests/testdata/fuzz/{nameHash}-parse/crash-{contentHash}`
-- **AND** the file path is returned
+- **WHEN** a crash input is written for test `"parse"` in `src/a.fuzz.ts`
+- **THEN** a file is created at `.vitiate/testdata/<hashdir>/crashes/crash-<contenthash>`
 
-#### Scenario: Crash artifact directory created on demand
+#### Scenario: Crash directory created on demand
 
-- **WHEN** `testdata/fuzz/{nameHash}-parse/` does not exist and a crash is written
-- **THEN** the directory is created recursively before writing the file
+- **WHEN** `.vitiate/testdata/<hashdir>/crashes/` does not exist
+- **THEN** the directory is created recursively before writing
 
 #### Scenario: Duplicate crash is not re-written
 
 - **WHEN** the same crash input is written twice
 - **THEN** only one file exists (the second write is a no-op)
+
+### Requirement: Write timeout artifact
+
+The system SHALL write timeout artifacts to `<root>/testdata/<hashdir>/timeouts/timeout-<contenthash>`. The behavior SHALL match crash artifact writing but in the `timeouts/` subdirectory.
+
+#### Scenario: Write timeout artifact
+
+- **WHEN** a timeout input is written for test `"parse"` in `src/a.fuzz.ts`
+- **THEN** a file is created at `.vitiate/testdata/<hashdir>/timeouts/timeout-<contenthash>`
 
 ### Requirement: Write corpus entry to flat directory
 
@@ -219,16 +239,12 @@ This function is used by the CLI fuzz loop and supervisor when `-artifact_prefix
 
 ### Requirement: Load cached corpus with paths
 
-The system SHALL provide a `loadCachedCorpusWithPaths()` function that loads cached corpus entries and returns an array of `{ path: string; data: Buffer }` tuples. The function SHALL accept the same parameters as `loadCachedCorpus()` (`cacheDir`, `testFilePath`, `testName`) and read from the same directory structure.
-
-This function is used by optimize mode to identify which files to delete after set cover.
+The `loadCachedCorpusWithPaths()` function SHALL return `{ path: string; data: Buffer }` tuples from `<root>/corpus/<hashdir>/`. The function signature SHALL change to accept `(testFilePath: string, testName: string)` without a separate `cacheDir` parameter.
 
 #### Scenario: Load cached corpus with paths
 
-- **WHEN** `.vitiate-corpus/test/url.fuzz.ts/e7f3a1b2-parse_url/` contains files `a1b2c3d4` and `e5f6g7h8`
-- **THEN** two `{ path, data }` tuples are returned
-- **AND** each `path` is the absolute path to the file
-- **AND** each `data` is the file's contents as a Buffer
+- **WHEN** `.vitiate/corpus/<hashdir>/` contains files `a1b2c3d4` and `e5f6g7h8`
+- **THEN** two `{ path, data }` tuples are returned with absolute paths
 
 #### Scenario: Cache directory does not exist
 

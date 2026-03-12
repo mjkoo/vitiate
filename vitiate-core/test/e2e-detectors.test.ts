@@ -29,28 +29,35 @@ import { spawn } from "node:child_process";
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { hashTestPath } from "../src/nix-base32.js";
 
 const EXAMPLE_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../examples/detectors",
 );
 
-const ARTIFACT_DIR = path.join(
-  EXAMPLE_DIR,
-  "test",
-  "testdata",
-  "fuzz",
-  "a546d302-detect-vulnerabilities",
+const HASH_DIR = hashTestPath(
+  "test/detectors.fuzz.ts",
+  "detect-vulnerabilities",
 );
 
-const CORPUS_CACHE_DIR = path.join(EXAMPLE_DIR, ".vitiate-corpus");
+const DATA_DIR = path.join(EXAMPLE_DIR, ".vitiate");
+
+const TESTDATA_DIR = path.join(DATA_DIR, "testdata", HASH_DIR);
 
 /** Find crash/timeout artifacts written by the fuzz run. */
-function findArtifacts(artifactDir: string): string[] {
-  if (!existsSync(artifactDir)) return [];
-  return readdirSync(artifactDir)
-    .filter((f) => f.startsWith("crash-") || f.startsWith("timeout-"))
-    .map((f) => path.join(artifactDir, f));
+function findArtifacts(testdataDir: string): string[] {
+  const results: string[] = [];
+  for (const subdir of ["crashes", "timeouts"]) {
+    const dir = path.join(testdataDir, subdir);
+    if (!existsSync(dir)) continue;
+    for (const f of readdirSync(dir)) {
+      if (f.startsWith("crash-") || f.startsWith("timeout-")) {
+        results.push(path.join(dir, f));
+      }
+    }
+  }
+  return results;
 }
 
 interface SubprocessResult {
@@ -84,11 +91,16 @@ function runVitest(
   });
 }
 
-afterAll(() => {
-  for (const artifact of findArtifacts(ARTIFACT_DIR)) {
+/** Remove only generated artifacts (crashes, timeouts) and corpus cache. */
+function cleanGeneratedArtifacts(): void {
+  for (const artifact of findArtifacts(TESTDATA_DIR)) {
     rmSync(artifact, { force: true });
   }
-  rmSync(CORPUS_CACHE_DIR, { recursive: true, force: true });
+  rmSync(path.join(DATA_DIR, "corpus"), { recursive: true, force: true });
+}
+
+afterAll(() => {
+  cleanGeneratedArtifacts();
 });
 
 /** Log subprocess output to stderr for diagnostic visibility. */
@@ -121,10 +133,7 @@ describe("detector pipeline: fuzz mode", () => {
   // seed that triggers a detector produces a crash on the first iteration.
   // With stopOnCrash: true, the fuzz run exits immediately after one crash.
   beforeAll(async () => {
-    rmSync(CORPUS_CACHE_DIR, { recursive: true, force: true });
-    for (const artifact of findArtifacts(ARTIFACT_DIR)) {
-      rmSync(artifact, { force: true });
-    }
+    cleanGeneratedArtifacts();
 
     result = await runVitest(
       "vitest.fuzz.config.ts",
@@ -139,9 +148,9 @@ describe("detector pipeline: fuzz mode", () => {
   });
 
   it("produces a crash artifact", () => {
-    if (findArtifacts(ARTIFACT_DIR).length !== 1)
+    if (findArtifacts(TESTDATA_DIR).length !== 1)
       dumpOutput("fuzz", result.output);
-    const artifacts = findArtifacts(ARTIFACT_DIR);
+    const artifacts = findArtifacts(TESTDATA_DIR);
     expect(artifacts.length).toBe(1);
   });
 });

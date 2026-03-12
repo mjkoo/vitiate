@@ -1,16 +1,24 @@
 /**
- * Standalone CLI: npx vitiate <test-file> [corpus_dirs...] [flags]
+ * Standalone CLI: npx vitiate <subcommand> [args...]
  *
- * Operates in two modes:
- * - **Parent mode** (default): Allocates shmem, spawns itself as a child with
- *   `VITIATE_SUPERVISOR` set, and enters a wait loop. On native crash, reads
- *   the crashing input from shmem, writes a crash artifact, and respawns.
- * - **Child mode** (`VITIATE_SUPERVISOR` set): Attaches to shmem, starts Vitest
- *   in fuzzing mode, and runs the fuzz loop.
+ * Subcommands:
+ * - **init**: Discover fuzz tests, create seed directories, manage .gitignore.
+ * - **fuzz**: Set VITIATE_FUZZ=1, spawn vitest run with *.fuzz.ts filter.
+ * - **regression**: Spawn vitest run with *.fuzz.ts filter (no special env vars).
+ * - **optimize**: Set VITIATE_OPTIMIZE=1, spawn vitest run with *.fuzz.ts filter.
+ * - **libfuzzer**: All existing CLI behavior (parent/child supervisor, shmem, libFuzzer flags).
  */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, realpathSync, unlinkSync } from "node:fs";
+import {
+  existsSync,
+  realpathSync,
+  readFileSync,
+  writeFileSync,
+  appendFileSync,
+  mkdirSync,
+  unlinkSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,9 +39,13 @@ import {
   getCliIpc,
   setCliIpc,
   warnUnknownVitiateEnvVars,
+  getProjectRoot,
+  resolveVitestCli,
   type FuzzOptions,
 } from "./config.js";
 import { KNOWN_DETECTOR_KEYS } from "./detectors/index.js";
+import { hashTestPath } from "./nix-base32.js";
+import { getTestDataDir } from "./corpus.js";
 
 export interface CliArgs {
   testFile: string;
@@ -184,8 +196,8 @@ function warnUnsupportedFlags(parsed: InferValue<typeof cliParser>): void {
  * and makes the flag self-contained: you get exactly what you list.
  *
  * Syntax: comma-separated directives:
- * - `name` → enable
- * - `name.key=value` → enable with option
+ * - `name` -> enable
+ * - `name.key=value` -> enable with option
  */
 export function parseDetectorsFlag(spec: string): FuzzOptions["detectors"] {
   // Start with all detectors disabled - the flag overrides all defaults.
@@ -330,7 +342,10 @@ async function runParentMode(
   artifactPrefix?: string,
 ): Promise<void> {
   const shmem = ShmemHandle.allocate(maxInputLen);
-  const testDir = path.dirname(path.resolve(testFile));
+  const relativeTestFilePath = path.relative(
+    getProjectRoot(),
+    path.resolve(testFile),
+  );
 
   // When -test is provided, use it as the test name for artifact paths.
   // Otherwise, fall back to deriving from the filename (correct for the
@@ -343,7 +358,7 @@ async function runParentMode(
 
   const result = await runSupervisor({
     shmem,
-    testDir,
+    relativeTestFilePath,
     testName: resolvedTestName,
     artifactPrefix: resolvedArtifactPrefix,
     spawnChild: () =>
@@ -386,7 +401,10 @@ async function runMergeParentMode(
 
   const result = await runSupervisor({
     shmem,
-    testDir: path.dirname(path.resolve(testFile)),
+    relativeTestFilePath: path.relative(
+      getProjectRoot(),
+      path.resolve(testFile),
+    ),
     testName: testName ?? path.basename(testFile, path.extname(testFile)),
     spawnChild: () =>
       spawn(process.execPath, process.argv.slice(1), {
@@ -509,7 +527,10 @@ async function runChildMode(
   }
 }
 
-export async function main(): Promise<void> {
+/**
+ * libfuzzer subcommand handler: all existing CLI behavior.
+ */
+async function runLibfuzzerSubcommand(): Promise<void> {
   const {
     testFile,
     corpusDirs,
@@ -521,8 +542,8 @@ export async function main(): Promise<void> {
     forkExplicit,
   } = toCliArgs(
     runSync(cliParser, {
-      programName: "vitiate",
-      brief: [text("Coverage-guided JavaScript fuzzer")],
+      programName: "vitiate libfuzzer",
+      brief: [text("Coverage-guided JavaScript fuzzer (libFuzzer-compatible)")],
       description: [
         text(
           "Instruments JS/TS source with edge coverage counters via SWC and " +
@@ -564,6 +585,179 @@ export async function main(): Promise<void> {
     // Parent mode: allocate shmem, spawn child, supervise
     const maxInputLen = fuzzOptions.maxLen ?? DEFAULT_MAX_INPUT_LEN;
     await runParentMode(testFile, maxInputLen, testName, artifactPrefix);
+  }
+}
+
+/**
+ * Spawn vitest with the given env vars and forwarded args.
+ * Used by the fuzz, regression, and optimize subcommands.
+ */
+function spawnVitestWrapper(env: Record<string, string>): void {
+  let vitestCli: string;
+  try {
+    vitestCli = resolveVitestCli();
+  } catch {
+    process.stderr.write(
+      "vitiate: error: vitest is required but not installed. Run `npm install -D vitest` first.\n",
+    );
+    process.exitCode = 1;
+    return;
+  }
+  const forwardedArgs = process.argv.slice(3); // args after the subcommand
+  const args = [vitestCli, "run", ".fuzz.ts", ...forwardedArgs];
+
+  const result = spawnSync(process.execPath, args, {
+    env: { ...process.env, ...env },
+    stdio: "inherit",
+  });
+
+  process.exitCode = result.status ?? 1;
+}
+
+/**
+ * init subcommand: discover fuzz tests, create seed directories, manage .gitignore.
+ */
+async function runInitSubcommand(): Promise<void> {
+  let createVitest: (typeof import("vitest/node"))["createVitest"];
+  try {
+    ({ createVitest } = await import("vitest/node"));
+  } catch {
+    process.stderr.write(
+      "vitiate: error: vitest is required but not installed. Run `npm install -D vitest` first.\n",
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  const vitest = await createVitest(
+    "test",
+    {
+      include: ["**/*.fuzz.ts"],
+    },
+    {
+      plugins: [vitiatePlugin({ instrument: {} })],
+    },
+  );
+
+  try {
+    const specs = await vitest.globTestSpecifications();
+    if (specs.length === 0) {
+      process.stdout.write("No *.fuzz.ts test files found.\n");
+      return;
+    }
+
+    // Collect test specifications to discover test names
+    await vitest.collectTests(specs);
+
+    const projectRoot = getProjectRoot();
+    const tests: {
+      file: string;
+      name: string;
+      hashDir: string;
+      seedPath: string;
+    }[] = [];
+
+    for (const module of vitest.state.getTestModules()) {
+      const relativeFile = path.relative(projectRoot, module.moduleId);
+
+      for (const testCase of module.children.allTests()) {
+        const testName = testCase.fullName;
+        const hashDir = hashTestPath(relativeFile, testName);
+        const testDataDir = getTestDataDir(relativeFile, testName);
+        const seedPath = path.join(testDataDir, "seeds");
+        tests.push({ file: relativeFile, name: testName, hashDir, seedPath });
+        mkdirSync(seedPath, { recursive: true });
+      }
+    }
+
+    if (tests.length === 0) {
+      process.stdout.write("No fuzz() tests found in *.fuzz.ts files.\n");
+      return;
+    }
+
+    // Manage .gitignore
+    const gitignorePath = path.join(projectRoot, ".gitignore");
+    const gitignoreEntry = ".vitiate/corpus/";
+    if (existsSync(gitignorePath)) {
+      const content = readFileSync(gitignorePath, "utf-8");
+      if (!content.split("\n").some((line) => line.trim() === gitignoreEntry)) {
+        appendFileSync(gitignorePath, `\n${gitignoreEntry}\n`);
+      }
+    } else {
+      writeFileSync(gitignorePath, `${gitignoreEntry}\n`);
+    }
+
+    // Print manifest
+    process.stdout.write("\nDiscovered fuzz tests:\n\n");
+    const fileWidth = Math.max(4, ...tests.map((t) => t.file.length));
+    const nameWidth = Math.max(4, ...tests.map((t) => t.name.length));
+    process.stdout.write(
+      `${"File".padEnd(fileWidth)}  ${"Test".padEnd(nameWidth)}  Hash Directory\n`,
+    );
+    process.stdout.write(
+      `${"-".repeat(fileWidth)}  ${"-".repeat(nameWidth)}  ${"-".repeat(32)}\n`,
+    );
+    for (const t of tests) {
+      process.stdout.write(
+        `${t.file.padEnd(fileWidth)}  ${t.name.padEnd(nameWidth)}  ${t.hashDir}\n`,
+      );
+    }
+    process.stdout.write(
+      `\n${tests.length} test(s) found. Seed directories created.\n`,
+    );
+  } finally {
+    await vitest.close();
+  }
+}
+
+const SUBCOMMANDS: Record<string, string> = {
+  init: "Discover fuzz tests and create seed directories",
+  fuzz: "Run fuzz tests (sets VITIATE_FUZZ=1)",
+  regression: "Run regression tests against saved corpus",
+  optimize: "Minimize cached corpus via set cover (sets VITIATE_OPTIMIZE=1)",
+  libfuzzer: "Run in libFuzzer-compatible mode",
+};
+
+function printUsage(exitCode: number): void {
+  process.stderr.write("Usage: vitiate <subcommand> [args...]\n\n");
+  process.stderr.write("Subcommands:\n");
+  for (const [name, description] of Object.entries(SUBCOMMANDS)) {
+    process.stderr.write(`  ${name.padEnd(12)} ${description}\n`);
+  }
+  process.stderr.write("\n");
+  process.exitCode = exitCode;
+}
+
+export async function main(): Promise<void> {
+  const subcommand = process.argv[2];
+
+  if (!subcommand) {
+    printUsage(0);
+    return;
+  }
+
+  switch (subcommand) {
+    case "init":
+      await runInitSubcommand();
+      return;
+    case "fuzz":
+      spawnVitestWrapper({ VITIATE_FUZZ: "1" });
+      return;
+    case "regression":
+      spawnVitestWrapper({});
+      return;
+    case "optimize":
+      spawnVitestWrapper({ VITIATE_OPTIMIZE: "1" });
+      return;
+    case "libfuzzer":
+      // Shift argv so @optique sees args after "libfuzzer"
+      process.argv.splice(2, 1);
+      await runLibfuzzerSubcommand();
+      return;
+    default:
+      process.stderr.write(`Unknown subcommand: ${subcommand}\n\n`);
+      printUsage(1);
+      return;
   }
 }
 

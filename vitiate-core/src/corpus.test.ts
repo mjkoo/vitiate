@@ -11,7 +11,6 @@ import {
 import path from "node:path";
 import { tmpdir } from "node:os";
 import {
-  loadSeedCorpus,
   loadCachedCorpus,
   loadCachedCorpusWithPaths,
   loadCorpusDirsWithPaths,
@@ -21,17 +20,20 @@ import {
   writeArtifact,
   writeArtifactWithPrefix,
   replaceArtifact,
-  sanitizeTestName,
-  getCacheDir,
   loadCorpusFromDirs,
-  getDictionaryPath,
+  discoverDictionaries,
+  loadTestDataCorpus,
+  getTestDataDir,
+  getCorpusDir,
 } from "./corpus.js";
 import {
   setProjectRoot,
   resetProjectRoot,
-  setCacheDir,
-  resetCacheDir,
+  setDataDir,
+  resetDataDir,
+  getDataDir,
 } from "./config.js";
+import { hashTestPath } from "./nix-base32.js";
 
 describe("corpus", () => {
   let tmpDir: string;
@@ -42,49 +44,51 @@ describe("corpus", () => {
       `vitiate-corpus-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     );
     mkdirSync(tmpDir, { recursive: true });
+    setDataDir(tmpDir);
   });
 
   afterEach(() => {
+    resetDataDir();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  describe("loadSeedCorpus", () => {
+  describe("loadTestDataCorpus with seeds only", () => {
     it("returns empty array when directory does not exist", () => {
-      const result = loadSeedCorpus(tmpDir, "nonexistent");
+      const result = loadTestDataCorpus("test.fuzz.ts", "nonexistent");
       expect(result).toEqual([]);
     });
 
-    it("returns empty array when directory is empty", () => {
-      const dirName = sanitizeTestName("empty");
-      const dir = path.join(tmpDir, "testdata", "fuzz", dirName);
+    it("returns empty array when seeds directory is empty", () => {
+      const hashDir = hashTestPath("test.fuzz.ts", "empty");
+      const dir = path.join(tmpDir, "testdata", hashDir, "seeds");
       mkdirSync(dir, { recursive: true });
-      const result = loadSeedCorpus(tmpDir, "empty");
+      const result = loadTestDataCorpus("test.fuzz.ts", "empty");
       expect(result).toEqual([]);
     });
 
-    it("loads all files from seed corpus directory", () => {
-      const dirName = sanitizeTestName("parse");
-      const dir = path.join(tmpDir, "testdata", "fuzz", dirName);
+    it("loads all files from seeds subdirectory", () => {
+      const hashDir = hashTestPath("test.fuzz.ts", "parse");
+      const dir = path.join(tmpDir, "testdata", hashDir, "seeds");
       mkdirSync(dir, { recursive: true });
       writeFileSync(path.join(dir, "seed1"), "hello");
       writeFileSync(path.join(dir, "seed2"), "world");
-      writeFileSync(path.join(dir, "crash-abc123"), "crash input");
+      writeFileSync(path.join(dir, "seed3"), "extra");
 
-      const result = loadSeedCorpus(tmpDir, "parse");
+      const result = loadTestDataCorpus("test.fuzz.ts", "parse");
       expect(result).toHaveLength(3);
       const contents = result.map((b) => b.toString()).sort();
-      expect(contents).toEqual(["crash input", "hello", "world"]);
+      expect(contents).toEqual(["extra", "hello", "world"]);
     });
 
-    it("skips subdirectories in seed corpus", () => {
-      const dirName = sanitizeTestName("withsubdir");
-      const dir = path.join(tmpDir, "testdata", "fuzz", dirName);
+    it("skips nested subdirectories within seeds", () => {
+      const hashDir = hashTestPath("test.fuzz.ts", "withsubdir");
+      const dir = path.join(tmpDir, "testdata", hashDir, "seeds");
       mkdirSync(dir, { recursive: true });
       writeFileSync(path.join(dir, "seed1"), "hello");
       mkdirSync(path.join(dir, "subdir"), { recursive: true });
       writeFileSync(path.join(dir, "subdir", "nested"), "should be ignored");
 
-      const result = loadSeedCorpus(tmpDir, "withsubdir");
+      const result = loadTestDataCorpus("test.fuzz.ts", "withsubdir");
       expect(result).toHaveLength(1);
       expect(result[0]!.toString()).toBe("hello");
     });
@@ -92,30 +96,30 @@ describe("corpus", () => {
 
   describe("loadCachedCorpus", () => {
     it("returns empty array when directory does not exist", () => {
-      const result = loadCachedCorpus(tmpDir, "test.fuzz.ts", "nonexistent");
+      const result = loadCachedCorpus("test.fuzz.ts", "nonexistent");
       expect(result).toEqual([]);
     });
 
     it("loads all files from cached corpus directory", () => {
-      const dirName = sanitizeTestName("parse");
-      const dir = path.join(tmpDir, "test.fuzz.ts", dirName);
+      const hashDir = hashTestPath("test.fuzz.ts", "parse");
+      const dir = path.join(tmpDir, "corpus", hashDir);
       mkdirSync(dir, { recursive: true });
       writeFileSync(path.join(dir, "a1b2c3d4"), "data1");
       writeFileSync(path.join(dir, "e5f6g7h8"), "data2");
 
-      const result = loadCachedCorpus(tmpDir, "test.fuzz.ts", "parse");
+      const result = loadCachedCorpus("test.fuzz.ts", "parse");
       expect(result).toHaveLength(2);
     });
 
     it("skips subdirectories in cached corpus", () => {
-      const dirName = sanitizeTestName("withsubdir");
-      const dir = path.join(tmpDir, "test.fuzz.ts", dirName);
+      const hashDir = hashTestPath("test.fuzz.ts", "withsubdir");
+      const dir = path.join(tmpDir, "corpus", hashDir);
       mkdirSync(dir, { recursive: true });
       writeFileSync(path.join(dir, "a1b2c3d4"), "data1");
       mkdirSync(path.join(dir, "subdir"), { recursive: true });
       writeFileSync(path.join(dir, "subdir", "nested"), "should be ignored");
 
-      const result = loadCachedCorpus(tmpDir, "test.fuzz.ts", "withsubdir");
+      const result = loadCachedCorpus("test.fuzz.ts", "withsubdir");
       expect(result).toHaveLength(1);
       expect(result[0]!.toString()).toBe("data1");
     });
@@ -124,33 +128,34 @@ describe("corpus", () => {
   describe("writeCorpusEntry", () => {
     it("writes a corpus entry and returns the path", () => {
       const data = Buffer.from("interesting input");
-      const filePath = writeCorpusEntry(tmpDir, "test.fuzz.ts", "parse", data);
+      const filePath = writeCorpusEntry("test.fuzz.ts", "parse", data);
 
       expect(existsSync(filePath)).toBe(true);
       expect(readFileSync(filePath)).toEqual(data);
     });
 
     it("creates directories on demand", () => {
-      const cacheDir = path.join(tmpDir, "deeply", "nested");
+      const nestedDir = path.join(tmpDir, "deeply", "nested");
+      setDataDir(nestedDir);
       const data = Buffer.from("data");
-      const filePath = writeCorpusEntry(cacheDir, "test.fuzz.ts", "test", data);
+      const filePath = writeCorpusEntry("test.fuzz.ts", "test", data);
 
       expect(existsSync(filePath)).toBe(true);
     });
 
     it("is idempotent - duplicate writes do not overwrite", () => {
       const data = Buffer.from("same input");
-      const path1 = writeCorpusEntry(tmpDir, "test.fuzz.ts", "parse", data);
-      const path2 = writeCorpusEntry(tmpDir, "test.fuzz.ts", "parse", data);
+      const path1 = writeCorpusEntry("test.fuzz.ts", "parse", data);
+      const path2 = writeCorpusEntry("test.fuzz.ts", "parse", data);
 
       expect(path1).toBe(path2);
     });
 
     it("round-trips: write then load returns same data", () => {
       const data = Buffer.from("round trip test");
-      writeCorpusEntry(tmpDir, "test.fuzz.ts", "parse", data);
+      writeCorpusEntry("test.fuzz.ts", "parse", data);
 
-      const loaded = loadCachedCorpus(tmpDir, "test.fuzz.ts", "parse");
+      const loaded = loadCachedCorpus("test.fuzz.ts", "parse");
       expect(loaded).toHaveLength(1);
       expect(loaded[0]).toEqual(data);
     });
@@ -159,7 +164,7 @@ describe("corpus", () => {
   describe("writeArtifact", () => {
     it("writes a crash artifact with crash- prefix", () => {
       const data = Buffer.from("crash input");
-      const filePath = writeArtifact(tmpDir, "parse", data);
+      const filePath = writeArtifact("test.fuzz.ts", "parse", data);
 
       expect(path.basename(filePath)).toMatch(/^crash-[0-9a-f]{64}$/);
       expect(existsSync(filePath)).toBe(true);
@@ -167,37 +172,47 @@ describe("corpus", () => {
     });
 
     it("creates directories on demand", () => {
-      const testDir = path.join(tmpDir, "deeply", "nested");
+      const nestedDir = path.join(tmpDir, "deeply", "nested");
+      setDataDir(nestedDir);
       const data = Buffer.from("crash");
-      const filePath = writeArtifact(testDir, "test", data);
+      const filePath = writeArtifact("test.fuzz.ts", "test", data);
 
       expect(existsSync(filePath)).toBe(true);
     });
 
     it("is idempotent - duplicate writes do not overwrite", () => {
       const data = Buffer.from("same crash");
-      const path1 = writeArtifact(tmpDir, "parse", data);
-      const path2 = writeArtifact(tmpDir, "parse", data);
+      const path1 = writeArtifact("test.fuzz.ts", "parse", data);
+      const path2 = writeArtifact("test.fuzz.ts", "parse", data);
 
       expect(path1).toBe(path2);
     });
 
-    it("round-trips: crash artifact can be loaded as seed corpus", () => {
-      const data = Buffer.from("crash round trip");
-      writeArtifact(tmpDir, "parse", data);
+    it("writes crash artifact to crashes subdirectory", () => {
+      const data = Buffer.from("crash data");
+      const filePath = writeArtifact("test.fuzz.ts", "parse", data);
 
-      const loaded = loadSeedCorpus(tmpDir, "parse");
-      expect(loaded).toHaveLength(1);
-      expect(loaded[0]).toEqual(data);
+      const hashDir = hashTestPath("test.fuzz.ts", "parse");
+      const expectedDir = path.join(tmpDir, "testdata", hashDir, "crashes");
+      expect(path.dirname(filePath)).toBe(expectedDir);
     });
 
     it("writes a timeout artifact with timeout- prefix", () => {
       const data = Buffer.from("timeout input");
-      const filePath = writeArtifact(tmpDir, "parse", data, "timeout");
+      const filePath = writeArtifact("test.fuzz.ts", "parse", data, "timeout");
 
       expect(path.basename(filePath)).toMatch(/^timeout-[0-9a-f]{64}$/);
       expect(existsSync(filePath)).toBe(true);
       expect(readFileSync(filePath)).toEqual(data);
+    });
+
+    it("writes timeout artifact to timeouts subdirectory", () => {
+      const data = Buffer.from("timeout data");
+      const filePath = writeArtifact("test.fuzz.ts", "parse", data, "timeout");
+
+      const hashDir = hashTestPath("test.fuzz.ts", "parse");
+      const expectedDir = path.join(tmpDir, "testdata", hashDir, "timeouts");
+      expect(path.dirname(filePath)).toBe(expectedDir);
     });
   });
 
@@ -279,15 +294,15 @@ describe("corpus", () => {
     });
   });
 
-  describe("sanitizeTestName", () => {
+  describe("hashTestPath", () => {
     it("produces hash-slug format for simple name", () => {
-      const result = sanitizeTestName("parse-url");
-      expect(result).toMatch(/^[0-9a-f]{8}-parse-url$/);
+      const result = hashTestPath("test.fuzz.ts", "parse-url");
+      expect(result).toMatch(/^[0-9a-dfghijklmnpqrsvwxyz]{32}-parse-url$/);
     });
 
     it("produces different hashes for names that differ only in non-alphanumeric chars", () => {
-      const a = sanitizeTestName("parse url");
-      const b = sanitizeTestName("parse:url");
+      const a = hashTestPath("test.fuzz.ts", "parse url");
+      const b = hashTestPath("test.fuzz.ts", "parse:url");
       // Both have same slug but different hashes
       expect(a).toMatch(/-parse_url$/);
       expect(b).toMatch(/-parse_url$/);
@@ -295,106 +310,114 @@ describe("corpus", () => {
     });
 
     it("produces hash-only for empty string", () => {
-      const result = sanitizeTestName("");
-      expect(result).toMatch(/^[0-9a-f]{8}$/);
+      const result = hashTestPath("test.fuzz.ts", "");
+      expect(result).toMatch(/^[0-9a-dfghijklmnpqrsvwxyz]{32}$/);
     });
 
     it("produces hash-only for only special chars", () => {
-      const result = sanitizeTestName("///");
-      expect(result).toMatch(/^[0-9a-f]{8}$/);
+      const result = hashTestPath("test.fuzz.ts", "///");
+      expect(result).toMatch(/^[0-9a-dfghijklmnpqrsvwxyz]{32}$/);
     });
 
     it("produces hash-only for single dot", () => {
-      const result = sanitizeTestName(".");
-      expect(result).toMatch(/^[0-9a-f]{8}$/);
+      const result = hashTestPath("test.fuzz.ts", ".");
+      expect(result).toMatch(/^[0-9a-dfghijklmnpqrsvwxyz]{32}$/);
     });
 
     it("produces hash-only for double dot", () => {
-      const result = sanitizeTestName("..");
-      expect(result).toMatch(/^[0-9a-f]{8}$/);
+      const result = hashTestPath("test.fuzz.ts", "..");
+      expect(result).toMatch(/^[0-9a-dfghijklmnpqrsvwxyz]{32}$/);
     });
 
     it("preserves dots dashes and alphanumerics in slug", () => {
-      const result = sanitizeTestName("valid-name_1.0");
-      expect(result).toMatch(/^[0-9a-f]{8}-valid-name_1\.0$/);
+      const result = hashTestPath("test.fuzz.ts", "valid-name_1.0");
+      expect(result).toMatch(
+        /^[0-9a-dfghijklmnpqrsvwxyz]{32}-valid-name_1\.0$/,
+      );
     });
 
     it("collapses runs of underscores in slug", () => {
-      const result = sanitizeTestName("a///b");
-      expect(result).toMatch(/^[0-9a-f]{8}-a_b$/);
+      const result = hashTestPath("test.fuzz.ts", "a///b");
+      expect(result).toMatch(/^[0-9a-dfghijklmnpqrsvwxyz]{32}-a_b$/);
     });
 
     it("replaces spaces in slug", () => {
-      const result = sanitizeTestName("my test name");
-      expect(result).toMatch(/^[0-9a-f]{8}-my_test_name$/);
+      const result = hashTestPath("test.fuzz.ts", "my test name");
+      expect(result).toMatch(/^[0-9a-dfghijklmnpqrsvwxyz]{32}-my_test_name$/);
     });
 
-    it("same name always produces the same result (deterministic)", () => {
-      expect(sanitizeTestName("parse-url")).toBe(sanitizeTestName("parse-url"));
+    it("same inputs always produce the same result (deterministic)", () => {
+      expect(hashTestPath("test.fuzz.ts", "parse-url")).toBe(
+        hashTestPath("test.fuzz.ts", "parse-url"),
+      );
+    });
+
+    it("different file paths produce different hashes for the same test name", () => {
+      const a = hashTestPath("test/url.fuzz.ts", "parse");
+      const b = hashTestPath("test/json.fuzz.ts", "parse");
+      expect(a).not.toBe(b);
     });
   });
 
   describe("file-qualified cached corpus prevents cross-file collisions", () => {
     it("same test name in different files produces distinct cache paths", () => {
       const data = Buffer.from("test data");
-      const path1 = writeCorpusEntry(tmpDir, "test/url.fuzz.ts", "parse", data);
-      const path2 = writeCorpusEntry(
-        tmpDir,
-        "test/json.fuzz.ts",
-        "parse",
-        data,
-      );
+      const path1 = writeCorpusEntry("test/url.fuzz.ts", "parse", data);
+      const path2 = writeCorpusEntry("test/json.fuzz.ts", "parse", data);
 
       // Same file name, different parent directories
       expect(path1).not.toBe(path2);
 
       // Each loads only its own entry
-      const loaded1 = loadCachedCorpus(tmpDir, "test/url.fuzz.ts", "parse");
-      const loaded2 = loadCachedCorpus(tmpDir, "test/json.fuzz.ts", "parse");
+      const loaded1 = loadCachedCorpus("test/url.fuzz.ts", "parse");
+      const loaded2 = loadCachedCorpus("test/json.fuzz.ts", "parse");
       expect(loaded1).toHaveLength(1);
       expect(loaded2).toHaveLength(1);
     });
 
     it("empty/degenerate names produce valid hash-only directories", () => {
       const data = Buffer.from("test data");
-      const filePath = writeCorpusEntry(tmpDir, "test.fuzz.ts", "", data);
+      const filePath = writeCorpusEntry("test.fuzz.ts", "", data);
       expect(existsSync(filePath)).toBe(true);
     });
   });
 
-  describe("getCacheDir", () => {
+  describe("getDataDir", () => {
     afterEach(() => {
-      resetCacheDir();
+      resetDataDir();
       resetProjectRoot();
     });
 
-    it("uses project root for default .vitiate-corpus when project root is set", () => {
+    it("uses project root for default .vitiate when project root is set", () => {
+      resetDataDir();
       setProjectRoot("/home/user/project");
-      const dir = getCacheDir();
-      expect(dir).toBe(path.resolve("/home/user/project", ".vitiate-corpus"));
+      const dir = getDataDir();
+      expect(dir).toBe(path.resolve("/home/user/project", ".vitiate"));
     });
 
-    it("returns resolved cache dir when set", () => {
-      setCacheDir(path.resolve("/home/user/project", ".my-corpus"));
+    it("returns resolved data dir when set", () => {
+      setDataDir(path.resolve("/home/user/project", ".my-data"));
       setProjectRoot("/home/user/project");
-      const dir = getCacheDir();
-      expect(dir).toBe(path.resolve("/home/user/project", ".my-corpus"));
+      const dir = getDataDir();
+      expect(dir).toBe(path.resolve("/home/user/project", ".my-data"));
     });
 
-    it("returns absolute cache dir as-is", () => {
-      setCacheDir("/absolute/path");
+    it("returns absolute data dir as-is", () => {
+      setDataDir("/absolute/path");
       setProjectRoot("/home/user/project");
-      const dir = getCacheDir();
+      const dir = getDataDir();
       expect(dir).toBe("/absolute/path");
     });
 
     it("falls back to cwd when no project root is set", () => {
-      const dir = getCacheDir();
-      expect(dir).toBe(path.resolve(process.cwd(), ".vitiate-corpus"));
+      resetDataDir();
+      const dir = getDataDir();
+      expect(dir).toBe(path.resolve(process.cwd(), ".vitiate"));
     });
 
     it("returns an absolute path in all cases", () => {
-      expect(path.isAbsolute(getCacheDir())).toBe(true);
+      resetDataDir();
+      expect(path.isAbsolute(getDataDir())).toBe(true);
     });
   });
 
@@ -421,22 +444,18 @@ describe("corpus", () => {
 
   describe("loadCachedCorpusWithPaths", () => {
     it("returns empty array when directory does not exist", () => {
-      const result = loadCachedCorpusWithPaths(
-        tmpDir,
-        "test.fuzz.ts",
-        "nonexistent",
-      );
+      const result = loadCachedCorpusWithPaths("test.fuzz.ts", "nonexistent");
       expect(result).toEqual([]);
     });
 
     it("returns entries with absolute paths and data", () => {
-      const dirName = sanitizeTestName("parse");
-      const dir = path.join(tmpDir, "test.fuzz.ts", dirName);
+      const hashDir = hashTestPath("test.fuzz.ts", "parse");
+      const dir = path.join(tmpDir, "corpus", hashDir);
       mkdirSync(dir, { recursive: true });
       writeFileSync(path.join(dir, "a1b2c3d4"), "data1");
       writeFileSync(path.join(dir, "e5f6g7h8"), "data2");
 
-      const result = loadCachedCorpusWithPaths(tmpDir, "test.fuzz.ts", "parse");
+      const result = loadCachedCorpusWithPaths("test.fuzz.ts", "parse");
       expect(result).toHaveLength(2);
       for (const entry of result) {
         expect(path.isAbsolute(entry.path)).toBe(true);
@@ -582,31 +601,99 @@ describe("corpus", () => {
     });
   });
 
-  describe("getDictionaryPath", () => {
-    it("returns path when .dict file exists", () => {
-      const dirName = sanitizeTestName("parse-json");
-      const dictPath = path.join(tmpDir, "testdata", "fuzz", `${dirName}.dict`);
-      mkdirSync(path.dirname(dictPath), { recursive: true });
+  describe("discoverDictionaries", () => {
+    it("returns paths when .dict files exist", () => {
+      const hashDir = hashTestPath("test.fuzz.ts", "parse-json");
+      const testDataDir = path.join(tmpDir, "testdata", hashDir);
+      mkdirSync(testDataDir, { recursive: true });
+      const dictPath = path.join(testDataDir, "keywords.dict");
       writeFileSync(dictPath, '"true"\n"false"\n');
 
-      const result = getDictionaryPath(tmpDir, "parse-json");
-      expect(result).toBe(dictPath);
+      const result = discoverDictionaries("test.fuzz.ts", "parse-json");
+      expect(result).toHaveLength(1);
+      expect(result[0]).toBe(path.resolve(dictPath));
     });
 
-    it("returns undefined when .dict file does not exist", () => {
-      const result = getDictionaryPath(tmpDir, "nonexistent-test");
-      expect(result).toBeUndefined();
+    it("returns empty array when no dictionary files exist", () => {
+      const result = discoverDictionaries("test.fuzz.ts", "nonexistent-test");
+      expect(result).toEqual([]);
     });
 
-    it("does not confuse seed corpus directory with dictionary file", () => {
-      const dirName = sanitizeTestName("my-test");
-      const corpusDir = path.join(tmpDir, "testdata", "fuzz", dirName);
-      mkdirSync(corpusDir, { recursive: true });
-      writeFileSync(path.join(corpusDir, "seed1"), "data");
-      // No .dict file - only the corpus directory exists.
+    it("discovers file named 'dictionary'", () => {
+      const hashDir = hashTestPath("test.fuzz.ts", "my-test");
+      const testDataDir = path.join(tmpDir, "testdata", hashDir);
+      mkdirSync(testDataDir, { recursive: true });
+      const dictPath = path.join(testDataDir, "dictionary");
+      writeFileSync(dictPath, '"keyword"\n');
 
-      const result = getDictionaryPath(tmpDir, "my-test");
-      expect(result).toBeUndefined();
+      const result = discoverDictionaries("test.fuzz.ts", "my-test");
+      expect(result).toHaveLength(1);
+      expect(result[0]).toBe(path.resolve(dictPath));
+    });
+
+    it("does not confuse seed corpus subdirectory with dictionary file", () => {
+      const hashDir = hashTestPath("test.fuzz.ts", "my-test");
+      const seedDir = path.join(tmpDir, "testdata", hashDir, "seeds");
+      mkdirSync(seedDir, { recursive: true });
+      writeFileSync(path.join(seedDir, "seed1"), "data");
+      // No .dict file - only the seeds subdirectory exists.
+
+      const result = discoverDictionaries("test.fuzz.ts", "my-test");
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe("loadTestDataCorpus", () => {
+    it("returns empty array when testdata directory does not exist", () => {
+      const result = loadTestDataCorpus("test.fuzz.ts", "nonexistent");
+      expect(result).toEqual([]);
+    });
+
+    it("loads from seeds, crashes, and timeouts subdirectories", () => {
+      const hashDir = hashTestPath("test.fuzz.ts", "parse");
+      const testDataDir = path.join(tmpDir, "testdata", hashDir);
+      const seedDir = path.join(testDataDir, "seeds");
+      const crashDir = path.join(testDataDir, "crashes");
+      const timeoutDir = path.join(testDataDir, "timeouts");
+      mkdirSync(seedDir, { recursive: true });
+      mkdirSync(crashDir, { recursive: true });
+      mkdirSync(timeoutDir, { recursive: true });
+      writeFileSync(path.join(seedDir, "seed1"), "seed data");
+      writeFileSync(path.join(crashDir, "crash-abc"), "crash data");
+      writeFileSync(path.join(timeoutDir, "timeout-def"), "timeout data");
+
+      const result = loadTestDataCorpus("test.fuzz.ts", "parse");
+      expect(result).toHaveLength(3);
+      const contents = result.map((b) => b.toString()).sort();
+      expect(contents).toEqual(["crash data", "seed data", "timeout data"]);
+    });
+
+    it("handles missing subdirectories gracefully", () => {
+      const hashDir = hashTestPath("test.fuzz.ts", "parse");
+      const testDataDir = path.join(tmpDir, "testdata", hashDir);
+      const seedDir = path.join(testDataDir, "seeds");
+      mkdirSync(seedDir, { recursive: true });
+      writeFileSync(path.join(seedDir, "seed1"), "seed only");
+
+      const result = loadTestDataCorpus("test.fuzz.ts", "parse");
+      expect(result).toHaveLength(1);
+      expect(result[0]!.toString()).toBe("seed only");
+    });
+  });
+
+  describe("getTestDataDir", () => {
+    it("returns path under dataDir/testdata/<hashdir>", () => {
+      const result = getTestDataDir("test.fuzz.ts", "parse");
+      const hashDir = hashTestPath("test.fuzz.ts", "parse");
+      expect(result).toBe(path.join(tmpDir, "testdata", hashDir));
+    });
+  });
+
+  describe("getCorpusDir", () => {
+    it("returns path under dataDir/corpus/<hashdir>", () => {
+      const result = getCorpusDir("test.fuzz.ts", "parse");
+      const hashDir = hashTestPath("test.fuzz.ts", "parse");
+      expect(result).toBe(path.join(tmpDir, "corpus", hashDir));
     });
   });
 });

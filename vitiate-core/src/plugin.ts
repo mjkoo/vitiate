@@ -14,7 +14,7 @@ import {
   setCoverageMapSize,
   getCoverageMapSize,
   setProjectRoot,
-  setCacheDir,
+  setDataDir,
 } from "./config.js";
 
 const require = createRequire(import.meta.url);
@@ -330,7 +330,7 @@ function resolveSetupPath(): string {
 export function vitiatePlugin(options?: VitiatePluginOptions): Plugin[] {
   const { include, exclude } = resolveInstrumentOptions(options?.instrument);
   const fuzz = options?.fuzz;
-  const cacheDir = options?.cacheDir;
+  const dataDir = options?.dataDir;
   const coverageMapSize = options?.coverageMapSize;
   // Always exclude vitiate's own package directories - setup/globals files must
   // run before the coverage map exists and cannot be instrumented, and the napi
@@ -396,9 +396,9 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin[] {
       const projectRoot = path.resolve(config.root ?? process.cwd());
       setProjectRoot(projectRoot);
 
-      // If cacheDir is provided, resolve it relative to the project root
-      if (cacheDir) {
-        setCacheDir(path.resolve(projectRoot, cacheDir));
+      // If dataDir is provided, resolve it relative to the project root
+      if (dataDir) {
+        setDataDir(path.resolve(projectRoot, dataDir));
       }
 
       // Store coverage map size for globals.ts

@@ -22,52 +22,56 @@ import { spawn } from "node:child_process";
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { hashTestPath } from "../src/nix-base32.js";
 
 const EXAMPLE_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../examples/url-parser",
 );
 
-const PARSE_URL_ARTIFACT_DIR = path.join(
-  EXAMPLE_DIR,
-  "test",
-  "testdata",
-  "fuzz",
-  "8fcacc40-parse-url",
+const DATA_DIR = path.join(EXAMPLE_DIR, ".vitiate");
+
+/** Build the crashes subdirectory path for a given fuzz test. */
+function crashesDir(relativeTestFile: string, testName: string): string {
+  return path.join(
+    DATA_DIR,
+    "testdata",
+    hashTestPath(relativeTestFile, testName),
+    "crashes",
+  );
+}
+
+const PARSE_URL_CRASHES_DIR = crashesDir(
+  "test/url-parser.fuzz.ts",
+  "parse-url",
 );
 
-const PARSE_URL_ASYNC_ARTIFACT_DIR = path.join(
-  EXAMPLE_DIR,
-  "test",
-  "testdata",
-  "fuzz",
-  "2ed41517-parse-url-async",
+const PARSE_URL_ASYNC_CRASHES_DIR = crashesDir(
+  "test/url-parser-async.fuzz.ts",
+  "parse-url-async",
 );
 
-const VALIDATE_SCHEME_ARTIFACT_DIR = path.join(
-  EXAMPLE_DIR,
-  "test",
-  "testdata",
-  "fuzz",
-  "2269686d-validate-scheme",
+const VALIDATE_SCHEME_CRASHES_DIR = crashesDir(
+  "test/url-scheme.fuzz.ts",
+  "validate-scheme",
 );
 
-const CORPUS_CACHE_DIR = path.join(EXAMPLE_DIR, ".vitiate-corpus");
+const CORPUS_CACHE_DIR = path.join(DATA_DIR, "corpus");
 
-/** Glob crash/timeout artifacts written by the fuzz run. */
-function findArtifacts(artifactDir: string): string[] {
-  if (!existsSync(artifactDir)) return [];
-  return readdirSync(artifactDir)
+/** List artifact files in a crashes or timeouts subdirectory. */
+function findArtifacts(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
     .filter((f) => f.startsWith("crash-") || f.startsWith("timeout-"))
-    .map((f) => path.join(artifactDir, f));
+    .map((f) => path.join(dir, f));
 }
 
 afterAll(() => {
   // Clean up crash artifacts and corpus cache to avoid polluting the git tree
   for (const dir of [
-    PARSE_URL_ARTIFACT_DIR,
-    PARSE_URL_ASYNC_ARTIFACT_DIR,
-    VALIDATE_SCHEME_ARTIFACT_DIR,
+    PARSE_URL_CRASHES_DIR,
+    PARSE_URL_ASYNC_CRASHES_DIR,
+    VALIDATE_SCHEME_CRASHES_DIR,
   ]) {
     for (const artifact of findArtifacts(dir)) {
       rmSync(artifact, { force: true });
@@ -103,9 +107,9 @@ describe("fuzz pipeline: discovers planted bugs end-to-end", () => {
     // artifacts so results are not influenced by previous runs.
     rmSync(CORPUS_CACHE_DIR, { recursive: true, force: true });
     for (const dir of [
-      PARSE_URL_ARTIFACT_DIR,
-      PARSE_URL_ASYNC_ARTIFACT_DIR,
-      VALIDATE_SCHEME_ARTIFACT_DIR,
+      PARSE_URL_CRASHES_DIR,
+      PARSE_URL_ASYNC_CRASHES_DIR,
+      VALIDATE_SCHEME_CRASHES_DIR,
     ]) {
       for (const artifact of findArtifacts(dir)) {
         rmSync(artifact, { force: true });
@@ -148,7 +152,7 @@ describe("fuzz pipeline: discovers planted bugs end-to-end", () => {
     expect(result.exitCode).toBe(1);
 
     // A crash artifact should have been written
-    const artifacts = findArtifacts(PARSE_URL_ARTIFACT_DIR);
+    const artifacts = findArtifacts(PARSE_URL_CRASHES_DIR);
     if (artifacts.length < 1) dumpOutput("e2e-fuzz", result.output);
     expect(artifacts.length).toBeGreaterThanOrEqual(1);
   });
@@ -159,7 +163,7 @@ describe("fuzz pipeline: discovers planted bugs end-to-end", () => {
     expect(result.exitCode).toBe(1);
 
     // A crash artifact should have been written
-    const artifacts = findArtifacts(PARSE_URL_ASYNC_ARTIFACT_DIR);
+    const artifacts = findArtifacts(PARSE_URL_ASYNC_CRASHES_DIR);
     if (artifacts.length < 1) dumpOutput("e2e-fuzz", result.output);
     expect(artifacts.length).toBeGreaterThanOrEqual(1);
   });
@@ -170,7 +174,7 @@ describe("fuzz pipeline: discovers planted bugs end-to-end", () => {
     expect(result.exitCode).toBe(1);
 
     // A crash artifact should have been written
-    const artifacts = findArtifacts(VALIDATE_SCHEME_ARTIFACT_DIR);
+    const artifacts = findArtifacts(VALIDATE_SCHEME_CRASHES_DIR);
     if (artifacts.length < 1) dumpOutput("e2e-fuzz", result.output);
     expect(artifacts.length).toBeGreaterThanOrEqual(1);
   });

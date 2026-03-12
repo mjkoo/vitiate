@@ -61,28 +61,45 @@ Parsing SHALL be performed by LibAFL's `Tokens::from_file()`.
 
 ### Requirement: Dictionary discovery in Vitest mode
 
-In Vitest mode, the system SHALL discover the dictionary file by convention at:
+In Vitest mode, the system SHALL discover dictionary files by scanning the test's testdata directory at `<dataDir>/testdata/<hashdir>/` for:
 
-```
-{testDir}/testdata/fuzz/{sanitizedTestName}.dict
-```
+1. Any file matching the glob pattern `*.dict`
+2. A file named exactly `dictionary` (no extension)
 
-This path is a sibling to the seed corpus directory (`{testDir}/testdata/fuzz/{sanitizedTestName}/`) within the directory layout defined by the corpus-management spec. The `sanitizedTestName` SHALL use the same sanitization as seed corpus directory names (SHA-256 prefix + slug).
+Only files at the top level of the testdata directory SHALL be considered. Files within subdirectories (`seeds/`, `crashes/`, `timeouts/`) SHALL NOT be treated as dictionaries.
 
-If the dictionary file does not exist, the system SHALL proceed without user-provided tokens. No warning or error SHALL be emitted for a missing dictionary in Vitest mode.
+If multiple dictionary files are found, their contents SHALL be concatenated. If no dictionary files are found, the system SHALL proceed without user-provided tokens. No warning or error SHALL be emitted for a missing dictionary.
 
-#### Scenario: Dictionary file present
+The previous convention of looking for a single `{sanitizedTestName}.dict` file as a sibling of the seed directory SHALL be replaced by this convention-based discovery within the per-test testdata directory.
 
-- **WHEN** a fuzz test named "parse-json" runs in Vitest mode
-- **AND** the file `testdata/fuzz/<sanitized-name>.dict` exists with valid entries
+#### Scenario: Single .dict file present
+
+- **WHEN** a fuzz test runs in Vitest mode
+- **AND** `.vitiate/testdata/<hashdir>/json.dict` exists with valid entries
 - **THEN** the tokens from the file SHALL be loaded into `Tokens` metadata before the fuzz loop starts
+
+#### Scenario: File named "dictionary" present
+
+- **WHEN** a fuzz test runs in Vitest mode
+- **AND** `.vitiate/testdata/<hashdir>/dictionary` exists with valid entries
+- **THEN** the tokens from the file SHALL be loaded
+
+#### Scenario: Multiple dictionary files concatenated
+
+- **WHEN** `.vitiate/testdata/<hashdir>/` contains `tokens.dict` and `keywords.dict`
+- **THEN** both files SHALL be discovered and their contents concatenated
 
 #### Scenario: Dictionary file absent
 
-- **WHEN** a fuzz test named "parse-json" runs in Vitest mode
-- **AND** no file exists at `testdata/fuzz/<sanitized-name>.dict`
+- **WHEN** a fuzz test runs in Vitest mode
+- **AND** no `*.dict` files and no `dictionary` file exist in the testdata directory
 - **THEN** the fuzz loop SHALL start without user-provided tokens
 - **AND** no warning or error SHALL be emitted
+
+#### Scenario: Dict files inside subdirectories ignored
+
+- **WHEN** `.vitiate/testdata/<hashdir>/seeds/something.dict` exists
+- **THEN** it SHALL NOT be treated as a dictionary file
 
 ### Requirement: Dictionary flag in CLI mode
 

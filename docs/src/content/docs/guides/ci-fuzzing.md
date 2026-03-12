@@ -3,20 +3,20 @@ title: CI Fuzzing
 description: Integrating Vitiate into your CI pipeline for regression testing and continuous fuzzing.
 ---
 
-Fuzzing delivers the most value when it is integrated into your CI pipeline at two levels: fast feedback on every change and deep exploration on a schedule. This guide covers the Vitest-integrated approach (`VITIATE_FUZZ=1 npx vitest run`). If your CI pipeline needs libFuzzer-compatible flags or integration with a fuzzing platform, see [Standalone CLI](/vitiate/guides/cli/).
+Fuzzing delivers the most value when it is integrated into your CI pipeline at two levels: fast feedback on every change and deep exploration on a schedule. This guide covers the primary approach using `vitiate` CLI subcommands. If your CI pipeline needs libFuzzer-compatible flags or integration with a fuzzing platform, see [Standalone CLI](/vitiate/guides/cli/).
 
 ## Branches and Pull Requests
 
 Run **regression tests** on every branch push and PR. Regression mode replays the committed seed corpus and cached corpus without generating new inputs, so it is fast, deterministic, and catches regressions introduced by the change:
 
 ```bash
-npx vitest run
+npx vitiate regression
 ```
 
 For additional confidence, run a **short fuzzing session** (30 seconds to a few minutes) after regression tests pass. This catches shallow bugs introduced by the change before they reach the main branch:
 
 ```bash
-VITIATE_FUZZ=1 VITIATE_FUZZ_TIME=300 npx vitest run
+VITIATE_FUZZ_TIME=300 npx vitiate fuzz
 ```
 
 `VITIATE_FUZZ_TIME` sets the fuzzing duration in seconds per target. Keep it short enough that PRs are not blocked waiting for the fuzzer. The goal is fast feedback, not exhaustive exploration.
@@ -26,7 +26,7 @@ VITIATE_FUZZ=1 VITIATE_FUZZ_TIME=300 npx vitest run
 Run **long nightly fuzzing sessions** (minutes to hours) on main or release branches via a scheduled CI job. These sessions have time to exercise deep code paths and find bugs that short runs miss:
 
 ```bash
-VITIATE_FUZZ=1 VITIATE_FUZZ_TIME=3600 npx vitest run
+VITIATE_FUZZ_TIME=3600 npx vitiate fuzz
 ```
 
 After a nightly session, optionally [minimize and checkpoint the corpus](/vitiate/concepts/corpus/#checkpointing-fuzzer-progress) to feed coverage gains back into the regression suite so that every subsequent PR benefits from the fuzzer's discoveries.
@@ -51,7 +51,7 @@ jobs:
         with:
           node-version: 20
       - run: npm ci
-      - run: npx vitest run
+      - run: npx vitiate regression
 
   fuzz:
     runs-on: ubuntu-latest
@@ -66,7 +66,7 @@ jobs:
       # Cache the corpus across runs to build on previous coverage
       - uses: actions/cache@v4
         with:
-          path: .vitiate-corpus
+          path: .vitiate/corpus
           key: fuzz-corpus-${{ hashFiles('test/**/*.fuzz.ts') }}-${{ github.run_number }}
           restore-keys: |
             fuzz-corpus-${{ hashFiles('test/**/*.fuzz.ts') }}-
@@ -75,17 +75,17 @@ jobs:
       # Short fuzz on PRs, long fuzz on nightly schedule
       - name: Fuzz (short)
         if: github.event_name == 'pull_request'
-        run: VITIATE_FUZZ=1 VITIATE_FUZZ_TIME=300 npx vitest run
+        run: VITIATE_FUZZ_TIME=300 npx vitiate fuzz
 
       - name: Fuzz (nightly)
         if: github.event_name == 'schedule'
-        run: VITIATE_FUZZ=1 VITIATE_FUZZ_TIME=3600 npx vitest run
+        run: VITIATE_FUZZ_TIME=3600 npx vitiate fuzz
 
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: crash-artifacts
-          path: testdata/fuzz/**/crash-*
+          path: .vitiate/testdata/**/crashes/crash-*
 ```
 
 ## Corpus Caching
@@ -102,7 +102,7 @@ For background on corpus locations and what gets cached, see [Corpus Locations](
 
 | CI context | What to run | Why |
 |---|---|---|
-| Every push/PR | Regression tests (`npx vitest run`) | Fast, deterministic - catches regressions |
+| Every push/PR | Regression tests (`npx vitiate regression`) | Fast, deterministic - catches regressions |
 | Every push/PR | Short fuzz (5min) | Catches shallow bugs before merge |
 | Nightly on main | Long fuzz (1h) | Deep exploration, finds subtle bugs |
 | After nightly fuzz | Optimize + checkpoint | Feeds coverage gains back to regression suite |

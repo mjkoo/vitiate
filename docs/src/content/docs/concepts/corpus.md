@@ -7,33 +7,33 @@ The corpus is the set of inputs that the fuzzer has found useful. Understanding 
 
 ## Corpus Locations
 
-Vitiate loads inputs from two locations. Both use a **sanitized test name** for the directory: an 8-character hash prefix followed by the name with special characters replaced by underscores (e.g., `8fcacc40-parse_url` for a test named `"parse-url"`).
+Vitiate loads inputs from two locations. Both use a **hash directory** name: a Nix base32 encoded hash followed by the test name (e.g., `vxr4kpqyb12fza1gv81bjj8k3i64mlqn-parse_url` for a test named `"parse-url"`).
 
 ### Seed Corpus
 
 ```
-<test-dir>/testdata/fuzz/<sanitized-test-name>/
+.vitiate/testdata/<hashdir>/seeds/
 ```
 
-Here `<test-dir>` is the directory containing the test file. For example, a test in `test/parser.fuzz.ts` named `"parse does not crash"` would have its seed corpus at `test/testdata/fuzz/a1b2c3d4-parse_does_not_crash/`.
+For example, a test named `"parse does not crash"` would have its seed corpus at `.vitiate/testdata/vxr4kpqyb12fza1gv81bjj8k3i64mlqn-parse_does_not_crash/seeds/`.
 
-Files you create manually to give the fuzzer a starting point. Good seeds exercise different code paths in your target. Crash artifacts are also stored here (prefixed with `crash-` or `timeout-`).
+Files you create manually to give the fuzzer a starting point. Good seeds exercise different code paths in your target. Crash and timeout artifacts are stored in sibling directories (`crashes/` and `timeouts/`).
 
-The easiest way to discover the directory path is to run the fuzzer briefly - it creates the directory automatically and prints the path in crash output. You can also list existing directories with `ls test/testdata/fuzz/` (see the [Tutorial](/vitiate/getting-started/tutorial/#step-7-add-seed-inputs-optional) for a walkthrough).
+The easiest way to discover the directory path is to run `npx vitiate init`, which creates seed directories for all discovered fuzz tests. You can also list existing directories with `ls .vitiate/testdata/` (see the [Tutorial](/vitiate/getting-started/tutorial/#step-7-add-seed-inputs-optional) for a walkthrough).
 
 ### Cached Corpus
 
 ```
-.vitiate-corpus/<test-file>/<sanitized-test-name>/
+.vitiate/corpus/<hashdir>/
 ```
 
-Here `<test-file>` is the relative path of the test file from the project root. For example, a test in `test/parser.fuzz.ts` named `"parse does not crash"` would have its cached corpus at:
+For example, a test named `"parse does not crash"` would have its cached corpus at:
 
 ```
-.vitiate-corpus/test/parser.fuzz.ts/a1b2c3d4-parse_does_not_crash/
+.vitiate/corpus/vxr4kpqyb12fza1gv81bjj8k3i64mlqn-parse_does_not_crash/
 ```
 
-Generated automatically during fuzzing. Each file is named by its SHA-256 hash for deduplication. This directory grows as the fuzzer discovers new coverage and can be deleted safely - the fuzzer will rebuild it. Add `.vitiate-corpus/` to your `.gitignore`.
+Generated automatically during fuzzing. Each file is named by its SHA-256 hash for deduplication. This directory grows as the fuzzer discovers new coverage and can be deleted safely - the fuzzer will rebuild it. Add `.vitiate/corpus/` to your `.gitignore`.
 
 ## Two Modes
 
@@ -41,10 +41,10 @@ Vitiate's `fuzz()` function behaves differently depending on the environment. Th
 
 ### Fuzzing Mode
 
-Activated by setting the `VITIATE_FUZZ` environment variable:
+Activated by `npx vitiate fuzz` or by setting the `VITIATE_FUZZ` environment variable:
 
 ```bash
-VITIATE_FUZZ=1 npx vitest run test/parser.fuzz.ts
+npx vitiate fuzz test/parser.fuzz.ts
 ```
 
 In fuzzing mode, each `fuzz()` call becomes a supervisor that spawns a child Vitest process and enters the fuzz loop. The fuzzer:
@@ -78,12 +78,12 @@ This means every crash artifact and every interesting input the fuzzer has ever 
 When the fuzzer finds a crashing input, it:
 
 1. Minimizes the input (removes bytes while preserving the crash)
-2. Writes the minimized input to `testdata/fuzz/<sanitized-test-name>/crash-<sha256>`
+2. Writes the minimized input to `.vitiate/testdata/<hashdir>/crashes/crash-<sha256>`
 3. Continues fuzzing for more crashes (configurable via `stopOnCrash`)
 
 Commit crash artifacts to version control. They are small, deterministic, and serve as documentation of bugs that were found and fixed.
 
-Timeout artifacts follow the same pattern: `testdata/fuzz/<sanitized-test-name>/timeout-<sha256>`.
+Timeout artifacts follow the same pattern: `.vitiate/testdata/<hashdir>/timeouts/timeout-<sha256>`.
 
 ## Corpus Minimization
 
@@ -92,15 +92,15 @@ Over time the cached corpus grows as the fuzzer discovers new coverage. Many of 
 Run optimize mode to minimize the cached corpus in place:
 
 ```bash
-VITIATE_OPTIMIZE=1 npx vitest run
+npx vitiate optimize
 ```
 
 Optimize mode works as follows for each `fuzz()` test:
 
-1. **Replays seed corpus** entries (`testdata/fuzz/<name>/`) to establish a baseline of pre-covered edges
-2. **Replays cached corpus** entries (`.vitiate-corpus/<test-file>/<name>/`) and records the edges each one covers
+1. **Replays seed corpus** entries (`.vitiate/testdata/<hashdir>/seeds/`) to establish a baseline of pre-covered edges
+2. **Replays cached corpus** entries (`.vitiate/corpus/<hashdir>/`) and records the edges each one covers
 3. **Runs set cover** over cached entries only, treating seed edges as already covered - cached entries that are fully redundant with seeds or other survivors are eliminated
-4. **Deletes non-surviving cached entries** in place from `.vitiate-corpus/`
+4. **Deletes non-surviving cached entries** in place from `.vitiate/corpus/`
 
 Seed corpus entries are never deleted - they serve as the coverage baseline. Only cached entries are subject to minimization.
 
@@ -110,26 +110,26 @@ For libFuzzer-compatible corpus minimization across arbitrary directories, see t
 
 ### Checkpointing Fuzzer Progress
 
-After a long fuzzing session, you can checkpoint the fuzzer's progress by promoting surviving cached entries to the seed corpus. This makes the coverage gains permanent - they survive even if `.vitiate-corpus/` is deleted or the project is cloned fresh.
+After a long fuzzing session, you can checkpoint the fuzzer's progress by promoting surviving cached entries to the seed corpus. This makes the coverage gains permanent - they survive even if `.vitiate/corpus/` is deleted or the project is cloned fresh.
 
 ```bash
 # 1. Optimize to keep only the minimal covering set
-VITIATE_OPTIMIZE=1 npx vitest run
+npx vitiate optimize
 
 # 2. Copy surviving cached entries to the seed corpus
-cp .vitiate-corpus/<test-file>/<sanitized-test-name>/* \
-   testdata/fuzz/<sanitized-test-name>/
+cp .vitiate/corpus/<hashdir>/* \
+   .vitiate/testdata/<hashdir>/seeds/
 
 # 3. Commit the new seeds
-git add testdata/fuzz/
+git add .vitiate/testdata/
 git commit -m "chore: checkpoint fuzzer corpus"
 ```
 
-After checkpointing, you can safely delete `.vitiate-corpus/` and start the next fuzzing session from the enriched seed corpus.
+After checkpointing, you can safely delete `.vitiate/corpus/` and start the next fuzzing session from the enriched seed corpus.
 
 ## Tips
 
 - **Commit seed corpus and crash artifacts.** They are small and valuable. Other developers get the fuzzer's accumulated knowledge when they clone the repository.
-- **Do not commit the cached corpus.** It can be large and is regenerated automatically. Add `.vitiate-corpus/` to `.gitignore`.
-- **Checkpoint after long sessions.** Run `VITIATE_OPTIMIZE=1 npx vitest run`, then copy surviving cached entries to the seed corpus and commit them. This preserves coverage gains permanently.
+- **Do not commit the cached corpus.** It can be large and is regenerated automatically. Add `.vitiate/corpus/` to `.gitignore`.
+- **Checkpoint after long sessions.** Run `npx vitiate optimize`, then copy surviving cached entries to the seed corpus and commit them. This preserves coverage gains permanently.
 - **Integrate fuzzing into CI.** Run regression tests on every PR and long fuzzing sessions nightly on main. See [CI Fuzzing](/vitiate/guides/ci-fuzzing/) for setup details.

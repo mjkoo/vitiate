@@ -12,22 +12,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import { getProjectRoot, getResolvedCacheDir } from "./config.js";
+import { getDataDir } from "./config.js";
+import { hashTestPath } from "./nix-base32.js";
 
 function contentHash(data: Buffer): string {
   return createHash("sha256").update(data).digest("hex");
-}
-
-export function sanitizeTestName(name: string): string {
-  const hash = createHash("sha256").update(name).digest("hex").slice(0, 8);
-  const slug = name
-    .replace(/[^a-zA-Z0-9\-_.]/g, "_")
-    .replace(/_+/g, "_")
-    .replace(/^_|_$/g, "");
-  if (!slug || slug === "." || slug === "..") {
-    return hash;
-  }
-  return `${hash}-${slug}`;
 }
 
 export interface CorpusEntryWithPath {
@@ -51,55 +40,94 @@ function readCorpusDirWithPaths(dir: string): CorpusEntryWithPath[] {
     }));
 }
 
-export function getFuzzTestDataDir(testDir: string, testName: string): string {
-  return path.join(testDir, "testdata", "fuzz", sanitizeTestName(testName));
-}
-
-export function getDictionaryPath(
-  testDir: string,
+/**
+ * Return the testdata directory for a fuzz test under the global data root.
+ * Path: `<dataDir>/testdata/<hashdir>`
+ */
+export function getTestDataDir(
+  relativeTestFilePath: string,
   testName: string,
-): string | undefined {
-  const dictPath = path.join(
-    testDir,
+): string {
+  return path.join(
+    getDataDir(),
     "testdata",
-    "fuzz",
-    `${sanitizeTestName(testName)}.dict`,
+    hashTestPath(relativeTestFilePath, testName),
   );
-  return existsSync(dictPath) ? path.resolve(dictPath) : undefined;
 }
 
-export function loadSeedCorpus(testDir: string, testName: string): Buffer[] {
-  return readCorpusDir(getFuzzTestDataDir(testDir, testName));
+/**
+ * Return the corpus cache directory for a fuzz test under the global data root.
+ * Path: `<dataDir>/corpus/<hashdir>`
+ */
+export function getCorpusDir(
+  relativeTestFilePath: string,
+  testName: string,
+): string {
+  return path.join(
+    getDataDir(),
+    "corpus",
+    hashTestPath(relativeTestFilePath, testName),
+  );
 }
 
-export function loadCachedCorpus(
-  cacheDir: string,
-  testFilePath: string,
+/**
+ * Discover dictionary files for a fuzz test by scanning the testdata directory.
+ * Looks for `*.dict` files and a file named `dictionary` at the top level.
+ * Files inside subdirectories (seeds/, crashes/, timeouts/) are ignored.
+ * Returns resolved paths, or an empty array if none found.
+ */
+export function discoverDictionaries(
+  relativeTestFilePath: string,
+  testName: string,
+): string[] {
+  const testDataDir = getTestDataDir(relativeTestFilePath, testName);
+  if (!existsSync(testDataDir)) {
+    return [];
+  }
+
+  const paths: string[] = [];
+  const entries = readdirSync(testDataDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    if (entry.name.endsWith(".dict") || entry.name === "dictionary") {
+      paths.push(path.resolve(path.join(testDataDir, entry.name)));
+    }
+  }
+  return paths.sort();
+}
+
+/**
+ * Load all testdata entries (seeds + crashes + timeouts) for regression and seeding.
+ * Missing subdirectories are silently skipped.
+ */
+export function loadTestDataCorpus(
+  relativeTestFilePath: string,
   testName: string,
 ): Buffer[] {
-  const dir = path.join(cacheDir, testFilePath, sanitizeTestName(testName));
-  validateCacheSubpath(cacheDir, dir);
+  const testDataDir = getTestDataDir(relativeTestFilePath, testName);
+  const subdirs = ["seeds", "crashes", "timeouts"];
+  return subdirs.flatMap((sub) => readCorpusDir(path.join(testDataDir, sub)));
+}
+
+/**
+ * Load cached corpus from `<dataDir>/corpus/<hashdir>/`.
+ */
+export function loadCachedCorpus(
+  relativeTestFilePath: string,
+  testName: string,
+): Buffer[] {
+  const dir = getCorpusDir(relativeTestFilePath, testName);
   return readCorpusDir(dir);
 }
 
-export function getCacheDir(): string {
-  const cacheDir = getResolvedCacheDir();
-
-  if (cacheDir) {
-    return cacheDir;
-  }
-
-  // Default: .vitiate-corpus relative to project root (if set) or cwd
-  return path.resolve(getProjectRoot(), ".vitiate-corpus");
-}
-
+/**
+ * Load cached corpus with file paths from `<dataDir>/corpus/<hashdir>/`.
+ */
 export function loadCachedCorpusWithPaths(
-  cacheDir: string,
-  testFilePath: string,
+  relativeTestFilePath: string,
   testName: string,
 ): CorpusEntryWithPath[] {
-  const dir = path.join(cacheDir, testFilePath, sanitizeTestName(testName));
-  validateCacheSubpath(cacheDir, dir);
+  const dir = getCorpusDir(relativeTestFilePath, testName);
   return readCorpusDirWithPaths(dir);
 }
 
@@ -122,30 +150,14 @@ export function deleteCorpusEntry(filePath: string): void {
 }
 
 /**
- * Validate that a resolved directory stays within the cache directory.
- * Prevents path traversal via `../` in testFilePath.
+ * Write a cached corpus entry to `<dataDir>/corpus/<hashdir>/<contenthash>`.
  */
-function validateCacheSubpath(cacheDir: string, dir: string): void {
-  const resolvedDir = path.resolve(dir);
-  const resolvedCacheDir = path.resolve(cacheDir);
-  if (
-    !resolvedDir.startsWith(resolvedCacheDir + path.sep) &&
-    resolvedDir !== resolvedCacheDir
-  ) {
-    throw new Error(
-      `Cache path escapes cache directory: ${resolvedDir} is not within ${resolvedCacheDir}`,
-    );
-  }
-}
-
 export function writeCorpusEntry(
-  cacheDir: string,
-  testFilePath: string,
+  relativeTestFilePath: string,
   testName: string,
   data: Buffer,
 ): string {
-  const dir = path.join(cacheDir, testFilePath, sanitizeTestName(testName));
-  validateCacheSubpath(cacheDir, dir);
+  const dir = getCorpusDir(relativeTestFilePath, testName);
   mkdirSync(dir, { recursive: true });
   const hash = contentHash(data);
   const filePath = path.join(dir, hash);
@@ -163,13 +175,20 @@ export function writeCorpusEntryToDir(dir: string, data: Buffer): string {
 
 export type ArtifactKind = "crash" | "timeout";
 
+/**
+ * Write a crash or timeout artifact to the testdata directory.
+ * Crashes go to `<dataDir>/testdata/<hashdir>/crashes/crash-<contenthash>`.
+ * Timeouts go to `<dataDir>/testdata/<hashdir>/timeouts/timeout-<contenthash>`.
+ */
 export function writeArtifact(
-  testDir: string,
+  relativeTestFilePath: string,
   testName: string,
   data: Buffer,
   kind: ArtifactKind = "crash",
 ): string {
-  const dir = getFuzzTestDataDir(testDir, testName);
+  const testDataDir = getTestDataDir(relativeTestFilePath, testName);
+  const subdir = kind === "timeout" ? "timeouts" : "crashes";
+  const dir = path.join(testDataDir, subdir);
   mkdirSync(dir, { recursive: true });
   const hash = contentHash(data);
   const fileName = `${kind}-${hash}`;
@@ -222,7 +241,7 @@ export function replaceArtifact(
     } catch {
       // Best-effort cleanup - temp file may already be gone
     }
-    throw new Error(`Failed to replace artifact ${tmpPath} → ${newPath}`, {
+    throw new Error(`Failed to replace artifact ${tmpPath} -> ${newPath}`, {
       cause: e,
     });
   }

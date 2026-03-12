@@ -70,10 +70,10 @@ When using the [standalone CLI](/vitiate/guides/cli/), you can configure detecto
 
 ```bash
 # Enable specific detectors (disables all defaults)
-npx vitiate test.fuzz.ts -detectors prototypePollution,ssrf
+npx vitiate libfuzzer test.fuzz.ts -detectors prototypePollution,ssrf
 
 # Configure detector options
-npx vitiate test.fuzz.ts -detectors pathTraversal.deniedPaths=/etc/passwd:/etc/shadow
+npx vitiate libfuzzer test.fuzz.ts -detectors pathTraversal.deniedPaths=/etc/passwd:/etc/shadow
 ```
 
 When you specify `-detectors` on the CLI, **all defaults are turned off** and only the listed detectors are active. This lets you focus a fuzzing run on a specific vulnerability class.

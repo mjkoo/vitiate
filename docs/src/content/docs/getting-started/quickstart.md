@@ -58,7 +58,13 @@ Catch expected errors (like `ParseError` above) and let unexpected ones propagat
 
 ## 4. Run the Fuzzer
 
-Set `VITIATE_FUZZ=1` to activate fuzzing mode:
+Use the `vitiate fuzz` command to activate fuzzing mode:
+
+```bash
+npx vitiate fuzz test/parser.fuzz.ts
+```
+
+Or set `VITIATE_FUZZ=1` directly:
 
 ```bash
 VITIATE_FUZZ=1 npx vitest run test/parser.fuzz.ts
@@ -75,10 +81,10 @@ When the fuzzer finds a crash, it prints the error, minimizes the input, and sav
 
 ```
 fuzz: CRASH FOUND: TypeError: Cannot read properties of undefined (reading 'length')
-fuzz: crash artifact written to: test/testdata/fuzz/a1b2c3d4-parse_does_not_crash/crash-e5f6...
+fuzz: crash artifact written to: .vitiate/testdata/vxr4kpqyb12fza1gv81bjj8k3i64mlqn-parse_does_not_crash/crashes/crash-e5f6...
 ```
 
-Press `Ctrl+C` to stop fuzzing at any time. Add `.vitiate-corpus/` to your `.gitignore` - this directory can grow large and is regenerated automatically.
+Press `Ctrl+C` to stop fuzzing at any time. Add `.vitiate/corpus/` to your `.gitignore` - this directory can grow large and is regenerated automatically.
 
 ## 5. Replay as Regression Tests
 

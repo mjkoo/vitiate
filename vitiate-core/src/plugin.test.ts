@@ -8,8 +8,8 @@ import {
   resetCoverageMapSize,
   getProjectRoot,
   resetProjectRoot,
-  getResolvedCacheDir,
-  resetCacheDir,
+  getResolvedDataDir,
+  resetDataDir,
 } from "./config.js";
 import { vitiatePlugin } from "./plugin.js";
 
@@ -53,7 +53,7 @@ describe("plugin", () => {
     const plugins = vitiatePlugin({
       instrument: { include: ["src/**/*.ts"], exclude: [] },
       fuzz: { maxLen: 4096, timeoutMs: 5000 },
-      cacheDir: ".fuzz-cache",
+      dataDir: ".fuzz-data",
       coverageMapSize: 131072,
     });
     expect(plugins).toHaveLength(2);
@@ -89,7 +89,7 @@ describe("plugin", () => {
         process.env["VITIATE_FUZZ_OPTIONS"] = savedFuzzOptions;
       }
       resetProjectRoot();
-      resetCacheDir();
+      resetDataDir();
       resetCoverageMapSize();
     });
 
@@ -113,31 +113,31 @@ describe("plugin", () => {
       expect(getProjectRoot()).toBe(path.resolve("/second/root"));
     });
 
-    it("sets cache dir resolved relative to project root", () => {
+    it("sets data dir resolved relative to project root", () => {
       const instrument = findPlugin(
-        vitiatePlugin({ cacheDir: ".fuzz-cache" }),
+        vitiatePlugin({ dataDir: ".fuzz-data" }),
         "vitiate:instrument",
       );
       callConfig(instrument, { root: "/my/project" });
-      expect(getResolvedCacheDir()).toBe(
-        path.resolve("/my/project", ".fuzz-cache"),
+      expect(getResolvedDataDir()).toBe(
+        path.resolve("/my/project", ".fuzz-data"),
       );
     });
 
-    it("resolves cacheDir against Vite root", () => {
+    it("resolves dataDir against Vite root", () => {
       const instrument = findPlugin(
-        vitiatePlugin({ cacheDir: ".cache" }),
+        vitiatePlugin({ dataDir: ".data" }),
         "vitiate:instrument",
       );
       callConfig(instrument, { root: "/vite/root" });
       expect(getProjectRoot()).toBe(path.resolve("/vite/root"));
-      expect(getResolvedCacheDir()).toBe(path.resolve("/vite/root", ".cache"));
+      expect(getResolvedDataDir()).toBe(path.resolve("/vite/root", ".data"));
     });
 
-    it("does not set cache dir when cacheDir option is not provided", () => {
+    it("does not set data dir when dataDir option is not provided", () => {
       const instrument = findPlugin(vitiatePlugin(), "vitiate:instrument");
       callConfig(instrument, {});
-      expect(getResolvedCacheDir()).toBeUndefined();
+      expect(getResolvedDataDir()).toBeUndefined();
     });
 
     it("sets VITIATE_FUZZ_OPTIONS when fuzz options are provided", () => {
@@ -176,10 +176,10 @@ describe("plugin", () => {
       );
     });
 
-    it("does not set VITIATE_FUZZ_OPTIONS when no fuzz options are provided but cacheDir is", () => {
+    it("does not set VITIATE_FUZZ_OPTIONS when no fuzz options are provided but dataDir is", () => {
       delete process.env["VITIATE_FUZZ_OPTIONS"];
       const instrument = findPlugin(
-        vitiatePlugin({ cacheDir: ".cache" }),
+        vitiatePlugin({ dataDir: ".cache" }),
         "vitiate:instrument",
       );
       callConfig(instrument, {});

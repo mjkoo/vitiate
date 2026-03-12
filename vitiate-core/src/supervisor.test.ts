@@ -16,7 +16,8 @@ import {
   WATCHDOG_EXIT_CODE,
   MAX_RESPAWNS,
 } from "./supervisor.js";
-import { sanitizeTestName } from "./corpus.js";
+import { hashTestPath } from "./nix-base32.js";
+import { setDataDir, resetDataDir } from "./config.js";
 
 /**
  * Create a mock ShmemHandle for testing. The supervisor calls:
@@ -38,10 +39,13 @@ function createMockShmem(
   return mock as unknown as ShmemHandle & { resetGenerationCount: number };
 }
 
+const TEST_RELATIVE_PATH = "tests/example.fuzz.ts";
+
 describe("runSupervisor", () => {
   let tmpDir: string;
 
   afterEach(() => {
+    resetDataDir();
     if (tmpDir) {
       rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -55,14 +59,16 @@ describe("runSupervisor", () => {
       ),
       { recursive: true },
     ) as string;
+    setDataDir(tmpDir);
     return tmpDir;
   }
 
   it("returns crashed=false with exitCode=0 on normal child exit", async () => {
     const shmem = createMockShmem();
+    makeTmpDir();
     const result = await runSupervisor({
       shmem,
-      testDir: makeTmpDir(),
+      relativeTestFilePath: TEST_RELATIVE_PATH,
       testName: "test-normal",
       spawnChild: () =>
         spawn(process.execPath, ["-e", "process.exit(0)"], {
@@ -77,9 +83,10 @@ describe("runSupervisor", () => {
 
   it("returns crashed=true with exitCode=1 on JS crash exit", async () => {
     const shmem = createMockShmem();
+    makeTmpDir();
     const result = await runSupervisor({
       shmem,
-      testDir: makeTmpDir(),
+      relativeTestFilePath: TEST_RELATIVE_PATH,
       testName: "test-crash",
       spawnChild: () =>
         spawn(process.execPath, ["-e", "process.exit(1)"], {
@@ -93,9 +100,10 @@ describe("runSupervisor", () => {
 
   it("returns crashed=false on unknown exit code", async () => {
     const shmem = createMockShmem();
+    makeTmpDir();
     const result = await runSupervisor({
       shmem,
-      testDir: makeTmpDir(),
+      relativeTestFilePath: TEST_RELATIVE_PATH,
       testName: "test-unknown",
       spawnChild: () =>
         spawn(process.execPath, ["-e", "process.exit(42)"], {
@@ -111,11 +119,12 @@ describe("runSupervisor", () => {
     const dir = makeTmpDir();
     const shmem = createMockShmem(Buffer.from("timeout-input"));
     let spawnCount = 0;
+    const testName = "test-timeout";
 
     const result = await runSupervisor({
       shmem,
-      testDir: dir,
-      testName: "test-timeout",
+      relativeTestFilePath: TEST_RELATIVE_PATH,
+      testName,
       maxRespawns: 3,
       spawnChild: () => {
         spawnCount++;
@@ -133,12 +142,8 @@ describe("runSupervisor", () => {
     expect(shmem.resetGenerationCount).toBe(3);
 
     // Timeout artifact should have been written (3 times, same hash = 1 file)
-    const artifactDir = path.join(
-      dir,
-      "testdata",
-      "fuzz",
-      sanitizeTestName("test-timeout"),
-    );
+    const hashDir = hashTestPath(TEST_RELATIVE_PATH, testName);
+    const artifactDir = path.join(dir, "testdata", hashDir, "timeouts");
     const files = readdirSync(artifactDir);
     expect(files.length).toBe(1);
     expect(files[0]).toMatch(/^timeout-/);
@@ -147,13 +152,13 @@ describe("runSupervisor", () => {
   it.skipIf(process.platform === "win32")(
     "respawns on signal death and eventually hits respawn limit",
     async () => {
-      const dir = makeTmpDir();
+      makeTmpDir();
       const shmem = createMockShmem(Buffer.from("crash-input"));
       let spawnCount = 0;
 
       const result = await runSupervisor({
         shmem,
-        testDir: dir,
+        relativeTestFilePath: TEST_RELATIVE_PATH,
         testName: "test-signal",
         maxRespawns: 2,
         spawnChild: () => {
@@ -177,11 +182,12 @@ describe("runSupervisor", () => {
   it("writes no crash artifact when shmem has empty input", async () => {
     const dir = makeTmpDir();
     const shmem = createMockShmem(Buffer.alloc(0));
+    const testName = "test-empty";
 
     await runSupervisor({
       shmem,
-      testDir: dir,
-      testName: "test-empty",
+      relativeTestFilePath: TEST_RELATIVE_PATH,
+      testName,
       maxRespawns: 1,
       spawnChild: () =>
         spawn(process.execPath, ["-e", `process.exit(${WATCHDOG_EXIT_CODE})`], {
@@ -190,22 +196,19 @@ describe("runSupervisor", () => {
     });
 
     // No artifact directory should be created when shmem is empty
-    const artifactDir = path.join(
-      dir,
-      "testdata",
-      "fuzz",
-      sanitizeTestName("test-empty"),
-    );
-    expect(() => readdirSync(artifactDir)).toThrow();
+    const hashDir = hashTestPath(TEST_RELATIVE_PATH, testName);
+    const artifactDir = path.join(dir, "testdata", hashDir, "timeouts");
+    expect(existsSync(artifactDir)).toBe(false);
   });
 
   it("respawns correctly then returns clean exit", async () => {
     const shmem = createMockShmem(Buffer.from("input"));
     let spawnCount = 0;
+    makeTmpDir();
 
     const result = await runSupervisor({
       shmem,
-      testDir: makeTmpDir(),
+      relativeTestFilePath: TEST_RELATIVE_PATH,
       testName: "test-recover",
       maxRespawns: 5,
       spawnChild: () => {
@@ -230,7 +233,7 @@ describe("runSupervisor", () => {
 
     const result = await runSupervisor({
       shmem,
-      testDir: dir,
+      relativeTestFilePath: TEST_RELATIVE_PATH,
       testName: "test-prefix",
       artifactPrefix: artifactDir,
       maxRespawns: 1,
@@ -252,13 +255,13 @@ describe("runSupervisor", () => {
     );
   });
 
-  it("writes crash artifact to testdata/fuzz/ when artifactPrefix is not set", async () => {
-    const dir = makeTmpDir();
+  it("writes crash artifact to testdata/ when artifactPrefix is not set", async () => {
+    makeTmpDir();
     const shmem = createMockShmem(Buffer.from("crash-input"));
 
     const result = await runSupervisor({
       shmem,
-      testDir: dir,
+      relativeTestFilePath: TEST_RELATIVE_PATH,
       testName: "test-no-prefix",
       maxRespawns: 1,
       spawnChild: () =>
@@ -270,7 +273,7 @@ describe("runSupervisor", () => {
     expect(result.crashed).toBe(true);
     expect(result.crashArtifactPath).toBeDefined();
     expect(result.crashArtifactPath!).toContain(
-      path.join("testdata", "fuzz") + path.sep,
+      path.join("testdata") + path.sep,
     );
     expect(path.basename(result.crashArtifactPath!)).toMatch(
       /^timeout-[0-9a-f]{64}$/,
@@ -286,9 +289,10 @@ describe("runSupervisor", () => {
     "treats child signal death as non-crash when SIGINT was received",
     async () => {
       const shmem = createMockShmem();
+      makeTmpDir();
       const result = await runSupervisor({
         shmem,
-        testDir: makeTmpDir(),
+        relativeTestFilePath: TEST_RELATIVE_PATH,
         testName: "test-sigint",
         spawnChild: () => {
           // Emit SIGINT on the parent to set sigintReceived flag.
@@ -301,7 +305,7 @@ describe("runSupervisor", () => {
           );
         },
       });
-      // Without SIGINT flag, SIGKILL death → crash. With flag → clean exit.
+      // Without SIGINT flag, SIGKILL death -> crash. With flag -> clean exit.
       expect(result.crashed).toBe(false);
     },
   );
