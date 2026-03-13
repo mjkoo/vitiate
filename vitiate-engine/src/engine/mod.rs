@@ -247,7 +247,8 @@ impl Fuzzer {
 
         let base_scheduler = ProbabilitySamplingScheduler::new();
         let tracking_observer = temp_observer.track_indices();
-        let scheduler = MinimizerScheduler::new(&tracking_observer, base_scheduler);
+        let scheduler =
+            MinimizerScheduler::non_metadata_removing(&tracking_observer, base_scheduler);
         let mutator = HavocScheduledMutator::new(havoc_mutations().merge(tokens_mutations()));
         let i2s_mutator = I2SSpliceReplace::new();
         let redqueen_mutator = AflppRedQueen::with_cmplog_options(true, true);
