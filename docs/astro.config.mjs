@@ -96,6 +96,10 @@ export default defineConfig({
             },
             { label: "CI Fuzzing", slug: "guides/ci-fuzzing" },
             { label: "Standalone CLI", slug: "guides/cli" },
+            {
+              label: "Migrating from Jazzer.js",
+              slug: "guides/migrating-from-jazzerjs",
+            },
             { label: "Troubleshooting", slug: "guides/troubleshooting" },
           ],
         },
