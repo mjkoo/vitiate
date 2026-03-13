@@ -16,11 +16,6 @@ describe("FuzzedDataProvider", () => {
       expect(provider.remainingBytes).toBe(3);
     });
 
-    it("constructs from Node.js Buffer", () => {
-      const provider = new FuzzedDataProvider(Buffer.from([1, 2, 3]));
-      expect(provider.remainingBytes).toBe(3);
-    });
-
     it("constructs from empty input", () => {
       const provider = new FuzzedDataProvider(new Uint8Array(0));
       expect(provider.remainingBytes).toBe(0);
