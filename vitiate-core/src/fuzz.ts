@@ -4,11 +4,6 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { test } from "vitest";
-// Vitest coupling: getCurrentTest() is expected to return a Test object with
-// .name, .file.filepath, and a .suite chain (Suite with .name and .suite).
-// The suite chain is walked in buildTestNamePattern(). If Vitest changes this
-// shape, update buildTestNamePattern() accordingly. Verified against vitest 3.x.
-import { getCurrentTest } from "vitest/suite";
 import escapeStringRegexp from "escape-string-regexp";
 import { ShmemHandle } from "@vitiate/engine";
 import type { FuzzOptions } from "./config.js";
@@ -57,9 +52,19 @@ type FuzzTarget = (data: Buffer) => void | Promise<void>;
 /** INT32_MAX - disables Vitest's built-in timeout so vitiate manages its own. */
 const VITEST_NO_TIMEOUT = 2_147_483_647;
 
-function getTestFilePath(): string {
-  const current = getCurrentTest();
-  const filepath = current?.file?.filepath;
+// Vitest coupling: the test callback receives a TestContext with a `task`
+// property. We use task.file.filepath and the task.suite chain. We define a
+// minimal structural type instead of importing from vitest/suite to avoid
+// module identity issues when vitiate is file-linked into a consumer project
+// (the consumer's vitest and vitiate's vitest would be separate instances).
+interface VitestTask {
+  name: string;
+  file: { filepath: string };
+  suite?: VitestTask;
+}
+
+function getTestFilePath(task: VitestTask): string {
+  const filepath = task.file?.filepath;
   if (!filepath) {
     throw new Error(
       "vitiate: could not determine test file path. Ensure fuzz() is called inside a test callback.",
@@ -68,8 +73,8 @@ function getTestFilePath(): string {
   return filepath;
 }
 
-function getRelativeTestFilePath(): string {
-  const absolutePath = getTestFilePath();
+function getRelativeTestFilePath(task: VitestTask): string {
+  const absolutePath = getTestFilePath(task);
   const projectRoot = getProjectRoot();
   return path.relative(projectRoot, absolutePath);
 }
@@ -91,21 +96,13 @@ export function buildTestNamePatternFromNames(
 
 /**
  * Build the --test-name-pattern for the currently executing test by walking
- * up the suite chain from `getCurrentTest()`.
+ * up the suite chain from the provided task.
  */
-function buildTestNamePattern(): string {
-  const current = getCurrentTest();
-  if (!current) {
-    throw new Error(
-      "vitiate: could not determine test context. " +
-        "Ensure fuzz() is called inside a test callback.",
-    );
-  }
-
+function buildTestNamePattern(task: VitestTask): string {
   // Collect describe/test names, walking up the suite chain.
   // Stop before the File node (where suite.suite is undefined).
-  const names: string[] = [current.name];
-  let suite = current.suite;
+  const names: string[] = [task.name];
+  let suite = task.suite;
   while (suite?.suite) {
     names.unshift(suite.name);
     suite = suite.suite;
@@ -151,8 +148,8 @@ function registerFuzzTest(
     // Optimize mode: replay corpus, run set cover, delete non-survivors
     register(
       name,
-      async () => {
-        const relativeTestFilePath = getRelativeTestFilePath();
+      async ({ task }) => {
+        const relativeTestFilePath = getRelativeTestFilePath(task);
         const seedEntries = loadTestDataCorpus(relativeTestFilePath, name).map(
           (data, i) => ({
             path: `seed-${i}`,
@@ -180,7 +177,7 @@ function registerFuzzTest(
     // Merge mode: replay corpus dirs, run set cover, write survivors
     register(
       name,
-      async () => {
+      async ({ task: _task }) => {
         const mergedOptions = { ...options, ...getCachedCliOptions() };
         const corpusDirs = getCorpusDirs();
         const controlFilePath = getMergeControlFile();
@@ -208,8 +205,8 @@ function registerFuzzTest(
       // Child mode: supervised - enter the fuzz loop directly
       register(
         name,
-        async () => {
-          const relativeTestFilePath = getRelativeTestFilePath();
+        async ({ task }) => {
+          const relativeTestFilePath = getRelativeTestFilePath(task);
           const libfuzzerCompat = isLibfuzzerCompat();
           const corpusOutputDir = getCorpusOutputDir();
           const artifactPrefix = getArtifactPrefix();
@@ -254,14 +251,14 @@ function registerFuzzTest(
       // Parent mode: become a supervisor for this fuzz test
       register(
         name,
-        async () => {
-          const relativeTestFilePath = getRelativeTestFilePath();
-          const testFilePath = getTestFilePath();
+        async ({ task }) => {
+          const relativeTestFilePath = getRelativeTestFilePath(task);
+          const testFilePath = getTestFilePath(task);
           const maxInputLen = mergedOptions.maxLen ?? DEFAULT_MAX_INPUT_LEN;
           const shmem = ShmemHandle.allocate(maxInputLen);
 
           const vitestCli = resolveVitestCli();
-          const testNamePattern = buildTestNamePattern();
+          const testNamePattern = buildTestNamePattern(task);
 
           const result = await runSupervisor({
             shmem,
@@ -298,8 +295,8 @@ function registerFuzzTest(
     // Detectors are installed so that snapshot-based detectors (prototype
     // pollution) and module-hook detectors (command injection, path
     // traversal) catch the same vulnerabilities they would in fuzz mode.
-    register(name, async () => {
-      const relativeTestFilePath = getRelativeTestFilePath();
+    register(name, async ({ task }) => {
+      const relativeTestFilePath = getRelativeTestFilePath(task);
       const testDataEntries = loadTestDataCorpus(relativeTestFilePath, name);
       const cached = loadCachedCorpus(relativeTestFilePath, name);
       const extraDirs = getCorpusDirs();
