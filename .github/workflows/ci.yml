@@ -112,17 +112,9 @@ jobs:
         run: pnpm exec eslint .
 
   test-macos:
-    name: Test (macOS ${{ matrix.arch }})
+    name: Test (macOS ARM64)
     if: inputs.test-macos == true
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-latest
-            arch: ARM64
-          - runner: macos-15-intel
-            arch: x86_64
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 

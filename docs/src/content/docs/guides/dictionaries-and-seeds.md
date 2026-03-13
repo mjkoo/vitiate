@@ -21,7 +21,7 @@ Seeds are example inputs that give the fuzzer a starting point. Place them in yo
     └── timeout-def456...  (timeout artifacts, auto-generated)
 ```
 
-The directory name is a Nix base32 encoded hash followed by the test name (e.g., `vxr4kpqyb12fza1gv81bjj8k3i64mlqn-parse_url`). Run `npx vitiate init` to create the directories, then add your seeds to the `seeds/` subdirectory.
+The directory name is a base32 encoded hash followed by the test name (e.g., `vxr4kpqyb12fza1gv81bjj8k3i64mlqn-parse_url`). Run `npx vitiate init` to create the directories, then add your seeds to the `seeds/` subdirectory.
 
 ### What Makes Good Seeds
 

@@ -7,7 +7,7 @@ The corpus is the set of inputs that the fuzzer has found useful. Understanding 
 
 ## Corpus Locations
 
-Vitiate loads inputs from two locations. Both use a **hash directory** name: a Nix base32 encoded hash followed by the test name (e.g., `vxr4kpqyb12fza1gv81bjj8k3i64mlqn-parse_url` for a test named `"parse-url"`).
+Vitiate loads inputs from two locations. Both use a **hash directory** name: a base32 encoded hash followed by the test name (e.g., `vxr4kpqyb12fza1gv81bjj8k3i64mlqn-parse_url` for a test named `"parse-url"`).
 
 ### Seed Corpus
 
