@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.2](https://github.com/mjkoo/vitiate/compare/v0.1.1...v0.1.2) (2026-03-13)
+
+
+### Bug Fixes
+
+* fix cross module instance issues ([73eac58](https://github.com/mjkoo/vitiate/commit/73eac589fc111b3f9641b99b939455fe8ca164b9))
+* fix testcase metadata erasure bug ([99a851e](https://github.com/mjkoo/vitiate/commit/99a851e22412390dd5916561c386cb6d7c16f99e))
+* fix windows e2e failures ([23c731e](https://github.com/mjkoo/vitiate/commit/23c731e9f2d8596b19f98dc6fa03d0faebf4fc2d))
+* vitest 4.x fixes ([4cbd360](https://github.com/mjkoo/vitiate/commit/4cbd3600bc63e4c76264704367bced3208ecf048))
+* windows tests broken by new naming scheme ([8159848](https://github.com/mjkoo/vitiate/commit/8159848ebe714878f0965e4ef9b0d02ff3dc455a))
+
 ## [0.1.1](https://github.com/mjkoo/vitiate/compare/v0.1.0...v0.1.1) (2026-03-12)
 
 
