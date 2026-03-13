@@ -14,6 +14,10 @@ const _: () = assert!(size_of::<AtomicBool>() == 1);
 pub(crate) struct VitiateRunTargetResult {
     pub(crate) exit_kind: i32,
     pub(crate) value: napi::sys::napi_value,
+    /// Raw return value from `napi_call_function`. For async targets this is the
+    /// Promise. Carried separately from the JS result object so Rust can set the
+    /// "result" property via napi-rs with proper error handling.
+    pub(crate) fn_result: napi::sys::napi_value,
 }
 
 unsafe extern "C" {
@@ -68,6 +72,7 @@ pub(crate) fn run_target_ffi(
     let mut out = VitiateRunTargetResult {
         exit_kind: 0,
         value: std::ptr::null_mut(),
+        fn_result: std::ptr::null_mut(),
     };
     // SAFETY: Called from the main thread with valid NAPI handles.
     // The `fired` pointer remains valid for the duration of the call

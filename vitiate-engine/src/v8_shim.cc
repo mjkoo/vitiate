@@ -66,8 +66,9 @@ typedef enum {
 
 // Result struct returned to Rust
 struct VitiateRunTargetResult {
-    int32_t exit_kind; // 0=Ok, 1=Crash, 2=Timeout
-    napi_value value;  // The result object { exitKind, error?, result? }
+    int32_t exit_kind;    // 0=Ok, 1=Crash, 2=Timeout
+    napi_value value;     // The result object { exitKind, error? }
+    napi_value fn_result; // Raw return value from napi_call_function (Promise for async targets)
 };
 
 // --- ABI safety assertions ---
@@ -293,10 +294,15 @@ int vitiate_run_target(
         if (set_prop_u32(env, obj, "exitKind", 0) != vitiate_napi_ok) {
             return 0;
         }
-        // result is best-effort — non-critical if it fails
-        set_prop_value(env, obj, "result", result_value);
+        // Pass the raw return value (Promise for async targets) through the
+        // struct rather than setting it as a JS property. The Rust caller sets
+        // the "result" property via napi-rs, which has proper error propagation.
+        // Previously, set_prop_value was used here but its return was unchecked,
+        // causing silent failures on Windows where the Promise was lost and
+        // async target coverage was never awaited.
         out->exit_kind = 0;
         out->value = obj;
+        out->fn_result = result_value;
         return 1;
     }
 

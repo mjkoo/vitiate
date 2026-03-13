@@ -376,7 +376,16 @@ impl Watchdog {
             v8_shim::run_target_ffi(raw_env, target_value, input_value, &self.shared.fired)
         {
             self.disarm();
-            return Ok(Object::from_raw(raw_env, result.value));
+            let mut obj = Object::from_raw(raw_env, result.value);
+            // Set the "result" property (target's return value) via napi-rs.
+            // For async targets this is the Promise that the JS caller must await.
+            // Previously this was done in the C++ shim via set_prop_value with an
+            // unchecked return, which silently failed on Windows and caused the
+            // async continuation to never be awaited (coverage lost).
+            if !result.fn_result.is_null() {
+                obj.set("result", result.fn_result)?;
+            }
+            return Ok(obj);
         }
 
         // Fallback path: C++ shim not initialized (cargo test, symbol resolution
