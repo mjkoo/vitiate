@@ -27,7 +27,7 @@ npx vitiate <subcommand> [options]
 npx vitiate fuzz [flags] [-- vitest-args...]
 ```
 
-Sets `VITIATE_FUZZ=1` and spawns `vitest run` filtered to `*.fuzz.ts` files. Unrecognized flags are forwarded to vitest.
+Sets `VITIATE_FUZZ=1` and spawns `vitest run` filtered to fuzz test files (`*.fuzz.*`). Unrecognized flags are forwarded to vitest.
 
 ### Flags
 
@@ -46,7 +46,7 @@ Sets `VITIATE_FUZZ=1` and spawns `vitest run` filtered to `*.fuzz.ts` files. Unr
 npx vitiate regression [flags] [-- vitest-args...]
 ```
 
-Spawns `vitest run` filtered to `*.fuzz.ts` files with no special environment variables. Runs saved corpus and crash inputs as regression tests. Unrecognized flags are forwarded to vitest.
+Spawns `vitest run` filtered to fuzz test files (`*.fuzz.*`) with no special environment variables. Runs saved corpus and crash inputs as regression tests. Unrecognized flags are forwarded to vitest.
 
 ### Flags
 
@@ -62,7 +62,7 @@ Spawns `vitest run` filtered to `*.fuzz.ts` files with no special environment va
 npx vitiate optimize [flags] [-- vitest-args...]
 ```
 
-Sets `VITIATE_OPTIMIZE=1` and spawns `vitest run` filtered to `*.fuzz.ts` files. Minimizes the cached corpus via set cover. Unrecognized flags are forwarded to vitest.
+Sets `VITIATE_OPTIMIZE=1` and spawns `vitest run` filtered to fuzz test files (`*.fuzz.*`). Minimizes the cached corpus via set cover. Unrecognized flags are forwarded to vitest.
 
 ### Flags
 
@@ -146,7 +146,7 @@ These flags are parsed for libFuzzer/OSS-Fuzz compatibility but ignored:
 npx vitiate init
 ```
 
-Discovers `*.fuzz.ts` test files, creates seed directories under `.vitiate/testdata/`, and ensures `.vitiate/corpus/` is in `.gitignore`. No flags.
+Discovers fuzz test files (`*.fuzz.ts`, `*.fuzz.js`, etc.), creates seed directories under `.vitiate/testdata/`, and ensures `.vitiate/corpus/` is in `.gitignore`. No flags.
 
 ---
 

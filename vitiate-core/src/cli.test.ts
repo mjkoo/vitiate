@@ -8,11 +8,20 @@ import {
   type MockInstance,
 } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { createVitest } from "vitest/node";
 import { parseArgs, parseDetectorsFlag, main } from "./cli.js";
-import { getCliOptions } from "./config.js";
+import {
+  getCliOptions,
+  setDataDir,
+  resetDataDir,
+  setProjectRoot,
+  resetProjectRoot,
+} from "./config.js";
+import { hashTestPath } from "./nix-base32.js";
+import { getTestDataDir } from "./corpus.js";
 
 vi.mock("node:child_process", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:child_process")>();
@@ -21,6 +30,14 @@ vi.mock("node:child_process", async (importOriginal) => {
     spawnSync: vi.fn(original.spawnSync),
   };
 });
+
+// File-scoped mock: vi.mock is always hoisted by vitest.
+// Required for init subcommand tests. Does not interfere with other tests
+// since they use spawnSync to invoke vitest rather than createVitest/startVitest.
+vi.mock("vitest/node", () => ({
+  createVitest: vi.fn(),
+  startVitest: vi.fn(),
+}));
 
 function argv(...args: string[]): string[] {
   return ["node", "vitiate", ...args];
@@ -653,7 +670,7 @@ describe("subcommand dispatch", () => {
     }
   });
 
-  it("fuzz subcommand passes .fuzz.ts as a positional filter to vitest", async () => {
+  it("fuzz subcommand passes .fuzz. as a positional filter to vitest", async () => {
     process.argv = ["node", "vitiate", "fuzz", "--reporter", "verbose"];
     mockSpawnSuccess();
     await main();
@@ -661,9 +678,9 @@ describe("subcommand dispatch", () => {
     expect(mockSpawnSync).toHaveBeenCalledOnce();
     const [, args] = mockSpawnSync.mock.calls[0]!;
     const argsList = args as string[];
-    // Should contain "run", ".fuzz.ts" as positional filter, and forwarded args
+    // Should contain "run", ".fuzz." as positional filter, and forwarded args
     expect(argsList).toContain("run");
-    expect(argsList).toContain(".fuzz.ts");
+    expect(argsList).toContain(".fuzz.");
     expect(argsList).toContain("--reporter");
     expect(argsList).toContain("verbose");
     expect(argsList).not.toContain("--include");
@@ -1030,5 +1047,95 @@ describe("passThrough forwarding", () => {
     const argsList = args as string[];
     expect(argsList).toContain("--test-name-pattern");
     expect(argsList).toContain("parses URLs");
+  });
+});
+
+describe("init subcommand filters to fuzz test modules only", () => {
+  let tmpDir: string;
+  let savedArgv: string[];
+  let savedExitCode: typeof process.exitCode;
+
+  beforeEach(() => {
+    savedArgv = [...process.argv];
+    savedExitCode = process.exitCode;
+    tmpDir = path.join(
+      tmpdir(),
+      `vitiate-init-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    mkdirSync(tmpDir, { recursive: true });
+    setDataDir(tmpDir);
+    setProjectRoot(tmpDir);
+  });
+
+  afterEach(() => {
+    process.argv = savedArgv;
+    process.exitCode = savedExitCode;
+    resetDataDir();
+    resetProjectRoot();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("only creates seed directories for .fuzz.ts modules, not .test.ts", async () => {
+    const fuzzFile = path.join(tmpDir, "src", "parser.fuzz.ts");
+    const testFile = path.join(tmpDir, "src", "parser.test.ts");
+
+    // Mock test modules: one fuzz file and one regular test file
+    const mockModules = [
+      {
+        moduleId: fuzzFile,
+        children: {
+          allTests: function* () {
+            yield { fullName: "parses JSON" };
+          },
+        },
+      },
+      {
+        moduleId: testFile,
+        children: {
+          allTests: function* () {
+            yield { fullName: "unit test" };
+          },
+        },
+      },
+    ];
+
+    const mockVitest = {
+      globTestSpecifications: vi.fn().mockResolvedValue([{ id: "spec1" }]),
+      collectTests: vi.fn().mockResolvedValue(undefined),
+      state: {
+        getTestModules: vi.fn().mockReturnValue(mockModules),
+      },
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+
+    vi.mocked(createVitest).mockResolvedValue(
+      mockVitest as unknown as ReturnType<typeof createVitest> extends Promise<
+        infer T
+      >
+        ? T
+        : never,
+    );
+
+    // Capture stdout to suppress output
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+
+    process.argv = ["node", "vitiate", "init"];
+    try {
+      await main();
+    } finally {
+      stdoutSpy.mockRestore();
+    }
+
+    // The fuzz test should have a seed directory
+    const fuzzRelative = path.relative(tmpDir, fuzzFile);
+    const fuzzTestDataDir = getTestDataDir(fuzzRelative, "parses JSON");
+    const fuzzSeedDir = path.join(fuzzTestDataDir, "seeds");
+    expect(existsSync(fuzzSeedDir)).toBe(true);
+
+    // The unit test should NOT have a seed directory
+    const unitRelative = path.relative(tmpDir, testFile);
+    const unitTestHashDir = hashTestPath(unitRelative, "unit test");
+    const unitTestDataDir = path.join(tmpDir, "testdata", unitTestHashDir);
+    expect(existsSync(unitTestDataDir)).toBe(false);
   });
 });

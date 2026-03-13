@@ -2,6 +2,7 @@
  * Mode detection and configuration for vitiate.
  */
 
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import * as v from "valibot";
@@ -579,7 +580,17 @@ export function resolveStopOnCrash(
 /** Resolve the vitest CLI entry point from the current module context. */
 export function resolveVitestCli(): string {
   const require = createRequire(import.meta.url);
-  return require.resolve("vitest/vitest.mjs");
+  const packageJsonPath = require.resolve("vitest/package.json");
+  const packageDir = path.dirname(packageJsonPath);
+  const pkg = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+  const bin = typeof pkg.bin === "string" ? pkg.bin : pkg.bin?.vitest;
+  if (typeof bin !== "string") {
+    throw new Error(
+      `vitiate: could not resolve vitest CLI entry point from ${packageJsonPath} ` +
+        `(pkg.bin = ${JSON.stringify(pkg.bin)})`,
+    );
+  }
+  return path.resolve(packageDir, bin);
 }
 
 /** Default max input length in bytes for shmem allocation. */

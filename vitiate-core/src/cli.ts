@@ -3,9 +3,9 @@
  *
  * Subcommands:
  * - **init**: Discover fuzz tests, create seed directories, manage .gitignore.
- * - **fuzz**: Set VITIATE_FUZZ=1, spawn vitest run with *.fuzz.ts filter.
- * - **regression**: Spawn vitest run with *.fuzz.ts filter (no special env vars).
- * - **optimize**: Set VITIATE_OPTIMIZE=1, spawn vitest run with *.fuzz.ts filter.
+ * - **fuzz**: Set VITIATE_FUZZ=1, spawn vitest run with fuzz test filter.
+ * - **regression**: Spawn vitest run with fuzz test filter (no special env vars).
+ * - **optimize**: Set VITIATE_OPTIMIZE=1, spawn vitest run with fuzz test filter.
  * - **libfuzzer**: All existing CLI behavior (parent/child supervisor, shmem, libFuzzer flags).
  */
 import { spawn, spawnSync } from "node:child_process";
@@ -52,6 +52,12 @@ import {
 import { KNOWN_DETECTOR_KEYS } from "./detectors/index.js";
 import { hashTestPath } from "./nix-base32.js";
 import { getTestDataDir } from "./corpus.js";
+
+/** Glob matching all fuzz test file extensions supported by vitest. */
+const FUZZ_FILE_GLOB = "**/*.fuzz.{ts,tsx,js,jsx,mts,mjs,cts,cjs}";
+
+/** Regex matching fuzz test file suffixes across all vitest-supported extensions. */
+const FUZZ_FILE_SUFFIX_RE = /\.fuzz\.[cm]?[jt]sx?$/;
 
 export interface CliArgs {
   testFile: string;
@@ -743,7 +749,7 @@ function spawnVitestWrapper(
     process.exitCode = 1;
     return;
   }
-  const args = [vitestCli, "run", ".fuzz.ts", ...forwardedArgs];
+  const args = [vitestCli, "run", ".fuzz.", ...forwardedArgs];
 
   const result = spawnSync(process.execPath, args, {
     env: { ...process.env, ...env },
@@ -771,7 +777,7 @@ async function runInitSubcommand(): Promise<void> {
   const vitest = await createVitest(
     "test",
     {
-      include: ["**/*.fuzz.ts"],
+      include: [FUZZ_FILE_GLOB],
     },
     {
       plugins: [vitiatePlugin({ instrument: {} })],
@@ -781,7 +787,7 @@ async function runInitSubcommand(): Promise<void> {
   try {
     const specs = await vitest.globTestSpecifications();
     if (specs.length === 0) {
-      process.stdout.write("No *.fuzz.ts test files found.\n");
+      process.stdout.write("No fuzz test files (*.fuzz.*) found.\n");
       return;
     }
 
@@ -797,7 +803,9 @@ async function runInitSubcommand(): Promise<void> {
     }[] = [];
 
     for (const module of vitest.state.getTestModules()) {
-      const relativeFile = path.relative(projectRoot, module.moduleId);
+      const filePath = module.moduleId;
+      if (!FUZZ_FILE_SUFFIX_RE.test(filePath)) continue;
+      const relativeFile = path.relative(projectRoot, filePath);
 
       for (const testCase of module.children.allTests()) {
         const testName = testCase.fullName;
@@ -810,7 +818,7 @@ async function runInitSubcommand(): Promise<void> {
     }
 
     if (tests.length === 0) {
-      process.stdout.write("No fuzz() tests found in *.fuzz.ts files.\n");
+      process.stdout.write("No fuzz() tests found in fuzz test files.\n");
       return;
     }
 

@@ -180,10 +180,15 @@ describe("supervisor mode detection", () => {
 });
 
 describe("resolveVitestCli", () => {
-  it("resolves to a path that exists and ends with vitest.mjs", () => {
+  it("resolves to a path that exists", () => {
     const cliPath = resolveVitestCli();
-    expect(cliPath).toMatch(/vitest\.mjs$/);
     expect(existsSync(cliPath)).toBe(true);
+  });
+
+  it("resolves to a path inside the vitest package directory", () => {
+    const cliPath = resolveVitestCli();
+    expect(cliPath).toContain(path.join("node_modules", "vitest"));
+    expect(cliPath).toMatch(/\.[cm]?js$/);
   });
 });
 
