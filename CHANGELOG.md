@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/mjkoo/vitiate/compare/v0.1.2...v0.1.3) (2026-03-14)
+
+
+### Bug Fixes
+
+* fix stack frame dedupe and flaky minimization test ([9cc8836](https://github.com/mjkoo/vitiate/commit/9cc88368d3efa733afe36a08b11130acf4020b8a))
+
 ## [0.1.2](https://github.com/mjkoo/vitiate/compare/v0.1.1...v0.1.2) (2026-03-13)
 
 

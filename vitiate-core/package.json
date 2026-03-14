@@ -1,6 +1,6 @@
 {
   "name": "@vitiate/core",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "A modern fuzzer for the JavaScript ecosystem - Vitest plugin, fuzz API, CLI, and corpus management",
   "license": "MIT",
   "repository": {
