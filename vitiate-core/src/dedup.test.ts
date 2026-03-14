@@ -25,12 +25,29 @@ describe("normalizeStackForDedup", () => {
   it("strips async prefix from frames", () => {
     const stack = [
       "Error: async boom",
-      "    at async processTicksAndRejections (node:internal/process/task_queues:95:5)",
+      "    at async myFunc (/src/app.js:10:5)",
     ].join("\n");
 
-    expect(normalizeStackForDedup(stack)).toBe(
-      "processTicksAndRejections@node:internal/process/task_queues",
-    );
+    expect(normalizeStackForDedup(stack)).toBe("myFunc@/src/app.js");
+  });
+
+  it("skips node: internal frames", () => {
+    const stack = [
+      "Error: async boom",
+      "    at async processTicksAndRejections (node:internal/process/task_queues:95:5)",
+      "    at myFunc (/src/app.js:10:5)",
+    ].join("\n");
+
+    expect(normalizeStackForDedup(stack)).toBe("myFunc@/src/app.js");
+  });
+
+  it("returns undefined when all frames are node: internal", () => {
+    const stack = [
+      "Error: boom",
+      "    at processTicksAndRejections (node:internal/process/task_queues:95:5)",
+    ].join("\n");
+
+    expect(normalizeStackForDedup(stack)).toBeUndefined();
   });
 
   it("truncates to top 5 frames", () => {
@@ -119,26 +136,24 @@ describe("normalizeStackForDedup", () => {
     expect(normalizeStackForDedup(stack)).toBe("eval@/path/to/file.js");
   });
 
-  it("handles eval frames with node: scheme outer path", () => {
+  it("skips eval frames with node: scheme outer path", () => {
     const stack = [
       "Error: eval crash",
       "    at eval (eval at myFunc (node:internal/process/task_queues:10:5), <anonymous>:1:1)",
+      "    at foo (/src/app.js:10:5)",
     ].join("\n");
 
-    expect(normalizeStackForDedup(stack)).toBe(
-      "eval@node:internal/process/task_queues",
-    );
+    expect(normalizeStackForDedup(stack)).toBe("foo@/src/app.js");
   });
 
-  it("handles bare node: scheme paths without parens", () => {
+  it("skips bare node: scheme paths without parens", () => {
     const stack = [
       "Error: boom",
       "    at node:internal/process/task_queues:95:5",
+      "    at foo (/src/app.js:10:5)",
     ].join("\n");
 
-    expect(normalizeStackForDedup(stack)).toBe(
-      "@node:internal/process/task_queues",
-    );
+    expect(normalizeStackForDedup(stack)).toBe("foo@/src/app.js");
   });
 
   it("handles Windows-style backslash paths", () => {
@@ -161,6 +176,28 @@ describe("normalizeStackForDedup", () => {
     const stack2 = [
       "Error: crash",
       "    at foo (C:\\Users\\foo\\file.js:99:15)",
+    ].join("\n");
+
+    expect(normalizeStackForDedup(stack1)).toBe(normalizeStackForDedup(stack2));
+  });
+
+  it("same crash with different node: internal frames produces same output", () => {
+    // Stack with a node:internal frame interleaved - should be skipped
+    const stack1 = [
+      "Error: crash",
+      "    at throwCrash (/src/app.js:10:5)",
+      "    at target (/src/app.js:20:3)",
+      "    at executeTarget (/src/loop.js:151:26)",
+      "    at runFuzzLoop (/src/loop.js:641:52)",
+      "    at processTicksAndRejections (node:internal/process/task_queues:95:5)",
+    ].join("\n");
+    // Same stack without the node:internal frame
+    const stack2 = [
+      "Error: crash",
+      "    at throwCrash (/src/app.js:10:5)",
+      "    at target (/src/app.js:20:3)",
+      "    at executeTarget (/src/loop.js:151:26)",
+      "    at runFuzzLoop (/src/loop.js:641:52)",
     ].join("\n");
 
     expect(normalizeStackForDedup(stack1)).toBe(normalizeStackForDedup(stack2));

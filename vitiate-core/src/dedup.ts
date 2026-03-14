@@ -32,7 +32,10 @@ export function normalizeStackForDedup(stack: string): string | undefined {
       /^eval \(eval at \S+ \((.+):\d+:\d+\),\s*<anonymous>:\d+:\d+\)$/,
     );
     if (evalMatch) {
-      frames.push(`eval@${evalMatch[1]}`);
+      const evalFile = evalMatch[1]!;
+      if (!evalFile.startsWith("node:")) {
+        frames.push(`eval@${evalFile}`);
+      }
       continue;
     }
 
@@ -69,7 +72,14 @@ export function normalizeStackForDedup(stack: string): string | undefined {
     const fileMatch = locationPart.match(/^(.+):\d+:\d+$/);
     if (!fileMatch) continue;
 
-    const fileName = fileMatch[1];
+    const fileName = fileMatch[1]!;
+
+    // Skip Node.js internal frames (node:internal/*, node:*). These are
+    // runtime implementation details that vary depending on the async
+    // context (microtask queue, immediate callback, etc.) and cause the
+    // same bug to produce different dedup keys.
+    if (fileName.startsWith("node:")) continue;
+
     frames.push(`${funcName}@${fileName}`);
   }
 
