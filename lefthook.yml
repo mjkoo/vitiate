@@ -17,6 +17,10 @@ pre-commit:
       glob: "*.rs"
       run: cargo clippy --workspace --all-targets -- --deny warnings
 
+    rust-doc:
+      glob: "*.rs"
+      run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+
     rust-deny:
       glob: "{*.rs,*.toml,Cargo.lock}"
       run: cargo deny check

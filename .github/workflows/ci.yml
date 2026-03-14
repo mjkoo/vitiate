@@ -44,6 +44,12 @@ jobs:
       - name: Format check
         run: cargo fmt --check && pnpm exec prettier --check .
 
+      - name: Doc check
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+
+      - name: Audit npm dependencies
+        run: pnpm audit
+
       - name: Type check
         run: pnpm exec turbo run check
 
