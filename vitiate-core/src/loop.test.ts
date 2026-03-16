@@ -23,6 +23,7 @@ describe("fuzz loop", () => {
   let tmpDir: string;
   const originalFuzz = process.env["VITIATE_FUZZ"];
   const originalCliIpc = process.env["VITIATE_CLI_IPC"];
+  const originalResultsFile = process.env["VITIATE_RESULTS_FILE"];
   const originalCov = globalThis.__vitiate_cov;
   const originalTrace = globalThis.__vitiate_trace_cmp;
 
@@ -38,6 +39,11 @@ describe("fuzz loop", () => {
       delete process.env["VITIATE_CLI_IPC"];
     } else {
       process.env["VITIATE_CLI_IPC"] = originalCliIpc;
+    }
+    if (originalResultsFile === undefined) {
+      delete process.env["VITIATE_RESULTS_FILE"];
+    } else {
+      process.env["VITIATE_RESULTS_FILE"] = originalResultsFile;
     }
     globalThis.__vitiate_cov = originalCov;
     globalThis.__vitiate_trace_cmp = originalTrace;
@@ -576,8 +582,10 @@ describe("fuzz loop", () => {
       expect(result.crashed).toBe(false);
       // Without CmpLog data (no I2S) and with Grimoire/REDQUEEN disabled, totalExecs === fuzzExecs.
       expect(result.totalExecs).toBe(50);
-      // callCount > totalExecs due to calibration re-runs.
-      expect(callCount).toBeGreaterThan(result.totalExecs);
+      // Calibration re-runs are counted separately.
+      expect(result.calibrationExecs).toBeGreaterThan(0);
+      // callCount = totalExecs + calibrationExecs (main loop + calibration re-runs).
+      expect(callCount).toBe(result.totalExecs + result.calibrationExecs);
     });
 
     it("writes crash artifact when target crashes during I2S stage", async () => {
@@ -1270,6 +1278,100 @@ describe("fuzz loop", () => {
       expect(result.crashed).toBe(false);
       expect(result.crashCount).toBe(0);
       expect(result.crashArtifactPaths).toEqual([]);
+    });
+
+    it("includes calibrationExecs in result", async () => {
+      await setupFuzzingMode();
+      const covMap = globalThis.__vitiate_cov as Buffer;
+      const target = (data: Buffer): void => {
+        simulateCoverage(data);
+        if (data.length > 0) {
+          covMap[data[0]!] = 1;
+        }
+      };
+
+      const result = await runFuzzLoop(
+        target,
+        "cal-execs-field",
+        "test.fuzz.ts",
+        { fuzzExecs: 20, grimoire: false, unicode: false, redqueen: false },
+      );
+
+      expect(result.calibrationExecs).toBeGreaterThan(0);
+    });
+  });
+
+  describe("results file output", () => {
+    it("writes results file when VITIATE_RESULTS_FILE is set", async () => {
+      await setupFuzzingMode();
+      const resultsPath = path.join(tmpDir, "results.json");
+      process.env["VITIATE_RESULTS_FILE"] = resultsPath;
+
+      const target = (data: Buffer): void => {
+        simulateCoverage(data);
+      };
+
+      await runFuzzLoop(target, "results-file", "test.fuzz.ts", {
+        fuzzExecs: 10,
+        grimoire: false,
+        unicode: false,
+        redqueen: false,
+        quiet: true,
+      });
+
+      expect(existsSync(resultsPath)).toBe(true);
+      const parsed = JSON.parse(readFileSync(resultsPath, "utf-8"));
+      expect(parsed.crashed).toBe(false);
+      expect(parsed.totalExecs).toBe(10);
+      expect(typeof parsed.calibrationExecs).toBe("number");
+      expect(typeof parsed.coverageFeatures).toBe("number");
+      expect(typeof parsed.elapsedMs).toBe("number");
+      expect(parsed.error).toBeUndefined();
+    });
+
+    it("does not write results file when env var is unset", async () => {
+      await setupFuzzingMode();
+      delete process.env["VITIATE_RESULTS_FILE"];
+
+      const target = (data: Buffer): void => {
+        simulateCoverage(data);
+      };
+
+      await runFuzzLoop(target, "no-results-file", "test.fuzz.ts", {
+        fuzzExecs: 5,
+        grimoire: false,
+        unicode: false,
+        redqueen: false,
+        quiet: true,
+      });
+
+      // No results file should exist anywhere in tmpDir with that name
+      expect(existsSync(path.join(tmpDir, "results.json"))).toBe(false);
+    });
+
+    it("includes crash info in results file when target crashes", async () => {
+      await setupFuzzingMode();
+      const resultsPath = path.join(tmpDir, "crash-results.json");
+      process.env["VITIATE_RESULTS_FILE"] = resultsPath;
+
+      const target = (data: Buffer): void => {
+        simulateCoverage(data);
+        if (data.length > 0 && data[0] === 0x42) {
+          throw new Error("boom");
+        }
+      };
+
+      await runFuzzLoop(target, "results-crash", "test.fuzz.ts", {
+        fuzzExecs: 1_000_000,
+        quiet: true,
+      });
+
+      expect(existsSync(resultsPath)).toBe(true);
+      const parsed = JSON.parse(readFileSync(resultsPath, "utf-8"));
+      expect(parsed.crashed).toBe(true);
+      expect(parsed.crashCount).toBeGreaterThanOrEqual(1);
+      expect(parsed.crashArtifactPaths.length).toBeGreaterThanOrEqual(1);
+      expect(parsed.error).toBe("boom");
     });
   });
 

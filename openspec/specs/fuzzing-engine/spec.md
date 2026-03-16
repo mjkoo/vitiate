@@ -275,12 +275,13 @@ When `reportResult()` returns `Interesting`, the most recently added corpus ID S
 
 The system SHALL provide `fuzzer.calibrateRun(execTimeNs: number)` which performs one calibration iteration for the most recently added corpus entry. The method SHALL:
 
-1. Accumulate the execution time (converting `execTimeNs` from nanoseconds as `f64` to `Duration`).
-2. Read the current coverage map into a snapshot.
-3. On the first call after `reportResult()` returned `Interesting`: store the snapshot as the baseline.
-4. On subsequent calls: compare the snapshot against the baseline and mark differing indices as unstable. Set the `cal_has_unstable` flag if any new unstable edges are found.
-5. Zero the coverage map for the next run.
-6. Return `true` if more calibration runs are needed, `false` if calibration is complete.
+1. Increment the `calibrationExecs` counter (each call represents one target invocation).
+2. Accumulate the execution time (converting `execTimeNs` from nanoseconds as `f64` to `Duration`).
+3. Read the current coverage map into a snapshot.
+4. On the first call after `reportResult()` returned `Interesting`: store the snapshot as the baseline.
+5. On subsequent calls: compare the snapshot against the baseline and mark differing indices as unstable. Set the `cal_has_unstable` flag if any new unstable edges are found.
+6. Zero the coverage map for the next run.
+7. Return `true` if more calibration runs are needed, `false` if calibration is complete.
 
 The target run count SHALL be 4 (`CAL_STAGE_START`) if no unstable edges are detected, or 8 (`CAL_STAGE_MAX`) if unstable edges are detected. The iteration count includes the original fuzz iteration as run #1.
 
@@ -484,24 +485,37 @@ The `Fuzzer` struct SHALL include a `stage_state` field of type `StageState`. Th
 
 The system SHALL provide `fuzzer.stats` (getter) returning a `FuzzerStats` object with:
 
-- `totalExecs` (number): Total number of target invocations, including main-loop executions (via `reportResult()`), stage executions (via `advanceStage()`), and aborted stage executions (via `abortStage()`).
+- `totalExecs` (number): Total number of target invocations, including main-loop executions (via `reportResult()`), stage executions (via `advanceStage()`), and aborted stage executions (via `abortStage()`). Does NOT include calibration executions.
+- `calibrationExecs` (number): Total number of calibration target invocations (via `calibrateRun()`). Tracked separately from `totalExecs` because calibration re-runs the same input and does not produce new coverage. Users sum `totalExecs + calibrationExecs` for total target invocations.
 - `corpusSize` (number): Number of entries in the working corpus.
 - `solutionCount` (number): Number of crash/timeout inputs found. Includes both main-loop crashes (via `reportResult()`) and stage-discovered crashes (via `abortStage()` with `ExitKind.Crash` or `ExitKind.Timeout`).
 - `coverageEdges` (number): Number of distinct coverage map positions that have been
   observed nonzero across all iterations.
-- `execsPerSec` (number): Executions per second since Fuzzer creation.
+- `coverageFeatures` (number): Count of (edge, hit-count-bucket) pairs derived from the feedback's history map. For each non-zero entry in the history map, the raw max hit count is classified into an AFL-style bucket (1->1, 2->2, 3->3, 4-7->4, 8-15->5, 16-31->6, 32-127->7, 128-255->8). Each edge contributes its bucket index as the number of features (since lower buckets are necessarily crossed). Sum across all edges gives `coverageFeatures >= coverageEdges`. Analogous to libFuzzer's `ft` metric.
+- `execsPerSec` (number): Executions per second since Fuzzer creation (based on `totalExecs` only).
 
 #### Scenario: Stats at creation
 
 - **WHEN** `stats` is read immediately after Fuzzer creation
-- **THEN** `totalExecs` is 0, `corpusSize` is 0, `solutionCount` is 0,
-  `coverageEdges` is 0, and `execsPerSec` is 0
+- **THEN** `totalExecs` is 0, `calibrationExecs` is 0, `corpusSize` is 0, `solutionCount` is 0,
+  `coverageEdges` is 0, `coverageFeatures` is 0, and `execsPerSec` is 0
 
 #### Scenario: Stats after fuzzing with stages
 
 - **WHEN** 1000 main-loop iterations and 200 stage executions have been performed
 - **THEN** `stats.totalExecs` equals 1200
 - **AND** `stats.execsPerSec` reflects the combined throughput
+
+#### Scenario: Calibration execs counted separately
+
+- **WHEN** an interesting input triggers 3 calibration runs
+- **THEN** `stats.calibrationExecs` increases by 3
+- **AND** `stats.totalExecs` is unchanged by the calibration runs
+
+#### Scenario: Features count with varying hit counts
+
+- **WHEN** the coverage map has edges with hit counts [1, 5, 200]
+- **THEN** `stats.coverageFeatures` equals 1 + 4 + 8 = 13 (bucket indices summed)
 
 ### Requirement: End-to-end fuzzing loop
 

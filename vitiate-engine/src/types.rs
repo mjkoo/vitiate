@@ -51,8 +51,10 @@ pub enum IterationResult {
 #[napi(object)]
 pub struct FuzzerStats {
     pub total_execs: i64,
+    pub calibration_execs: i64,
     pub corpus_size: u32,
     pub solution_count: u32,
     pub coverage_edges: u32,
+    pub coverage_features: u32,
     pub execs_per_sec: f64,
 }

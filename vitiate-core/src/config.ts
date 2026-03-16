@@ -417,10 +417,21 @@ const KNOWN_VITIATE_ENV_VARS = new Set([
   "VITIATE_FUZZ_OPTIONS",
   "VITIATE_CLI_IPC",
   "VITIATE_DEBUG",
+  "VITIATE_RESULTS_FILE",
 ]);
 
 export function isDebugMode(): boolean {
   return envTruthy("VITIATE_DEBUG");
+}
+
+/**
+ * Read the `VITIATE_RESULTS_FILE` env var.
+ * Returns the file path if set and non-empty, or `undefined` otherwise.
+ */
+export function getResultsFilePath(): string | undefined {
+  const raw = process.env["VITIATE_RESULTS_FILE"];
+  if (raw === undefined || raw === "") return undefined;
+  return raw;
 }
 
 export function warnUnknownVitiateEnvVars(): void {

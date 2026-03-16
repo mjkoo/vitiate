@@ -187,9 +187,11 @@ export interface FuzzerConfig {
 
 export interface FuzzerStats {
   totalExecs: number
+  calibrationExecs: number
   corpusSize: number
   solutionCount: number
   coverageEdges: number
+  coverageFeatures: number
   execsPerSec: number
 }
 

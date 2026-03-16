@@ -454,6 +454,7 @@ describe("config", () => {
         "VITIATE_SHMEM",
         "VITIATE_FUZZ_OPTIONS",
         "VITIATE_CLI_IPC",
+        "VITIATE_RESULTS_FILE",
       ];
       const saved: Record<string, string | undefined> = {};
       for (const v of knownVars) {

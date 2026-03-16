@@ -62,6 +62,7 @@ impl Fuzzer {
     /// Perform one calibration iteration for the most recently added corpus entry.
     /// Returns `true` if more calibration runs are needed.
     pub(super) fn calibrate_run_impl(&mut self, exec_time_ns: f64) -> Result<bool> {
+        self.calibration_execs += 1;
         let exec_time = Duration::from_nanos(exec_time_ns as u64);
         self.calibration.total_time += exec_time;
         self.calibration.iterations += 1;

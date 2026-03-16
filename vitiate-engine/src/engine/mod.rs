@@ -145,6 +145,7 @@ pub struct Fuzzer {
     _coverage_map: Buffer,
     max_input_len: u32,
     total_execs: u64,
+    calibration_execs: u64,
     solution_count: u32,
     start_time: Instant,
     last_input: Option<BytesInput>,
@@ -349,6 +350,7 @@ impl Fuzzer {
             _coverage_map: coverage_map,
             max_input_len,
             total_execs: 0,
+            calibration_execs: 0,
             solution_count: 0,
             start_time: Instant::now(),
             last_input: None,
@@ -639,21 +641,68 @@ impl Fuzzer {
             0.0
         };
 
-        let coverage_edges = self
+        let (coverage_edges, coverage_features) = self
             .state
             .named_metadata_map()
             .get::<MapFeedbackMetadata<u8>>(EDGES_OBSERVER_NAME)
-            .map(|m| m.num_covered_map_indexes)
-            .unwrap_or(0);
+            .map(|m| {
+                (
+                    m.num_covered_map_indexes,
+                    compute_coverage_features(&m.history_map),
+                )
+            })
+            .unwrap_or((0, 0));
 
         FuzzerStats {
             total_execs: self.total_execs as i64,
+            calibration_execs: self.calibration_execs as i64,
             corpus_size: self.state.corpus().count() as u32,
             solution_count: self.solution_count,
             coverage_edges: coverage_edges as u32,
+            coverage_features,
             execs_per_sec,
         }
     }
+}
+
+/// AFL-style hit-count bucket index for coverage feature computation.
+///
+/// Maps a raw edge hit count (0-255) to its bucket index (0-8):
+/// - 0 -> 0 (not hit)
+/// - 1 -> 1, 2 -> 2, 3 -> 3, 4-7 -> 4, 8-15 -> 5, 16-31 -> 6, 32-127 -> 7, 128-255 -> 8
+///
+/// Each edge contributes `bucket_index` features because lower buckets are necessarily
+/// crossed on the way to the max. Summing across all edges gives `features >= edges`.
+const FEATURE_BUCKET_INDEX: [u8; 256] = {
+    let mut table = [0u8; 256];
+    let mut i = 1usize;
+    while i < 256 {
+        table[i] = match i {
+            1 => 1,
+            2 => 2,
+            3 => 3,
+            4..=7 => 4,
+            8..=15 => 5,
+            16..=31 => 6,
+            32..=127 => 7,
+            128..=255 => 8,
+            _ => unreachable!(),
+        };
+        i += 1;
+    }
+    table
+};
+
+/// Compute coverage features from a feedback history map.
+///
+/// For each non-zero entry, the bucket index represents how many distinct
+/// hit-count thresholds that edge has crossed. Summing these gives a feature
+/// count analogous to libFuzzer's `ft` metric.
+pub(crate) fn compute_coverage_features(history_map: &[u8]) -> u32 {
+    history_map
+        .iter()
+        .map(|&count| FEATURE_BUCKET_INDEX[count as usize] as u32)
+        .sum()
 }
 
 impl Fuzzer {

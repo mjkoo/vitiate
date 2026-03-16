@@ -10,12 +10,13 @@ import {
   IterationResult,
   installExceptionHandler,
 } from "@vitiate/engine";
-import type { FuzzerConfig } from "@vitiate/engine";
+import type { FuzzerConfig, FuzzerStats } from "@vitiate/engine";
 import {
   isSupervisorChild,
   getDictionaryPathEnv,
   isDebugMode,
   getCoverageMapSize,
+  getResultsFilePath,
   DEFAULT_MAX_INPUT_LEN,
   type FuzzOptions,
 } from "./config.js";
@@ -46,6 +47,7 @@ import {
   printBanner,
   printCrash,
   printSummary,
+  writeResultsFile,
 } from "./reporter.js";
 import { minimize } from "./minimize.js";
 
@@ -60,6 +62,7 @@ export interface FuzzLoopResult {
   crashArtifactPaths: string[];
   duplicateCrashesSkipped: number;
   totalExecs: number;
+  calibrationExecs: number;
 }
 
 interface TargetExecutionResult {
@@ -516,6 +519,7 @@ export async function runFuzzLoop(
     });
   }
 
+  const resultsFilePath = getResultsFilePath();
   const reporter = createReporter(quiet);
   startReporting(reporter, () => fuzzer.stats);
 
@@ -535,6 +539,7 @@ export async function runFuzzLoop(
   // Crash dedup state
   const crashDedupMap = new Map<string, { path: string; size: number }>();
   let duplicateCrashesSkipped = 0;
+  let finalStats: FuzzerStats;
 
   /**
    * Record a crash or timeout: check dedup, write artifact, accumulate state,
@@ -753,7 +758,31 @@ export async function runFuzzLoop(
   } finally {
     resetDetectorHooks();
     stopReporting(reporter);
-    printSummary(reporter, fuzzer.stats, duplicateCrashesSkipped);
+    finalStats = fuzzer.stats;
+    printSummary(reporter, finalStats, duplicateCrashesSkipped);
+    if (resultsFilePath) {
+      try {
+        writeResultsFile(resultsFilePath, {
+          crashed: crashCount > 0,
+          crashCount,
+          crashArtifactPaths,
+          duplicateCrashesSkipped,
+          totalExecs: finalStats.totalExecs,
+          calibrationExecs: finalStats.calibrationExecs,
+          corpusSize: finalStats.corpusSize,
+          solutionCount: finalStats.solutionCount,
+          coverageEdges: finalStats.coverageEdges,
+          coverageFeatures: finalStats.coverageFeatures,
+          execsPerSec: finalStats.execsPerSec,
+          elapsedMs: Date.now() - startTime,
+          error: firstCrashError?.message,
+        });
+      } catch (writeError) {
+        process.stderr.write(
+          `vitiate: warning: failed to write results file: ${writeError instanceof Error ? writeError.message : writeError}\n`,
+        );
+      }
+    }
     watchdog?.shutdown();
     process.removeListener("SIGINT", sigintHandler);
   }
@@ -766,7 +795,8 @@ export async function runFuzzLoop(
     crashCount,
     crashArtifactPaths,
     duplicateCrashesSkipped,
-    totalExecs: fuzzer.stats.totalExecs,
+    totalExecs: finalStats.totalExecs,
+    calibrationExecs: finalStats.calibrationExecs,
   };
 }
 
