@@ -58,3 +58,31 @@ pub struct FuzzerStats {
     pub coverage_features: u32,
     pub execs_per_sec: f64,
 }
+
+// Exit reason constants for BatchResult. Using string constants instead of a
+// Rust enum because napi(string_enum) generates PascalCase values that would
+// not match the existing lowercase JS comparisons. Constants give compile-time
+// safety on the Rust side while keeping the JS interface unchanged.
+pub(crate) const BATCH_EXIT_COMPLETED: &str = "completed";
+pub(crate) const BATCH_EXIT_INTERESTING: &str = "interesting";
+pub(crate) const BATCH_EXIT_SOLUTION: &str = "solution";
+pub(crate) const BATCH_EXIT_ERROR: &str = "error";
+
+/// Result of a batched fuzzing iteration loop.
+///
+/// Returned by `Fuzzer.runBatch()`. The batch exits early on the first
+/// interesting input, solution, or unrecoverable error.
+#[napi(object)]
+pub struct BatchResult {
+    /// Number of iterations completed in this batch (including the triggering
+    /// iteration, if any).
+    pub executions_completed: u32,
+    /// Why the batch ended: `"completed"`, `"interesting"`, `"solution"`, or `"error"`.
+    pub exit_reason: String,
+    /// Copy of the input that caused early exit. Present when `exitReason`
+    /// is not `"completed"`.
+    pub triggering_input: Option<Buffer>,
+    /// The `ExitKind` that triggered a solution (1=Crash, 2=Timeout).
+    /// Present only when `exitReason` is `"solution"`.
+    pub solution_exit_kind: Option<u32>,
+}

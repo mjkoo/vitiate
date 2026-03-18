@@ -2,11 +2,8 @@
 
 ### Requirement: Periodic fuzzing status output
 
-The system SHALL report fuzzing progress periodically during the fuzz loop. Status lines SHALL be written to stderr so they do not interfere with Vitest's normal test output.
-
-The status line SHALL include:
-
-- Elapsed time (in seconds)
+Report progress periodically to stderr (not Vitest normal output). Status line includes:
+- Elapsed time (seconds)
 - Total executions
 - Executions per second
 - Calibration executions
@@ -16,16 +13,15 @@ The status line SHALL include:
 
 Format: `fuzz: elapsed: {N}s, execs: {N} ({N}/sec), cal: {N}, corpus: {N} ({N} new), edges: {N}, ft: {N}`
 
-#### Scenario: Status output during fuzzing
+The reporter polls `fuzzer.stats` on a timer. In the batched execution path, timer callbacks fire between batches when the event loop yields. The adaptive batch size (see fuzz-loop spec) ensures yields occur approximately every 3 seconds, maintaining the existing reporting cadence. The `fuzzer.stats` getter reads Rust-internal counters that are updated per-iteration within `runBatch`, so stats are current when polled.
 
-- **WHEN** the fuzz loop has been running for 3 seconds
-- **THEN** at least one status line has been written to stderr
-- **AND** the line contains elapsed time, execs, execs/sec, calibration execs, corpus size, edge count, and feature count
+#### Scenario: Status output during batched fuzzing
+- **WHEN** the fuzz loop runs with batched execution and the reporter timer fires between batches
+- **THEN** a status line is printed to stderr with current stats reflecting all iterations completed within previous batches
 
 #### Scenario: Status updates periodically
-
-- **WHEN** the fuzz loop runs for 10 seconds
-- **THEN** multiple status lines are written at regular intervals (approximately every 3 seconds)
+- **WHEN** fuzzing runs for more than the reporting interval
+- **THEN** multiple status lines are printed approximately every 3 seconds, regardless of whether execution is batched or per-iteration
 
 ### Requirement: Crash finding output
 

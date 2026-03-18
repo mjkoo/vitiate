@@ -24,7 +24,7 @@ unsafe fn seed_coverage(fuzzer: &mut crate::engine::Fuzzer) {
 
 #[test]
 fn test_report_result_populates_tokens_from_cmplog() {
-    cmplog::disable();
+    cmplog::force_disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
@@ -65,12 +65,12 @@ fn test_report_result_populates_tokens_from_cmplog() {
         "should contain 'javascript'"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
 fn test_tokens_accumulate_across_report_result_calls() {
-    cmplog::disable();
+    cmplog::force_disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
@@ -106,12 +106,12 @@ fn test_tokens_accumulate_across_report_result_calls() {
     assert!(token_list.contains(&b"ssh".as_slice()));
     assert_eq!(token_list.len(), 4);
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
 fn test_token_candidates_capped_at_max() {
-    cmplog::disable();
+    cmplog::force_disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
@@ -143,12 +143,12 @@ fn test_token_candidates_capped_at_max() {
         fuzzer.token_tracker.candidates.len(),
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
 fn test_promoted_tokens_not_reinserted_into_candidates() {
-    cmplog::disable();
+    cmplog::force_disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
@@ -239,12 +239,12 @@ fn test_promoted_tokens_not_reinserted_into_candidates() {
         "dictionary should not grow from re-observed promoted tokens"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
 fn user_provided_tokens_present_in_state_with_cmplog_promotion() {
-    cmplog::disable();
+    cmplog::force_disable();
     cmplog::drain();
 
     // Create a fuzzer with a user-provided dictionary.
@@ -262,7 +262,7 @@ fn user_provided_tokens_present_in_state_with_cmplog_promotion() {
         dictionary_path: Some(dict_path.to_str().unwrap().to_string()),
         detector_tokens: None,
     };
-    let mut fuzzer = crate::engine::Fuzzer::new(coverage_map, Some(config)).unwrap();
+    let mut fuzzer = crate::engine::Fuzzer::new(coverage_map, Some(config), None, None).unwrap();
     fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
 
     // User tokens should already be present.
@@ -296,12 +296,12 @@ fn user_provided_tokens_present_in_state_with_cmplog_promotion() {
     assert!(token_list.contains(&b"user_token_b".as_slice()));
     assert!(token_list.contains(&b"cmplog_tok".as_slice()));
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
 fn user_tokens_do_not_count_toward_cmplog_cap() {
-    cmplog::disable();
+    cmplog::force_disable();
     cmplog::drain();
 
     // Create a dictionary with MAX_DICTIONARY_SIZE + 100 user tokens.
@@ -323,7 +323,7 @@ fn user_tokens_do_not_count_toward_cmplog_cap() {
         dictionary_path: Some(dict_path.to_str().unwrap().to_string()),
         detector_tokens: None,
     };
-    let mut fuzzer = crate::engine::Fuzzer::new(coverage_map, Some(config)).unwrap();
+    let mut fuzzer = crate::engine::Fuzzer::new(coverage_map, Some(config), None, None).unwrap();
     fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
 
     // User tokens exceed MAX_DICTIONARY_SIZE - they should all be present.
@@ -357,12 +357,12 @@ fn user_tokens_do_not_count_toward_cmplog_cap() {
         "CmpLog token should be promoted even when user tokens exceed MAX_DICTIONARY_SIZE"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
 fn detector_tokens_inserted_and_exempt_from_cap() {
-    cmplog::disable();
+    cmplog::force_disable();
     cmplog::drain();
 
     let coverage_map: Buffer = vec![0u8; 256].into();
@@ -379,7 +379,7 @@ fn detector_tokens_inserted_and_exempt_from_cap() {
             Buffer::from(b"../".to_vec()),
         ]),
     };
-    let mut fuzzer = crate::engine::Fuzzer::new(coverage_map, Some(config)).unwrap();
+    let mut fuzzer = crate::engine::Fuzzer::new(coverage_map, Some(config), None, None).unwrap();
     fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
 
     // Detector tokens should be in Tokens metadata.
@@ -430,12 +430,12 @@ fn detector_tokens_inserted_and_exempt_from_cap() {
         "CmpLog token should be promoted despite detector tokens in promoted set"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
 fn duplicate_detector_tokens_do_not_cause_underflow() {
-    cmplog::disable();
+    cmplog::force_disable();
     cmplog::drain();
 
     // Pass duplicate detector tokens - HashSet deduplicates but pre_seeded_count
@@ -455,7 +455,7 @@ fn duplicate_detector_tokens_do_not_cause_underflow() {
             Buffer::from(b"../".to_vec()),
         ]),
     };
-    let mut fuzzer = crate::engine::Fuzzer::new(coverage_map, Some(config)).unwrap();
+    let mut fuzzer = crate::engine::Fuzzer::new(coverage_map, Some(config), None, None).unwrap();
     fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
 
     // promoted has 1 entry (deduplicated), pre_seeded_count is 3.
@@ -484,5 +484,5 @@ fn duplicate_detector_tokens_do_not_cause_underflow() {
         "CmpLog promotion should work even with duplicate detector tokens"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }

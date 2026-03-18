@@ -7,11 +7,19 @@
 //! `getNextInput`/`reportResult` calls mix comparison entries between Fuzzers.
 
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use libafl::observers::cmp::{CmpValues, CmplogBytes};
 
 /// Maximum number of comparison entries per iteration.
 const MAX_ENTRIES: usize = 4096;
+
+/// Reference count of active `CmpLogGuard` instances. CmpLog is enabled
+/// when > 0. Incremented by `CmpLogGuard::new()`, decremented by
+/// `CmpLogGuard::drop()`. This prevents a stale Fuzzer destructor
+/// (fired by non-deterministic GC) from disabling CmpLog while a newer
+/// Fuzzer is still active.
+static CMPLOG_REFCOUNT: AtomicU64 = AtomicU64::new(0);
 
 /// Comparison operator type derived from the `op` string parameter in
 /// `__vitiate_trace_cmp()`. Used to populate `AflppCmpLogHeader` attributes.
@@ -57,19 +65,55 @@ thread_local! {
     static CMPLOG_STATE: RefCell<CmpLogState> = const { RefCell::new(CmpLogState { enabled: false, entries: Vec::new() }) };
 }
 
-/// Enable CmpLog recording. Called when a Fuzzer is constructed.
+/// RAII guard that keeps CmpLog recording enabled while held.
 ///
-/// Assumes at most one Fuzzer is active per thread. See module docs.
-pub fn enable() {
-    CMPLOG_STATE.with(|s| s.borrow_mut().enabled = true);
+/// Created by [`CmpLogGuard::new()`], intended to be stored as a field in
+/// `Fuzzer`. On drop, decrements the refcount. CmpLog is only disabled
+/// when the last guard is dropped. This prevents a stale Fuzzer destructor
+/// (fired by non-deterministic GC) from disabling CmpLog while a newer
+/// Fuzzer is still active.
+pub struct CmpLogGuard(());
+
+impl CmpLogGuard {
+    /// Enable CmpLog recording and return a guard that keeps it enabled.
+    ///
+    /// Drains stale entries on the first enable (transition from 0 to 1).
+    pub fn new() -> Self {
+        let prev = CMPLOG_REFCOUNT.fetch_add(1, Ordering::Relaxed);
+        CMPLOG_STATE.with(|s| {
+            let mut state = s.borrow_mut();
+            if prev == 0 {
+                // First guard - drain any stale entries left by a previous
+                // session whose guard was dropped after this one was created.
+                state.entries.clear();
+            }
+            state.enabled = true;
+        });
+        Self(())
+    }
 }
 
-/// Disable CmpLog recording and discard any leftover entries.
+impl Drop for CmpLogGuard {
+    fn drop(&mut self) {
+        let prev = CMPLOG_REFCOUNT.fetch_sub(1, Ordering::Relaxed);
+        if prev != 1 {
+            return; // Other guards still alive - don't disable.
+        }
+        CMPLOG_STATE.with(|s| {
+            let mut state = s.borrow_mut();
+            state.enabled = false;
+            state.entries.clear();
+        });
+    }
+}
+
+/// Unconditionally disable CmpLog recording, resetting the refcount to 0.
 ///
-/// Called when a Fuzzer is dropped. Draining prevents stale entries from
-/// leaking into a subsequently created Fuzzer.
-/// Assumes at most one Fuzzer is active per thread. See module docs.
-pub fn disable() {
+/// Used by Rust unit tests for deterministic cleanup between tests.
+/// Not for production use - production code uses [`CmpLogGuard`].
+#[cfg(test)]
+pub fn force_disable() {
+    CMPLOG_REFCOUNT.store(0, Ordering::Relaxed);
     CMPLOG_STATE.with(|s| {
         let mut state = s.borrow_mut();
         state.enabled = false;
@@ -280,7 +324,7 @@ mod tests {
 
     /// Reset cmplog state between tests.
     fn reset() {
-        disable();
+        force_disable();
     }
 
     // === Accumulator tests ===
@@ -294,20 +338,19 @@ mod tests {
     #[test]
     fn test_enable_disable_lifecycle() {
         reset();
-        enable();
+        let guard = CmpLogGuard::new();
         assert!(is_enabled());
-        disable();
+        drop(guard);
         assert!(!is_enabled());
     }
 
     #[test]
     fn test_push_when_enabled() {
         reset();
-        enable();
+        let _guard = CmpLogGuard::new();
         push(CmpValues::U8((1, 2, false)), 0, CmpLogOperator::Equal);
         let entries = drain();
         assert_eq!(entries.len(), 1);
-        disable();
     }
 
     #[test]
@@ -321,7 +364,7 @@ mod tests {
     #[test]
     fn test_capacity_limit() {
         reset();
-        enable();
+        let _guard = CmpLogGuard::new();
         for i in 0..MAX_ENTRIES + 100 {
             push(
                 CmpValues::U8((0, 0, false)),
@@ -331,26 +374,24 @@ mod tests {
         }
         let entries = drain();
         assert_eq!(entries.len(), MAX_ENTRIES);
-        disable();
     }
 
     #[test]
     fn test_drain_returns_and_clears() {
         reset();
-        enable();
+        let _guard = CmpLogGuard::new();
         push(CmpValues::U8((1, 2, false)), 0, CmpLogOperator::Equal);
         push(CmpValues::U8((3, 4, false)), 1, CmpLogOperator::Less);
         let entries = drain();
         assert_eq!(entries.len(), 2);
         let entries2 = drain();
         assert!(entries2.is_empty());
-        disable();
     }
 
     #[test]
     fn test_enriched_entry_preserves_site_id_and_operator() {
         reset();
-        enable();
+        let _guard = CmpLogGuard::new();
         push(CmpValues::U8((10, 20, false)), 42, CmpLogOperator::Less);
         let entries = drain();
         assert_eq!(entries.len(), 1);
@@ -358,7 +399,6 @@ mod tests {
         assert_eq!(*site_id, 42);
         assert_eq!(*operator, CmpLogOperator::Less);
         assert_eq!(*values, CmpValues::U8((10, 20, false)));
-        disable();
     }
 
     // === Serialization tests (Task 2.2) ===
@@ -523,17 +563,37 @@ mod tests {
     }
 
     #[test]
-    fn test_disable_drains_stale_entries() {
+    fn test_guard_drop_drains_stale_entries() {
         reset();
-        enable();
-        push(CmpValues::U8((1, 2, false)), 0, CmpLogOperator::Equal);
-        // disable() should drain stale entries
-        disable();
+        {
+            let _guard = CmpLogGuard::new();
+            push(CmpValues::U8((1, 2, false)), 0, CmpLogOperator::Equal);
+            // guard drop should drain stale entries
+        }
         // New session should not see entries from the prior one
-        enable();
+        let _guard = CmpLogGuard::new();
         let entries = drain();
-        assert!(entries.is_empty(), "disable() must drain stale entries");
-        disable();
+        assert!(entries.is_empty(), "guard drop must drain stale entries");
+    }
+
+    #[test]
+    fn test_overlapping_guards_keep_cmplog_enabled() {
+        reset();
+        let guard1 = CmpLogGuard::new();
+        assert!(is_enabled());
+        let guard2 = CmpLogGuard::new();
+        assert!(is_enabled());
+        drop(guard1); // refcount 2 -> 1, still enabled
+        assert!(is_enabled());
+        push(CmpValues::U8((1, 2, false)), 0, CmpLogOperator::Equal);
+        let entries = drain();
+        assert_eq!(
+            entries.len(),
+            1,
+            "CmpLog should still record with one guard alive"
+        );
+        drop(guard2); // refcount 1 -> 0, disabled
+        assert!(!is_enabled());
     }
 
     // === CmpLogOperator tests ===

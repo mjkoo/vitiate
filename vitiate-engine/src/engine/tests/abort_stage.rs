@@ -27,7 +27,7 @@ fn test_abort_stage_records_crash_as_solution() {
         "solutions corpus should have the crash input"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -53,7 +53,7 @@ fn test_abort_stage_records_timeout_as_solution() {
         "solutions corpus should have the timeout input"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -72,5 +72,5 @@ fn test_abort_stage_ok_does_not_record_solution() {
         "solution_count should not change on Ok abort"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }

@@ -93,7 +93,7 @@ fn test_novelty_only_newly_maximized_not_all_covered() {
 fn test_novelty_metadata_stored_during_stage_execution() {
     // When a stage execution (e.g., I2S) triggers new coverage and the input
     // is added to the corpus, it should also have MapNoveltiesMetadata.
-    cmplog::disable();
+    cmplog::force_disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
@@ -140,7 +140,7 @@ fn test_novelty_metadata_stored_during_stage_execution() {
         "stage-found corpus entry should have MapNoveltiesMetadata"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]

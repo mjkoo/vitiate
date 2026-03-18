@@ -100,7 +100,7 @@ fn test_deferred_detection_respects_explicit_false_override() {
     // grimoire: explicit false, unicode: auto-detect (None).
     // After deferred detection fires with UTF-8 corpus, grimoire must stay
     // false while unicode must be auto-enabled.
-    cmplog::disable();
+    cmplog::force_disable();
     cmplog::drain();
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
     // Simulate: grimoire explicitly disabled, unicode left for auto-detect.
@@ -139,7 +139,7 @@ fn test_deferred_detection_respects_explicit_false_override() {
         fuzzer.features.deferred_detection_count.is_none(),
         "deferred count should be consumed"
     );
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -147,7 +147,7 @@ fn test_deferred_detection_respects_explicit_false_unicode_override() {
     // unicode: explicit false, grimoire: auto-detect (None).
     // After deferred detection fires with UTF-8 corpus, unicode must stay
     // false while grimoire must be auto-enabled.
-    cmplog::disable();
+    cmplog::force_disable();
     cmplog::drain();
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
     // Simulate: unicode explicitly disabled, grimoire left for auto-detect.
@@ -186,7 +186,7 @@ fn test_deferred_detection_respects_explicit_false_unicode_override() {
         fuzzer.features.deferred_detection_count.is_none(),
         "deferred count should be consumed"
     );
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -200,7 +200,7 @@ fn test_grimoire_empty_corpus_defers_detection() {
 
 #[test]
 fn test_grimoire_deferred_triggers_after_10_interesting() {
-    cmplog::disable();
+    cmplog::force_disable();
     cmplog::drain();
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
     fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
@@ -231,12 +231,12 @@ fn test_grimoire_deferred_triggers_after_10_interesting() {
         fuzzer.features.deferred_detection_count.is_none(),
         "deferred count should be consumed"
     );
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
 fn test_grimoire_deferred_ignores_stage_found_entries() {
-    cmplog::disable();
+    cmplog::force_disable();
     cmplog::drain();
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
     fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
@@ -285,7 +285,7 @@ fn test_grimoire_deferred_ignores_stage_found_entries() {
         Some(1),
         "stage-found entries should not increment deferred count"
     );
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]

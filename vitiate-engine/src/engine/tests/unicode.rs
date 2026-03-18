@@ -230,6 +230,8 @@ fn test_unicode_explicit_enable_through_constructor() {
             dictionary_path: None,
             detector_tokens: None,
         }),
+        None,
+        None,
     )
     .unwrap();
     assert!(
@@ -252,6 +254,8 @@ fn test_unicode_explicit_disable_through_constructor() {
             dictionary_path: None,
             detector_tokens: None,
         }),
+        None,
+        None,
     )
     .unwrap();
     assert!(
@@ -275,6 +279,8 @@ fn test_unicode_and_grimoire_independent_explicit_control() {
             dictionary_path: None,
             detector_tokens: None,
         }),
+        None,
+        None,
     )
     .unwrap();
     assert!(
@@ -291,7 +297,7 @@ fn test_unicode_and_grimoire_independent_explicit_control() {
 
 #[test]
 fn test_deferred_detection_resolves_both_features() {
-    cmplog::disable();
+    cmplog::force_disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
@@ -359,7 +365,7 @@ fn test_deferred_detection_resolves_both_features() {
         "unicode should be enabled after deferred detection"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -377,6 +383,8 @@ fn test_shared_deferred_threshold_with_one_feature_explicit() {
             dictionary_path: None,
             detector_tokens: None,
         }),
+        None,
+        None,
     )
     .unwrap();
     assert!(
@@ -411,7 +419,7 @@ fn test_begin_unicode_returns_some_for_utf8_entry() {
         matches!(fuzzer.stage_state, StageState::Unicode { .. }),
         "stage should be Unicode"
     );
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -425,7 +433,7 @@ fn test_begin_unicode_returns_none_when_disabled() {
         result.is_none(),
         "begin_unicode should return None when disabled"
     );
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -439,7 +447,7 @@ fn test_begin_unicode_returns_none_for_non_utf8_entry() {
         result.is_none(),
         "begin_unicode should return None for non-UTF-8 entry"
     );
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -480,7 +488,7 @@ fn test_unicode_stage_iteration_counting() {
         "stage should transition to None"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -522,7 +530,7 @@ fn test_unicode_stage_non_cumulative_mutations() {
         "original corpus entry should be unchanged"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -565,7 +573,7 @@ fn test_unicode_stage_cmplog_drained() {
         "CmpLog should be empty after unicode advance"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -589,7 +597,7 @@ fn test_unicode_stage_abort_transitions_to_none() {
         "abort should increment total_execs"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -606,7 +614,7 @@ fn test_unicode_stage_max_input_length_enforcement() {
             "output should be truncated to max_input_len"
         );
     }
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -622,7 +630,7 @@ fn test_unicode_stage_metadata_stashed_in_stage_state() {
         "unicode metadata should be stashed in stage state"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 // -----------------------------------------------------------------------
@@ -653,7 +661,7 @@ fn test_unicode_stage_skipped_when_no_valid_utf8_regions() {
     );
     assert!(matches!(fuzzer.stage_state, StageState::None));
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -687,7 +695,7 @@ fn test_unicode_enabled_drives_stage_transitions() {
         "should return None when unicode disabled"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -729,5 +737,5 @@ fn test_unicode_stage_exec_counter_increments() {
         "second advance should increment total_execs"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }

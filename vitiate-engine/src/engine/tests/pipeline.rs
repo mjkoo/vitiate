@@ -86,7 +86,7 @@ fn test_pipeline_i2s_to_generalization_to_grimoire_to_none() {
     assert!(next.is_none(), "Grimoire should complete and return None");
     assert!(matches!(fuzzer.stage_state, StageState::None));
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -122,7 +122,7 @@ fn test_pipeline_i2s_to_grimoire_preexisting_metadata() {
         "should be in Grimoire stage (generalization skipped)"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -142,7 +142,7 @@ fn test_pipeline_i2s_to_none_grimoire_disabled() {
     assert!(next.is_none(), "should return None when Grimoire disabled");
     assert!(matches!(fuzzer.stage_state, StageState::None));
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -169,7 +169,7 @@ fn test_pipeline_none_to_generalization_no_cmplog() {
         "should be in Generalization stage"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -196,7 +196,7 @@ fn test_pipeline_none_to_grimoire_no_cmplog_preexisting_metadata() {
         "should be in Grimoire stage"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -224,7 +224,7 @@ fn test_pipeline_generalization_fail_to_none() {
         "should not store metadata when verification fails"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -249,7 +249,7 @@ fn test_pipeline_abort_from_generalization() {
     let tc = fuzzer.state.corpus().get(corpus_id).unwrap().borrow();
     assert!(!tc.has_metadata::<GeneralizedInputMetadata>());
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -267,7 +267,7 @@ fn test_pipeline_abort_from_grimoire() {
     assert!(matches!(fuzzer.stage_state, StageState::None));
     assert_eq!(fuzzer.total_execs, total_before + 1);
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -283,13 +283,13 @@ fn test_pipeline_abort_from_i2s() {
     assert!(matches!(fuzzer.stage_state, StageState::None));
     assert_eq!(fuzzer.total_execs, total_before + 1);
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
 fn test_pipeline_i2s_to_unicode_grimoire_disabled() {
     // I2S → Unicode → None (grimoire disabled, unicode enabled).
-    cmplog::disable();
+    cmplog::force_disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
@@ -351,7 +351,7 @@ fn test_pipeline_i2s_to_unicode_grimoire_disabled() {
     );
     assert!(matches!(fuzzer.stage_state, StageState::None));
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -379,7 +379,7 @@ fn test_pipeline_grimoire_to_unicode() {
         "stage should be Unicode after Grimoire completion"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -403,7 +403,7 @@ fn test_pipeline_unicode_disabled_existing_transitions_unchanged() {
     );
     assert!(matches!(fuzzer.stage_state, StageState::None));
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -430,14 +430,14 @@ fn test_pipeline_unicode_only_begin_no_cmplog() {
         "stage should be Unicode"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
 fn test_pipeline_grimoire_enabled_but_not_applicable_transitions_to_unicode() {
     // Grimoire enabled, but entry doesn't qualify for generalization and has no
     // GeneralizedInputMetadata → should fall through to Unicode.
-    cmplog::disable();
+    cmplog::force_disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
@@ -481,7 +481,7 @@ fn test_pipeline_grimoire_enabled_but_not_applicable_transitions_to_unicode() {
         "stage should be Unicode"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -514,7 +514,7 @@ fn test_pipeline_generalization_failure_transitions_to_none_not_unicode() {
     );
     assert!(matches!(fuzzer.stage_state, StageState::None));
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -575,7 +575,7 @@ fn test_finalize_generalization_falls_through_to_unicode() {
         "stage should have transitioned to Unicode after generalization"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -684,5 +684,5 @@ fn test_pipeline_full_four_stage_lifecycle() {
         "pipeline should end in None"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }

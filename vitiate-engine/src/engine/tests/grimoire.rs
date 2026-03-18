@@ -27,12 +27,12 @@ fn test_grimoire_stage_begins_with_metadata() {
         "stage should be Grimoire"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
 fn test_grimoire_stage_skipped_without_metadata() {
-    cmplog::disable();
+    cmplog::force_disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).grimoire(true).build();
@@ -48,7 +48,7 @@ fn test_grimoire_stage_skipped_without_metadata() {
         "begin_grimoire should return None without metadata"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -64,7 +64,7 @@ fn test_grimoire_stage_skipped_when_disabled() {
         "begin_grimoire should return None when Grimoire disabled"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -101,7 +101,7 @@ fn test_grimoire_stage_completes_after_iterations() {
     assert!(done.is_none(), "iteration 3 should complete the stage");
     assert!(matches!(fuzzer.stage_state, StageState::None));
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -134,7 +134,7 @@ fn test_grimoire_execution_counting() {
     let _ = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
     assert_eq!(fuzzer.total_execs, total_before + 2);
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -164,7 +164,7 @@ fn test_grimoire_cmplog_drained() {
         "CmpLog should be drained during Grimoire stage"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -184,7 +184,7 @@ fn test_grimoire_max_input_len_enforced() {
         "output should be truncated to max_input_len"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -228,7 +228,7 @@ fn test_grimoire_non_cumulative_mutations() {
         );
     }
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -250,7 +250,7 @@ fn test_grimoire_abort_transitions_to_none() {
         "abort should increment total_execs by 1"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 // -----------------------------------------------------------------------
@@ -273,6 +273,8 @@ fn test_grimoire_override_through_constructor() {
             dictionary_path: None,
             detector_tokens: None,
         }),
+        None,
+        None,
     )
     .unwrap();
     assert!(
@@ -300,6 +302,8 @@ fn test_grimoire_override_disabled_through_constructor() {
             dictionary_path: None,
             detector_tokens: None,
         }),
+        None,
+        None,
     )
     .unwrap();
     assert!(
@@ -356,5 +360,5 @@ fn test_grimoire_iteration_advances_regardless_of_mutation_result() {
         _ => panic!("unexpected stage state"),
     }
 
-    cmplog::disable();
+    cmplog::force_disable();
 }

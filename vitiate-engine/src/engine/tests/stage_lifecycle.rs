@@ -33,12 +33,12 @@ fn test_begin_stage_returns_null_during_active_stage() {
         "stage should still be I2S"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
 fn test_advance_stage_returns_null_with_no_active_stage() {
-    cmplog::disable();
+    cmplog::force_disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
@@ -53,12 +53,12 @@ fn test_advance_stage_returns_null_with_no_active_stage() {
     // Verify no side effects (total_execs unchanged).
     assert_eq!(fuzzer.total_execs, total_before);
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
 fn test_single_iteration_stage_completes_immediately() {
-    cmplog::disable();
+    cmplog::force_disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
@@ -118,7 +118,7 @@ fn test_single_iteration_stage_completes_immediately() {
         "stage should be None after completion"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -175,7 +175,7 @@ fn test_cmplog_drained_and_discarded_during_stage() {
         "stage CmpLog operands should not enter token_candidates"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -224,12 +224,12 @@ fn test_non_cumulative_mutations() {
         }
     }
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
 fn test_abort_stage_noop_with_no_active_stage() {
-    cmplog::disable();
+    cmplog::force_disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
@@ -254,5 +254,5 @@ fn test_abort_stage_noop_with_no_active_stage() {
         "stage should remain None"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }

@@ -81,7 +81,7 @@ fn test_map_indexes_metadata_contains_all_covered_edges() {
     assert!(meta.list.contains(&50), "should contain novel edge 50");
     assert_eq!(meta.list.len(), 5);
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -114,7 +114,7 @@ fn test_map_indexes_metadata_absent_for_non_interesting() {
     // Corpus should not have grown - no entry was added.
     assert_eq!(fuzzer.state.corpus().count(), corpus_before);
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]

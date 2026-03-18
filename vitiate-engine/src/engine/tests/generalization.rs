@@ -30,7 +30,7 @@ fn test_generalization_skipped_when_grimoire_disabled() {
     );
     assert!(matches!(fuzzer.stage_state, StageState::None));
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -46,12 +46,12 @@ fn test_generalization_skipped_for_large_input() {
         "generalization should be skipped for input > MAX_GENERALIZED_LEN"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
 fn test_generalization_skipped_when_no_novelties() {
-    cmplog::disable();
+    cmplog::force_disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).grimoire(true).build();
@@ -67,7 +67,7 @@ fn test_generalization_skipped_when_no_novelties() {
         "generalization should be skipped without novelties"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -93,7 +93,7 @@ fn test_generalization_skipped_when_already_generalized() {
         "generalization should be skipped when already generalized"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -142,7 +142,7 @@ fn test_generalization_verification_succeeds() {
         }
     ));
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -176,7 +176,7 @@ fn test_generalization_verification_fails() {
         "no metadata should be stored on verification failure"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -244,7 +244,7 @@ fn test_generalization_offset_marks_gaps() {
         "metadata should contain Gap items"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -316,7 +316,7 @@ fn test_generalization_offset_preserves_structural() {
         "should have the original bytes as structural"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -374,7 +374,7 @@ fn test_generalization_execution_counting() {
         "total_execs should match number of advance calls"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -407,7 +407,7 @@ fn test_generalization_cmplog_drained() {
         "CmpLog should be drained by advance_stage during generalization"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -582,7 +582,7 @@ fn test_generalization_delimiter_gap_finding() {
         "delimiter-based generalization should produce gaps when novelties survive"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 // -----------------------------------------------------------------------
@@ -637,7 +637,7 @@ fn test_generalization_gap_finding_adds_to_corpus() {
         "last_interesting_corpus_id should be None for stage-found entries"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 // -----------------------------------------------------------------------
@@ -737,7 +737,7 @@ fn test_bracket_gaps_marked_on_novelty_survival() {
         "opener byte '(' should be preserved in generalized metadata, not gapped"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -776,7 +776,7 @@ fn test_bracket_no_gaps_when_novelties_fail() {
         "should have GeneralizedInputMetadata even without gaps"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -815,7 +815,7 @@ fn test_bracket_same_char_pairs() {
         "same-char bracket pairs should produce metadata"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -859,5 +859,5 @@ fn test_bracket_no_closer_advances_to_next_pair() {
         "should finalize even without matching closers"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }

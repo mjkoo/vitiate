@@ -417,15 +417,18 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin[] {
       // When node_modules are not excluded, tell Vitest to inline all
       // dependencies through the Vite transform pipeline so they reach
       // our transform hooks for instrumentation and hook rewriting.
-      // Note: server.deps.inline is a Vitest runtime extension not present
-      // in Vite's ServerOptions type, so we cast to satisfy the config hook
-      // return type.
+      // The setting MUST be inside the `test` key - Vitest's test module
+      // resolver reads from viteConfig.test.server.deps, not the top-level
+      // viteConfig.server.deps. Cast required because `test.server.deps`
+      // is a Vitest extension absent from Vite's UserConfig type.
       return {
-        test: { setupFiles: [setupPath] },
-        ...(!nodeModulesExcluded
-          ? { server: { deps: { inline: true } } as Record<string, unknown> }
-          : {}),
-      };
+        test: {
+          setupFiles: [setupPath],
+          ...(!nodeModulesExcluded
+            ? { server: { deps: { inline: true } } }
+            : {}),
+        },
+      } as Record<string, unknown>;
     },
 
     async transform(code, id) {

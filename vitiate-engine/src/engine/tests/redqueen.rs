@@ -29,7 +29,7 @@ fn test_begin_stage_starts_colorization_when_redqueen_enabled() {
         "redqueen_ran_for_entry should be true"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -48,7 +48,7 @@ fn test_begin_stage_falls_to_i2s_when_redqueen_disabled() {
         "redqueen_ran_for_entry should be false"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -85,7 +85,7 @@ fn test_begin_stage_falls_to_i2s_when_input_too_large() {
         "redqueen_ran_for_entry should be false for oversized input"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -104,7 +104,7 @@ fn test_redqueen_ran_for_entry_reset_on_begin_stage() {
         "redqueen_ran_for_entry should be reset"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
@@ -121,6 +121,8 @@ fn test_redqueen_explicit_enable() {
             dictionary_path: None,
             detector_tokens: None,
         }),
+        None,
+        None,
     )
     .unwrap();
     assert!(
@@ -143,6 +145,8 @@ fn test_redqueen_explicit_disable() {
             dictionary_path: None,
             detector_tokens: None,
         }),
+        None,
+        None,
     )
     .unwrap();
     assert!(
@@ -165,6 +169,8 @@ fn test_redqueen_auto_detect_empty_corpus_defaults_false() {
             dictionary_path: None,
             detector_tokens: None,
         }),
+        None,
+        None,
     )
     .unwrap();
     assert!(
@@ -179,7 +185,7 @@ fn test_redqueen_auto_detect_empty_corpus_defaults_false() {
 
 #[test]
 fn test_redqueen_deferred_detection_binary_corpus_enables() {
-    cmplog::disable();
+    cmplog::force_disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
@@ -210,12 +216,12 @@ fn test_redqueen_deferred_detection_binary_corpus_enables() {
         "detection should be resolved"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
 fn test_redqueen_deferred_detection_utf8_corpus_disables() {
-    cmplog::disable();
+    cmplog::force_disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
@@ -246,12 +252,12 @@ fn test_redqueen_deferred_detection_utf8_corpus_disables() {
         "detection should be resolved"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }
 
 #[test]
 fn test_redqueen_complementary_to_grimoire_unicode() {
-    cmplog::disable();
+    cmplog::force_disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
@@ -291,5 +297,5 @@ fn test_redqueen_complementary_to_grimoire_unicode() {
         "binary corpus → Unicode disabled"
     );
 
-    cmplog::disable();
+    cmplog::force_disable();
 }

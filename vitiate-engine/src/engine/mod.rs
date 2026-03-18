@@ -1,4 +1,6 @@
 use std::collections::{HashSet, VecDeque};
+use std::sync::Arc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use libafl::corpus::{Corpus, CorpusId, InMemoryCorpus, SchedulerTestcaseMetadata, Testcase};
@@ -36,7 +38,15 @@ use libafl_bolts::tuples::{Merge, tuple_list, tuple_list_type};
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
-use crate::types::{ExitKind, FuzzerConfig, FuzzerStats, IterationResult};
+use crate::shmem_stash::{ShmemHandle, ShmemView};
+use crate::types::{
+    BATCH_EXIT_COMPLETED, BATCH_EXIT_ERROR, BATCH_EXIT_INTERESTING, BATCH_EXIT_SOLUTION,
+    BatchResult, ExitKind, FuzzerConfig, FuzzerStats, IterationResult,
+};
+use crate::watchdog::{
+    Watchdog, WatchdogShared, arm_watchdog_shared, disarm_watchdog_shared, run_target_with_shared,
+    run_target_without_watchdog, shutdown_watchdog_shared,
+};
 
 mod calibration;
 mod cmplog_metadata;
@@ -181,20 +191,49 @@ pub struct Fuzzer {
     unevaluated_seeds: VecDeque<BytesInput>,
     /// Whether `add_seed()` was called at least once (user-provided seeds).
     has_user_seeds: bool,
+    /// Keeps CmpLog recording enabled while this Fuzzer is alive.
+    /// Prevents non-deterministic GC of stale Fuzzers from disabling CmpLog
+    /// for an active Fuzzer. Dropped automatically when the Fuzzer is dropped.
+    _cmplog_guard: crate::cmplog::CmpLogGuard,
+    /// Owned watchdog shared state for arm/disarm/run_target during batch iterations.
+    /// `None` when no watchdog was provided at construction.
+    watchdog_shared: Option<Arc<WatchdogShared>>,
+    /// Owned watchdog thread handle for deterministic shutdown.
+    /// `None` when no watchdog was provided or after shutdown.
+    watchdog_thread_handle: Option<thread::JoinHandle<()>>,
+    /// Shmem view for stashing inputs during batch iterations.
+    /// `None` when no shmem handle was provided at construction.
+    shmem_view: Option<ShmemView>,
+    /// Pre-allocated input buffer for `runBatch`. Reused across all batch
+    /// calls to avoid per-iteration `Buffer` allocation. The buffer is
+    /// `max_input_len` bytes and its contents are valid only during a single
+    /// callback invocation. Stored to prevent V8 GC from reclaiming the
+    /// backing memory referenced by `input_buffer_ptr`.
+    _input_buffer: Buffer,
+    /// Raw pointer into `input_buffer` for zero-copy writes during `runBatch`.
+    input_buffer_ptr: *mut u8,
 }
 
-// SAFETY: `Fuzzer` contains `*mut u8` which is `!Send`. napi-rs requires `Send`
-// for `#[napi]` classes. The raw pointer points into the `Buffer` held in
-// `_coverage_map`, which prevents V8 GC from reclaiming the backing memory.
-// Node.js `Buffer` uses a non-detachable `ArrayBuffer`, so the memory cannot be
-// reallocated or moved. NAPI enforces single-threaded access - the `Fuzzer` is
-// only ever used on the Node.js main thread and is never sent across threads.
+// SAFETY: `Fuzzer` contains `*mut u8` fields which are `!Send`. napi-rs requires
+// `Send` for `#[napi]` classes. The raw pointers point into `Buffer` objects held
+// as owned fields (`_coverage_map`, `input_buffer`), which prevents V8 GC from
+// reclaiming the backing memory. Node.js `Buffer` uses a non-detachable
+// `ArrayBuffer`, so the memory cannot be reallocated or moved. The `ShmemView`
+// field contains a raw pointer into OS-level shared memory that is valid for the
+// lifetime of the parent `ShmemHandle` (which outlives the Fuzzer in the fuzz
+// loop). NAPI enforces single-threaded access - the `Fuzzer` is only ever used
+// on the Node.js main thread and is never sent across threads.
 unsafe impl Send for Fuzzer {}
 
 #[napi]
 impl Fuzzer {
     #[napi(constructor)]
-    pub fn new(mut coverage_map: Buffer, config: Option<FuzzerConfig>) -> Result<Self> {
+    pub fn new(
+        mut coverage_map: Buffer,
+        config: Option<FuzzerConfig>,
+        watchdog: Option<&mut Watchdog>,
+        shmem_handle: Option<&ShmemHandle>,
+    ) -> Result<Self> {
         let max_input_len = config
             .as_ref()
             .and_then(|c| c.max_input_len)
@@ -292,8 +331,9 @@ impl Fuzzer {
         // Set max input size on state for I2SRandReplace bounds.
         state.set_max_size(max_input_len as usize);
 
-        // Initialize CmpLog: enable recording and add empty CmpValuesMetadata.
-        crate::cmplog::enable();
+        // Initialize CmpLog: the guard enables recording and keeps it enabled
+        // via refcount until this Fuzzer (and its guard) is dropped.
+        let cmplog_guard = crate::cmplog::CmpLogGuard::new();
         state.metadata_map_mut().insert(CmpValuesMetadata::new());
 
         // Initialize power scheduling metadata with FAST strategy.
@@ -331,6 +371,27 @@ impl Fuzzer {
             token_tracker.pre_seeded_count = dt.len();
         }
 
+        // Transfer watchdog ownership: clone the shared state and take the
+        // thread handle. After this, the original Watchdog JS object is inert
+        // (its shutdown() becomes a no-op since the thread handle was moved).
+        let (watchdog_shared, watchdog_thread_handle) = match watchdog {
+            Some(wd) => {
+                let (shared, handle) = wd.take_internals();
+                (Some(shared), handle)
+            }
+            None => (None, None),
+        };
+
+        // Extract the shmem view for internal stashing. The ShmemView is a
+        // lightweight Copy type (just a pointer + length), so the original
+        // ShmemHandle JS object remains usable for parent-side reads.
+        let shmem_view = shmem_handle.map(|h| h.view());
+
+        // Allocate pre-allocated input buffer for runBatch. This buffer is
+        // reused across all batch calls to avoid per-iteration allocation.
+        let mut input_buffer = Buffer::from(vec![0u8; max_input_len as usize]);
+        let input_buffer_ptr = input_buffer.as_mut_ptr();
+
         Ok(Self {
             features: FeatureDetection::new(
                 grimoire_override,
@@ -367,6 +428,12 @@ impl Fuzzer {
             unicode_mutator,
             unevaluated_seeds: VecDeque::new(),
             has_user_seeds: false,
+            _cmplog_guard: cmplog_guard,
+            watchdog_shared,
+            watchdog_thread_handle,
+            shmem_view,
+            _input_buffer: input_buffer,
+            input_buffer_ptr,
         })
     }
 
@@ -379,107 +446,11 @@ impl Fuzzer {
 
     #[napi]
     pub fn get_next_input(&mut self) -> Result<Buffer> {
-        // Auto-seed if corpus is empty and no seeds are queued.
-        if self.state.corpus().count() == 0 && self.unevaluated_seeds.is_empty() {
-            if (self.has_user_seeds || self.features.auto_seed_count > 0)
-                && self.solution_count == 0
-            {
-                // Either user-provided seeds all failed, or auto-seeds already
-                // tried and all failed. No seed produced any coverage or
-                // crashes - this indicates instrumentation is not active.
-                return Err(Error::from_reason(
-                    "All seeds evaluated but none produced coverage. \
-                     This usually means instrumentation is not active - \
-                     check that the vitiate plugin is loaded and \
-                     globalThis.__vitiate_cov is initialized. If instrumentation \
-                     is active, ensure at least one seed exercises a code path \
-                     that contains instrumented edges.",
-                ));
-            }
-            if self.features.auto_seed_count == 0 {
-                // No auto-seeds tried yet - push default seeds to populate
-                // the corpus. This covers both the initial case (no user seeds)
-                // and the case where user seeds all crashed (solutions found
-                // but corpus still empty).
-                for seed in DEFAULT_SEEDS {
-                    self.queue_seed(BytesInput::new(seed.to_vec()));
-                }
-                self.features.set_auto_seed_count(DEFAULT_SEEDS.len());
-            }
-        }
+        let generated = self.generate_input()?;
 
-        // All seeds crashed but none produced coverage - the corpus is empty
-        // and no seeds remain to evaluate. Provide a clear error instead of
-        // falling through to the scheduler which would produce a confusing
-        // "Scheduler failed" error on an empty corpus.
-        if self.state.corpus().count() == 0
-            && self.unevaluated_seeds.is_empty()
-            && self.solution_count > 0
-        {
-            return Err(Error::from_reason(
-                "No seed produced coverage and the corpus is empty - the fuzzer \
-                 cannot continue without at least one non-crashing seed that \
-                 exercises instrumented code.",
-            ));
-        }
-
-        // Drain unevaluated seeds first: return verbatim (no mutation).
-        // This mirrors libFuzzer's initial seed evaluation phase, ensuring
-        // seeds are executed with their original content before mutation begins.
-        // Seeds are not in the corpus yet - evaluate_coverage will add them
-        // if they produce novel coverage.
-        if let Some(seed_input) = self.unevaluated_seeds.pop_front() {
-            // No last_corpus_id - seed isn't in corpus yet.
-            // evaluate_coverage treats None as root depth (1).
-            self.last_corpus_id = None;
-            let mut bytes: Vec<u8> = seed_input.into();
-            bytes.truncate(self.max_input_len as usize);
-            let buffer = Buffer::from(bytes.as_slice());
-            self.last_input = Some(BytesInput::new(bytes));
-            return Ok(buffer);
-        }
-
-        // Select a corpus entry and clone its input.
-        let corpus_id = self
-            .scheduler
-            .next(&mut self.state)
-            .map_err(|e| Error::from_reason(format!("Scheduler failed: {e}")))?;
-        self.last_corpus_id = Some(corpus_id);
-
-        // Increment the fuzz count for the selected entry's path.
-        // This drives the FAST schedule's logarithmic decay of frequently-fuzzed entries.
-        if let Ok(entry) = self.state.corpus().get(corpus_id) {
-            let tc = entry.borrow();
-            if let Ok(meta) = tc.metadata::<SchedulerTestcaseMetadata>() {
-                let idx = meta.n_fuzz_entry();
-                drop(tc);
-                if let Ok(psmeta) = self.state.metadata_mut::<SchedulerMetadata>() {
-                    psmeta.n_fuzz_mut()[idx] = psmeta.n_fuzz()[idx].saturating_add(1);
-                }
-            }
-        }
-
-        let mut input = self
-            .state
-            .corpus()
-            .cloned_input_for_id(corpus_id)
-            .map_err(|e| Error::from_reason(format!("Failed to get input: {e}")))?;
-
-        // Mutate the input: havoc first, then I2S replacement.
-        let _ = self
-            .mutator
-            .mutate(&mut self.state, &mut input)
-            .map_err(|e| Error::from_reason(format!("Mutation failed: {e}")))?;
-        let _ = self
-            .i2s_mutator
-            .mutate(&mut self.state, &mut input)
-            .map_err(|e| Error::from_reason(format!("I2S mutation failed: {e}")))?;
-
-        // Enforce max_input_len.
-        let mut bytes: Vec<u8> = input.into();
-        bytes.truncate(self.max_input_len as usize);
-        let buffer = Buffer::from(bytes.as_slice());
-        self.last_input = Some(BytesInput::new(bytes));
+        self.last_corpus_id = generated.parent_corpus_id;
+        let buffer = Buffer::from(generated.bytes.as_slice());
+        self.last_input = Some(BytesInput::new(generated.bytes));
 
         Ok(buffer)
     }
@@ -540,30 +511,8 @@ impl Fuzzer {
             IterationResult::None
         };
 
-        // Drain enriched CmpLog accumulator and build both metadata types:
-        // - AflppCmpValuesMetadata (site-keyed, for REDQUEEN)
-        // - CmpValuesMetadata (flat list, for I2S backward compatibility)
-        let cmp_entries = crate::cmplog::drain();
-
-        // Extract byte tokens from CmpLog entries and promote frequent ones into
-        // the mutation dictionary. Each candidate is tracked in `token_candidates`
-        // and only promoted to `Tokens` after being observed
-        // `TOKEN_PROMOTION_THRESHOLD` times. This filters out one-off garbled byte
-        // sequences produced by havoc mutations (which each appear once) while
-        // keeping real comparison constants like `"javascript"` (which appear in
-        // every execution that reaches the comparison).
-        let extracted = extract_tokens_from_cmplog(&cmp_entries);
-        self.token_tracker.process(&extracted, &mut self.state);
-
-        // Build site-keyed metadata for REDQUEEN.
-        let aflpp_metadata = build_aflpp_cmp_metadata(&cmp_entries);
-        // Flatten orig_cmpvals into a flat list for I2S backward compatibility.
-        let flat_list = flatten_orig_cmpvals(&aflpp_metadata);
-
-        self.state.metadata_map_mut().insert(aflpp_metadata);
-        self.state
-            .metadata_map_mut()
-            .insert(CmpValuesMetadata { list: flat_list });
+        // Drain CmpLog accumulator, extract/promote tokens, build metadata.
+        self.process_cmplog_and_tokens();
 
         self.total_execs += 1;
         *self.state.executions_mut() += 1;
@@ -663,6 +612,395 @@ impl Fuzzer {
             execs_per_sec,
         }
     }
+
+    /// Stash the current input to the owned shmem region.
+    ///
+    /// Delegates to the owned `ShmemHandle`'s seqlock write protocol.
+    /// No-op if no `ShmemHandle` was provided at construction.
+    ///
+    /// Used by JS-orchestrated paths (calibration, stages, minimization)
+    /// when the shmem handle is owned by the Fuzzer.
+    #[napi]
+    pub fn stash_input(&self, input: &[u8]) {
+        if let Some(ref view) = self.shmem_view {
+            view.stash_input(input);
+        }
+    }
+
+    /// Run the target function with optional watchdog protection.
+    ///
+    /// If a Watchdog was provided at construction, arms it with `timeoutMs`,
+    /// calls the target at the NAPI C level with V8 termination handling,
+    /// disarms, and returns `{ exitKind, error?, result? }`.
+    ///
+    /// If no Watchdog was provided, calls the target directly without timeout
+    /// enforcement and returns the same result shape.
+    #[napi(ts_return_type = "{ exitKind: number; error?: Error; result?: unknown }")]
+    pub fn run_target<'a>(
+        &mut self,
+        env: Env,
+        #[napi(ts_arg_type = "(data: Buffer) => void | Promise<void>")] target: Unknown<'a>,
+        input: Buffer,
+        timeout_ms: f64,
+    ) -> Result<Object<'a>> {
+        match self.watchdog_shared {
+            Some(ref shared) => run_target_with_shared(shared, env, target, input, timeout_ms),
+            None => run_target_without_watchdog(env, target, input),
+        }
+    }
+
+    /// Arm the owned watchdog with a timeout in milliseconds.
+    ///
+    /// No-op if no Watchdog was provided at construction. Used by the
+    /// per-iteration fallback path for async targets that need to re-arm
+    /// the watchdog before awaiting a Promise.
+    #[napi]
+    pub fn arm_watchdog(&self, timeout_ms: f64) {
+        if let Some(ref shared) = self.watchdog_shared {
+            arm_watchdog_shared(shared, timeout_ms);
+        }
+    }
+
+    /// Returns `true` if the owned watchdog fired since the last `disarmWatchdog()`.
+    ///
+    /// Always returns `false` if no Watchdog was provided at construction.
+    /// Used by the per-iteration fallback path for async targets to
+    /// distinguish timeout from crash after awaiting a Promise.
+    #[napi(getter)]
+    pub fn did_watchdog_fire(&self) -> bool {
+        self.watchdog_shared
+            .as_ref()
+            .is_some_and(|shared| shared.fired.load(std::sync::atomic::Ordering::Acquire))
+    }
+
+    /// Disarm the owned watchdog.
+    ///
+    /// No-op if no Watchdog was provided at construction. Used by the
+    /// per-iteration fallback path for async targets.
+    #[napi]
+    pub fn disarm_watchdog(&self) {
+        if let Some(ref shared) = self.watchdog_shared {
+            disarm_watchdog_shared(shared);
+        }
+    }
+
+    /// Shut down the owned watchdog thread.
+    ///
+    /// Signals the background thread to exit, wakes it via condvar, and joins
+    /// it. No-op if no Watchdog was provided at construction or if already
+    /// shut down. Called from the fuzz loop's finally block.
+    #[napi]
+    pub fn shutdown(&mut self) {
+        if let Some(ref shared) = self.watchdog_shared {
+            shutdown_watchdog_shared(shared, &mut self.watchdog_thread_handle);
+        }
+    }
+
+    /// Run a batch of fuzzing iterations in a tight Rust-internal loop.
+    ///
+    /// For each iteration: generate/mutate input, stash to shmem, arm watchdog,
+    /// call the JS callback, disarm watchdog, evaluate coverage, process CmpLog.
+    /// Exits early on the first interesting input, solution, or callback error.
+    ///
+    /// The callback receives `(inputBuffer, inputLength)` and returns an
+    /// `ExitKind` number (0=Ok, 1=Crash). Invalid return values are treated
+    /// as Ok. The callback MUST NOT retain a reference to `inputBuffer`.
+    #[napi]
+    pub fn run_batch(
+        &mut self,
+        env: Env,
+        #[napi(ts_arg_type = "(inputBuffer: Buffer, inputLength: number) => number")]
+        callback: Unknown<'_>,
+        batch_size: u32,
+        timeout_ms: f64,
+    ) -> Result<BatchResult> {
+        if batch_size == 0 {
+            return Ok(BatchResult {
+                executions_completed: 0,
+                exit_reason: BATCH_EXIT_COMPLETED.to_owned(),
+                triggering_input: None,
+                solution_exit_kind: None,
+            });
+        }
+
+        let raw_env = env.raw();
+        // SAFETY: raw_env is valid for the duration of this NAPI call.
+        let callback_value = unsafe { Unknown::to_napi_value(raw_env, callback)? };
+
+        let mut global: napi::sys::napi_value = std::ptr::null_mut();
+        let status = unsafe { napi::sys::napi_get_global(raw_env, &mut global) };
+        if status != napi::sys::Status::napi_ok {
+            return Err(Error::new(
+                Status::GenericFailure,
+                "napi_get_global failed in run_batch",
+            ));
+        }
+
+        // Create a JS Buffer backed by the pre-allocated input buffer's memory.
+        //
+        // Created once per run_batch call, not per iteration. The napi_value
+        // handle is scoped to the current HandleScope and becomes invalid after
+        // this NAPI call returns - this is fine because run_batch is synchronous
+        // and the handle is only used within this function.
+        //
+        // No finalizer is attached (None): the memory is externally owned by
+        // self.input_buffer, so the GC must not free it. Multiple JS Buffers
+        // over the same pointer are safe because we never create overlapping
+        // live handles (one per run_batch invocation). The per-call creation
+        // cost is negligible relative to the callback overhead.
+        //
+        // SAFETY: self.input_buffer_ptr is valid for self.max_input_len bytes,
+        // backed by self.input_buffer which is alive for the duration of this call.
+        let mut input_buffer_napi: napi::sys::napi_value = std::ptr::null_mut();
+        let buf_status = unsafe {
+            napi::sys::napi_create_external_buffer(
+                raw_env,
+                self.max_input_len as usize,
+                self.input_buffer_ptr as *mut std::ffi::c_void,
+                None,
+                std::ptr::null_mut(),
+                &mut input_buffer_napi,
+            )
+        };
+        if buf_status != napi::sys::Status::napi_ok {
+            return Err(Error::new(
+                Status::GenericFailure,
+                "napi_create_external_buffer failed in run_batch",
+            ));
+        }
+
+        let has_watchdog = self.watchdog_shared.is_some();
+        let has_shmem = self.shmem_view.is_some();
+
+        for iteration in 0..batch_size {
+            // Generate next input (seed or mutation).
+            let generated = match self.generate_input() {
+                Ok(g) => g,
+                Err(_) => {
+                    // Infrastructure error (e.g., empty corpus with no seeds).
+                    // Zero coverage map and return error.
+                    unsafe {
+                        std::ptr::write_bytes(self.map_ptr, 0, self.map_len);
+                    }
+                    return Ok(BatchResult {
+                        executions_completed: iteration,
+                        exit_reason: BATCH_EXIT_ERROR.to_owned(),
+                        triggering_input: None,
+                        solution_exit_kind: None,
+                    });
+                }
+            };
+
+            let input_len = generated.bytes.len();
+            let parent_corpus_id = generated.parent_corpus_id;
+
+            // Write mutated bytes into the pre-allocated buffer.
+            // SAFETY: input_len <= max_input_len (generate_input truncates).
+            // input_buffer_ptr points into self.input_buffer which is alive.
+            if input_len > 0 {
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        generated.bytes.as_ptr(),
+                        self.input_buffer_ptr,
+                        input_len,
+                    );
+                }
+            }
+
+            // Stash input to shmem before callback (if handle present).
+            if has_shmem {
+                // SAFETY: shmem_view is Some when has_shmem is true.
+                self.shmem_view
+                    .as_ref()
+                    .unwrap()
+                    .stash_input(&generated.bytes);
+            }
+
+            // Arm watchdog before callback (if present).
+            if has_watchdog {
+                arm_watchdog_shared(self.watchdog_shared.as_ref().unwrap(), timeout_ms);
+            }
+
+            // Measure execution time around callback.
+            let start = Instant::now();
+
+            // Call JS callback: callback(inputBuffer, inputLength)
+            // SAFETY: raw_env, callback_value, global, input_buffer_napi are valid.
+            let mut input_len_value: napi::sys::napi_value = std::ptr::null_mut();
+            let len_status = unsafe {
+                napi::sys::napi_create_double(raw_env, input_len as f64, &mut input_len_value)
+            };
+            if len_status != napi::sys::Status::napi_ok {
+                if has_watchdog {
+                    let shared = self.watchdog_shared.as_ref().unwrap();
+                    if shared.fired.load(std::sync::atomic::Ordering::Acquire) {
+                        crate::v8_shim::v8_cancel_terminate();
+                    }
+                    disarm_watchdog_shared(shared);
+                }
+                return Err(Error::new(
+                    Status::GenericFailure,
+                    "napi_create_double failed in run_batch",
+                ));
+            }
+
+            let args = [input_buffer_napi, input_len_value];
+            let mut return_value: napi::sys::napi_value = std::ptr::null_mut();
+            let call_status = unsafe {
+                napi::sys::napi_call_function(
+                    raw_env,
+                    global,
+                    callback_value,
+                    2,
+                    args.as_ptr(),
+                    &mut return_value,
+                )
+            };
+
+            let elapsed = start.elapsed();
+            let exec_time_ns = elapsed.as_nanos() as f64;
+
+            // Read `fired` BEFORE disarming: disarm_watchdog_shared resets
+            // `fired` to false via swap(false, AcqRel), so any read after
+            // disarm would always see false, preventing timeout detection.
+            let timed_out = has_watchdog
+                && self
+                    .watchdog_shared
+                    .as_ref()
+                    .unwrap()
+                    .fired
+                    .load(std::sync::atomic::Ordering::Acquire);
+            if timed_out {
+                crate::v8_shim::v8_cancel_terminate();
+            }
+
+            // Disarm watchdog after callback returns (if present).
+            if has_watchdog {
+                disarm_watchdog_shared(self.watchdog_shared.as_ref().unwrap());
+            }
+
+            // Determine ExitKind from callback result.
+            let exit_kind = if call_status == napi::sys::Status::napi_ok {
+                // Read the return value as a number.
+                let mut result_f64: f64 = 0.0;
+                let get_status = unsafe {
+                    napi::sys::napi_get_value_double(raw_env, return_value, &mut result_f64)
+                };
+                if get_status == napi::sys::Status::napi_ok {
+                    match result_f64 as u32 {
+                        1 => LibaflExitKind::Crash,
+                        _ => LibaflExitKind::Ok, // 0 or any invalid value treated as Ok
+                    }
+                } else {
+                    LibaflExitKind::Ok // non-numeric return treated as Ok
+                }
+            } else if call_status == napi::sys::Status::napi_pending_exception {
+                // Callback threw or V8 terminated execution.
+                // Clear the pending exception.
+                let mut exception: napi::sys::napi_value = std::ptr::null_mut();
+                let _ = unsafe {
+                    napi::sys::napi_get_and_clear_last_exception(raw_env, &mut exception)
+                };
+
+                if timed_out {
+                    LibaflExitKind::Timeout
+                } else {
+                    // Infrastructure-level error (not a normal callback return).
+                    // Zero coverage map and return error.
+                    unsafe {
+                        std::ptr::write_bytes(self.map_ptr, 0, self.map_len);
+                    }
+                    return Ok(BatchResult {
+                        executions_completed: iteration + 1,
+                        exit_reason: BATCH_EXIT_ERROR.to_owned(),
+                        triggering_input: Some(Buffer::from(generated.bytes)),
+                        solution_exit_kind: None,
+                    });
+                }
+            } else {
+                // NAPI failure (not an exception). Unrecoverable.
+                unsafe {
+                    std::ptr::write_bytes(self.map_ptr, 0, self.map_len);
+                }
+                return Ok(BatchResult {
+                    executions_completed: iteration + 1,
+                    exit_reason: BATCH_EXIT_ERROR.to_owned(),
+                    triggering_input: Some(Buffer::from(generated.bytes)),
+                    solution_exit_kind: None,
+                });
+            };
+
+            // Evaluate coverage.
+            let eval = self.evaluate_coverage(
+                &generated.bytes,
+                exec_time_ns,
+                exit_kind,
+                parent_corpus_id,
+            )?;
+
+            // Process CmpLog entries.
+            self.process_cmplog_and_tokens();
+
+            // Increment execution counters.
+            self.total_execs += 1;
+            *self.state.executions_mut() += 1;
+
+            // Handle results.
+            if eval.is_solution {
+                // Add to solutions corpus.
+                let testcase = Testcase::new(BytesInput::new(generated.bytes.clone()));
+                self.state
+                    .solutions_mut()
+                    .add(testcase)
+                    .map_err(|e| Error::from_reason(format!("Failed to add solution: {e}")))?;
+                self.solution_count += 1;
+
+                let solution_exit_kind = match exit_kind {
+                    LibaflExitKind::Crash => 1u32,
+                    LibaflExitKind::Timeout => 2u32,
+                    _ => 1u32, // shouldn't happen, but default to crash
+                };
+
+                return Ok(BatchResult {
+                    executions_completed: iteration + 1,
+                    exit_reason: BATCH_EXIT_SOLUTION.to_owned(),
+                    triggering_input: Some(Buffer::from(generated.bytes)),
+                    solution_exit_kind: Some(solution_exit_kind),
+                });
+            }
+
+            if eval.is_interesting {
+                // Panic justification: evaluate_coverage guarantees corpus_id is Some
+                // when is_interesting is true.
+                let corpus_id = eval.corpus_id.unwrap();
+                let exec_time = Duration::from_nanos(exec_time_ns as u64);
+
+                // Prepare calibration state for upcoming calibrate_run() calls.
+                self.calibration.begin(corpus_id, exec_time);
+
+                // Store for beginStage() - consumed after calibration completes.
+                self.last_interesting_corpus_id = Some(corpus_id);
+
+                // Record for feature auto-detection.
+                self.features.record_interesting(&self.state);
+
+                return Ok(BatchResult {
+                    executions_completed: iteration + 1,
+                    exit_reason: BATCH_EXIT_INTERESTING.to_owned(),
+                    triggering_input: Some(Buffer::from(generated.bytes)),
+                    solution_exit_kind: None,
+                });
+            }
+        }
+
+        // Full batch completed without interesting inputs or solutions.
+        Ok(BatchResult {
+            executions_completed: batch_size,
+            exit_reason: BATCH_EXIT_COMPLETED.to_owned(),
+            triggering_input: None,
+            solution_exit_kind: None,
+        })
+    }
 }
 
 /// AFL-style hit-count bucket index for coverage feature computation.
@@ -705,6 +1043,14 @@ pub(crate) fn compute_coverage_features(history_map: &[u8]) -> u32 {
         .sum()
 }
 
+/// Internal result of generating the next input (seed or mutation).
+struct GeneratedInput {
+    /// The input bytes (truncated to `max_input_len`).
+    bytes: Vec<u8>,
+    /// Parent corpus ID: `None` for seeds, `Some(id)` for mutations.
+    parent_corpus_id: Option<CorpusId>,
+}
+
 impl Fuzzer {
     /// Queue a seed for verbatim evaluation during the initial seed phase.
     ///
@@ -715,13 +1061,120 @@ impl Fuzzer {
     fn queue_seed(&mut self, input: BytesInput) {
         self.unevaluated_seeds.push_back(input);
     }
-}
 
-/// Disables CmpLog on drop. CmpLog state is thread-local to the main thread,
-/// which is correct because `Fuzzer` is only used on the Node.js main thread
-/// (see `unsafe impl Send` safety comment above).
-impl Drop for Fuzzer {
-    fn drop(&mut self) {
-        crate::cmplog::disable();
+    /// Core input generation logic shared by `get_next_input` (allocates Buffer)
+    /// and `run_batch` (writes into pre-allocated buffer).
+    ///
+    /// Handles auto-seeding, seed drain, corpus selection, and mutation.
+    /// Returns the input bytes and parent corpus ID.
+    fn generate_input(&mut self) -> Result<GeneratedInput> {
+        // Auto-seed if corpus is empty and no seeds are queued.
+        if self.state.corpus().count() == 0 && self.unevaluated_seeds.is_empty() {
+            if (self.has_user_seeds || self.features.auto_seed_count > 0)
+                && self.solution_count == 0
+            {
+                return Err(Error::from_reason(
+                    "All seeds evaluated but none produced coverage. \
+                     This usually means instrumentation is not active - \
+                     check that the vitiate plugin is loaded and \
+                     globalThis.__vitiate_cov is initialized. If instrumentation \
+                     is active, ensure at least one seed exercises a code path \
+                     that contains instrumented edges.",
+                ));
+            }
+            if self.features.auto_seed_count == 0 {
+                for seed in DEFAULT_SEEDS {
+                    self.queue_seed(BytesInput::new(seed.to_vec()));
+                }
+                self.features.set_auto_seed_count(DEFAULT_SEEDS.len());
+            }
+        }
+
+        // All seeds crashed but none produced coverage.
+        if self.state.corpus().count() == 0
+            && self.unevaluated_seeds.is_empty()
+            && self.solution_count > 0
+        {
+            return Err(Error::from_reason(
+                "No seed produced coverage and the corpus is empty - the fuzzer \
+                 cannot continue without at least one non-crashing seed that \
+                 exercises instrumented code.",
+            ));
+        }
+
+        // Drain unevaluated seeds first: return verbatim (no mutation).
+        if let Some(seed_input) = self.unevaluated_seeds.pop_front() {
+            let mut bytes: Vec<u8> = seed_input.into();
+            bytes.truncate(self.max_input_len as usize);
+            return Ok(GeneratedInput {
+                bytes,
+                parent_corpus_id: None,
+            });
+        }
+
+        // Select a corpus entry and clone its input.
+        let corpus_id = self
+            .scheduler
+            .next(&mut self.state)
+            .map_err(|e| Error::from_reason(format!("Scheduler failed: {e}")))?;
+
+        // Increment the fuzz count for the selected entry's path.
+        if let Ok(entry) = self.state.corpus().get(corpus_id) {
+            let tc = entry.borrow();
+            if let Ok(meta) = tc.metadata::<SchedulerTestcaseMetadata>() {
+                let idx = meta.n_fuzz_entry();
+                drop(tc);
+                if let Ok(psmeta) = self.state.metadata_mut::<SchedulerMetadata>() {
+                    psmeta.n_fuzz_mut()[idx] = psmeta.n_fuzz()[idx].saturating_add(1);
+                }
+            }
+        }
+
+        let mut input = self
+            .state
+            .corpus()
+            .cloned_input_for_id(corpus_id)
+            .map_err(|e| Error::from_reason(format!("Failed to get input: {e}")))?;
+
+        // Mutate the input: havoc first, then I2S replacement.
+        let _ = self
+            .mutator
+            .mutate(&mut self.state, &mut input)
+            .map_err(|e| Error::from_reason(format!("Mutation failed: {e}")))?;
+        let _ = self
+            .i2s_mutator
+            .mutate(&mut self.state, &mut input)
+            .map_err(|e| Error::from_reason(format!("I2S mutation failed: {e}")))?;
+
+        // Enforce max_input_len.
+        let mut bytes: Vec<u8> = input.into();
+        bytes.truncate(self.max_input_len as usize);
+
+        Ok(GeneratedInput {
+            bytes,
+            parent_corpus_id: Some(corpus_id),
+        })
+    }
+
+    /// Process CmpLog entries after each iteration: drain accumulator, extract
+    /// and promote tokens, build metadata for both REDQUEEN and I2S paths.
+    ///
+    /// Shared by `report_result` and `run_batch`.
+    fn process_cmplog_and_tokens(&mut self) {
+        let cmp_entries = crate::cmplog::drain();
+
+        let extracted = extract_tokens_from_cmplog(&cmp_entries);
+        self.token_tracker.process(&extracted, &mut self.state);
+
+        let aflpp_metadata = build_aflpp_cmp_metadata(&cmp_entries);
+        let flat_list = flatten_orig_cmpvals(&aflpp_metadata);
+
+        self.state.metadata_map_mut().insert(aflpp_metadata);
+        self.state
+            .metadata_map_mut()
+            .insert(CmpValuesMetadata { list: flat_list });
     }
 }
+
+// No manual Drop impl needed - `_cmplog_guard: CmpLogGuard` handles
+// CmpLog disable via its own Drop, and other fields use default drop.

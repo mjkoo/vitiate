@@ -218,25 +218,27 @@ describe("plugin", () => {
       );
     });
 
-    it("returns server.deps.inline true when exclude is empty", () => {
+    it("returns test.server.deps.inline true when exclude is empty", () => {
       const instrument = findPlugin(
         vitiatePlugin({ instrument: { exclude: [] } }),
         "vitiate:instrument",
       );
       const config = callConfig(instrument, {});
-      expect(config).toHaveProperty("server");
-      const server = config["server"] as Record<string, unknown>;
+      const testConfig = config["test"] as Record<string, unknown>;
+      expect(testConfig).toHaveProperty("server");
+      const server = testConfig["server"] as Record<string, unknown>;
       const deps = server["deps"] as Record<string, unknown>;
       expect(deps["inline"]).toBe(true);
     });
 
-    it("does not set server.deps with default exclude", () => {
+    it("does not set test.server.deps with default exclude", () => {
       const instrument = findPlugin(vitiatePlugin(), "vitiate:instrument");
       const config = callConfig(instrument, {});
-      expect(config).not.toHaveProperty("server");
+      const testConfig = config["test"] as Record<string, unknown>;
+      expect(testConfig).not.toHaveProperty("server");
     });
 
-    it("does not set server.deps when exclude contains a narrower node_modules pattern", () => {
+    it("does not set test.server.deps when exclude contains a narrower node_modules pattern", () => {
       const instrument = findPlugin(
         vitiatePlugin({
           instrument: { exclude: ["**/node_modules/lodash/**"] },
@@ -244,7 +246,8 @@ describe("plugin", () => {
         "vitiate:instrument",
       );
       const config = callConfig(instrument, {});
-      expect(config).not.toHaveProperty("server");
+      const testConfig = config["test"] as Record<string, unknown>;
+      expect(testConfig).not.toHaveProperty("server");
     });
   });
 

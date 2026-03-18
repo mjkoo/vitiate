@@ -40,11 +40,11 @@ struct WatchdogState {
 }
 
 /// Shared state between the main thread and the watchdog thread.
-struct WatchdogShared {
+pub(crate) struct WatchdogShared {
     state: Mutex<WatchdogState>,
     condvar: Condvar,
     /// Set to `true` when the watchdog fires TerminateExecution.
-    fired: AtomicBool,
+    pub(crate) fired: AtomicBool,
     /// The current timeout in milliseconds (set by arm, used by _exit path).
     timeout_ms: AtomicU64,
     /// Shmem view for reading the current input before `_exit`.
@@ -268,51 +268,14 @@ impl Watchdog {
     /// Wakes the watchdog thread to start timing.
     #[napi]
     pub fn arm(&mut self, timeout_ms: f64) {
-        debug_assert!(
-            timeout_ms.is_finite() && timeout_ms > 0.0,
-            "arm() timeout must be finite and positive, got {timeout_ms}"
-        );
-        // Clamp invalid values: NaN, negative, or zero → 1ms (fire immediately
-        // rather than silently becoming 0ms or wrapping).
-        let clamped = if timeout_ms.is_finite() && timeout_ms > 0.0 {
-            timeout_ms
-        } else {
-            1.0
-        };
-        let ms = clamped as u64;
-        self.shared.timeout_ms.store(ms, Ordering::Release);
-
-        let deadline = Instant::now() + Duration::from_millis(ms);
-
-        let mut state = self.shared.state.lock().unwrap();
-        state.deadline = Some(deadline);
-        state.armed = true;
-        drop(state);
-        self.shared.condvar.notify_one();
+        arm_watchdog_shared(&self.shared, timeout_ms);
     }
 
     /// Disarm the watchdog. Clears the deadline and cancels any pending
     /// V8 termination if the watchdog fired.
     #[napi]
     pub fn disarm(&mut self) {
-        let mut state = self.shared.state.lock().unwrap();
-        state.deadline = None;
-        state.armed = false;
-        drop(state);
-        self.shared.condvar.notify_one();
-
-        // If the watchdog fired TerminateExecution, cancel it to ensure V8
-        // state is clean before the next fuzz iteration.
-        //
-        // For the sync timeout path, the C++ shim already called
-        // CancelTerminateExecution so NAPI calls could succeed - this second
-        // cancel is redundant but harmless (CancelTerminateExecution is
-        // idempotent). For the async timeout path, this is the *only* cancel,
-        // since the C++ shim never ran the timeout branch. The intentional
-        // redundancy is defense-in-depth: each layer ensures its own invariants.
-        if self.shared.fired.swap(false, Ordering::AcqRel) {
-            v8_shim::v8_cancel_terminate();
-        }
+        disarm_watchdog_shared(&self.shared);
     }
 
     /// Returns `true` if the watchdog fired since the last `disarm()`.
@@ -329,15 +292,7 @@ impl Watchdog {
     /// callers to release the thread without waiting for GC.
     #[napi]
     pub fn shutdown(&mut self) {
-        {
-            let mut state = self.shared.state.lock().unwrap();
-            state.shutdown = true;
-        }
-        self.shared.condvar.notify_one();
-
-        if let Some(handle) = self.thread_handle.take() {
-            let _ = handle.join();
-        }
+        shutdown_watchdog_shared(&self.shared, &mut self.thread_handle);
     }
 
     /// Run the target function with watchdog protection.
@@ -353,152 +308,291 @@ impl Watchdog {
     /// Note: Input stashing is the caller's responsibility. The fuzz loop must
     /// call `shmemHandle.stashInput(input)` before calling `runTarget()`.
     #[napi(ts_return_type = "{ exitKind: number; error?: Error; result?: unknown }")]
-    pub fn run_target(
+    pub fn run_target<'a>(
         &mut self,
         env: Env,
-        #[napi(ts_arg_type = "(data: Buffer) => void | Promise<void>")] target: Unknown,
+        #[napi(ts_arg_type = "(data: Buffer) => void | Promise<void>")] target: Unknown<'a>,
         input: Buffer,
         timeout_ms: f64,
-    ) -> Result<Object<'_>> {
-        // Arm watchdog. Input stashing is done by the fuzz loop via shmem
-        // before calling run_target.
-        self.arm(timeout_ms);
+    ) -> Result<Object<'a>> {
+        run_target_with_shared(&self.shared, env, target, input, timeout_ms)
+    }
+}
 
-        let raw_env = env.raw();
-        // SAFETY: `raw_env` is valid - obtained from the `Env` parameter which
-        // NAPI guarantees is valid for the duration of this call. `input` and
-        // `target` are owned Rust values being converted to raw NAPI handles.
-        let input_value = unsafe { Buffer::to_napi_value(raw_env, input)? };
-        let target_value = unsafe { Unknown::to_napi_value(raw_env, target)? };
+impl Watchdog {
+    /// Transfer the watchdog's internal state for ownership by another struct
+    /// (e.g., Fuzzer). After this call, the original Watchdog is fully inert:
+    /// - `shutdown()` is a no-op (thread handle was moved out).
+    /// - `arm()` / `disarm()` operate on a disconnected `WatchdogShared` with
+    ///   `shutdown: true`, so the calls are harmless - no thread is watching
+    ///   the replacement state.
+    pub(crate) fn take_internals(
+        &mut self,
+    ) -> (Arc<WatchdogShared>, Option<thread::JoinHandle<()>>) {
+        let shared = Arc::clone(&self.shared);
+        let handle = self.thread_handle.take();
 
-        // Try the C++ shim path (handles V8 termination interception)
-        if let Some(result) =
-            v8_shim::run_target_ffi(raw_env, target_value, input_value, &self.shared.fired)
-        {
-            self.disarm();
-            let mut obj = Object::from_raw(raw_env, result.value);
-            // Set the "result" property (target's return value) via napi-rs.
-            // For async targets this is the Promise that the JS caller must await.
-            // Previously this was done in the C++ shim via set_prop_value with an
-            // unchecked return, which silently failed on Windows and caused the
-            // async continuation to never be awaited (coverage lost).
-            if !result.fn_result.is_null() {
-                obj.set("result", result.fn_result)?;
-            }
-            return Ok(obj);
+        // Replace self.shared with a fresh inert instance so that any
+        // subsequent arm()/disarm() calls on the original Watchdog object
+        // do not interfere with the Fuzzer's copy.
+        self.shared = Arc::new(WatchdogShared {
+            state: Mutex::new(WatchdogState {
+                deadline: None,
+                armed: false,
+                shutdown: true,
+            }),
+            condvar: Condvar::new(),
+            fired: AtomicBool::new(false),
+            timeout_ms: AtomicU64::new(0),
+            shmem_view: None,
+            artifact_prefix: String::new(),
+            v8_available: false,
+            exit_timeout_multiplier: 1,
+        });
+
+        (shared, handle)
+    }
+}
+
+/// Arm a watchdog using its shared state directly.
+///
+/// Used by Fuzzer when it owns the watchdog's shared state.
+pub(crate) fn arm_watchdog_shared(shared: &WatchdogShared, timeout_ms: f64) {
+    debug_assert!(
+        timeout_ms.is_finite() && timeout_ms > 0.0,
+        "arm() timeout must be finite and positive, got {timeout_ms}"
+    );
+    let clamped = if timeout_ms.is_finite() && timeout_ms > 0.0 {
+        timeout_ms
+    } else {
+        1.0
+    };
+    let ms = clamped as u64;
+    shared.timeout_ms.store(ms, Ordering::Release);
+
+    let deadline = Instant::now() + Duration::from_millis(ms);
+
+    let mut state = shared.state.lock().unwrap();
+    state.deadline = Some(deadline);
+    state.armed = true;
+    drop(state);
+    shared.condvar.notify_one();
+}
+
+/// Disarm a watchdog using its shared state directly.
+///
+/// Used by Fuzzer when it owns the watchdog's shared state.
+pub(crate) fn disarm_watchdog_shared(shared: &WatchdogShared) {
+    let mut state = shared.state.lock().unwrap();
+    state.deadline = None;
+    state.armed = false;
+    drop(state);
+    shared.condvar.notify_one();
+
+    // If the watchdog fired TerminateExecution, cancel it to ensure V8
+    // state is clean before the next fuzz iteration.
+    if shared.fired.swap(false, Ordering::AcqRel) {
+        v8_shim::v8_cancel_terminate();
+    }
+}
+
+/// Shut down a watchdog thread using its shared state and thread handle.
+///
+/// Used by Fuzzer when it owns the watchdog's internal state.
+pub(crate) fn shutdown_watchdog_shared(
+    shared: &WatchdogShared,
+    thread_handle: &mut Option<thread::JoinHandle<()>>,
+) {
+    {
+        let mut state = shared.state.lock().unwrap();
+        state.shutdown = true;
+    }
+    shared.condvar.notify_one();
+
+    if let Some(handle) = thread_handle.take() {
+        let _ = handle.join();
+    }
+}
+
+/// Execute a target function with watchdog protection using shared state.
+///
+/// This is the core run_target logic shared between the NAPI `Watchdog` class
+/// and the `Fuzzer` class (which owns the watchdog state internally).
+///
+/// Arms the watchdog, calls the target via the C++ shim (or NAPI fallback),
+/// disarms, and returns `{ exitKind, error?, result? }`.
+pub(crate) fn run_target_with_shared<'a>(
+    shared: &WatchdogShared,
+    env: Env,
+    target: Unknown<'a>,
+    input: Buffer,
+    timeout_ms: f64,
+) -> Result<Object<'a>> {
+    let raw_env = env.raw();
+    // SAFETY: `raw_env` is valid - obtained from the `Env` parameter which
+    // NAPI guarantees is valid for the duration of this call. `input` and
+    // `target` are owned Rust values being converted to raw NAPI handles.
+    //
+    // Convert NAPI values BEFORE arming the watchdog. These are pure type
+    // marshaling operations that don't execute user code - if they fail via `?`,
+    // the watchdog must not be left armed with no corresponding disarm.
+    let input_value = unsafe { Buffer::to_napi_value(raw_env, input)? };
+    let target_value = unsafe { Unknown::to_napi_value(raw_env, target)? };
+
+    arm_watchdog_shared(shared, timeout_ms);
+
+    // Try the C++ shim path (handles V8 termination interception)
+    if let Some(result) = v8_shim::run_target_ffi(raw_env, target_value, input_value, &shared.fired)
+    {
+        disarm_watchdog_shared(shared);
+        let mut obj = Object::from_raw(raw_env, result.value);
+        if !result.fn_result.is_null() {
+            obj.set("result", result.fn_result)?;
         }
+        return Ok(obj);
+    }
 
-        // Fallback path: C++ shim not initialized (cargo test, symbol resolution
-        // failed). Call the function via NAPI and handle exceptions manually.
-        //
-        // SAFETY for all raw NAPI calls below: `raw_env` is valid (from the
-        // `Env` parameter), and all output pointers are valid stack locals.
-        // Raw NAPI functions are safe to call with valid env + pointer args.
-        let mut result_value: napi::sys::napi_value = std::ptr::null_mut();
-        let mut global: napi::sys::napi_value = std::ptr::null_mut();
-        let status = unsafe { napi::sys::napi_get_global(raw_env, &mut global) };
-        if status != napi::sys::Status::napi_ok {
-            return Err(Error::new(
-                Status::GenericFailure,
-                "napi_get_global failed in fallback path",
-            ));
-        }
+    // Fallback path: C++ shim not initialized. Call via NAPI directly.
+    //
+    // SAFETY for all raw NAPI calls below: `raw_env` is valid (from the
+    // `Env` parameter), and all output pointers are valid stack locals.
+    let mut result_value: napi::sys::napi_value = std::ptr::null_mut();
+    let mut global: napi::sys::napi_value = std::ptr::null_mut();
+    let status = unsafe { napi::sys::napi_get_global(raw_env, &mut global) };
+    if status != napi::sys::Status::napi_ok {
+        return Err(Error::new(
+            Status::GenericFailure,
+            "napi_get_global failed in fallback path",
+        ));
+    }
 
-        let call_status = unsafe {
-            napi::sys::napi_call_function(
-                raw_env,
-                global,
-                target_value,
-                1,
-                &input_value,
-                &mut result_value,
-            )
-        };
+    let call_status = unsafe {
+        napi::sys::napi_call_function(
+            raw_env,
+            global,
+            target_value,
+            1,
+            &input_value,
+            &mut result_value,
+        )
+    };
 
-        // Read fired BEFORE disarm() resets it. disarm() atomically swaps
-        // fired to false, so reading after disarm() always sees false.
-        //
-        // Note: in practice, `timed_out` is always false here. This fallback
-        // path only runs when the C++ shim isn't initialized (v8_available is
-        // false), and without V8 termination the watchdog calls _exit() on
-        // timeout - the process is dead before we reach this point. The timeout
-        // handling below exists for defensive consistency with the C++ shim path.
-        let timed_out = self.shared.fired.load(Ordering::Acquire);
+    let timed_out = shared.fired.load(Ordering::Acquire);
+    if timed_out {
+        v8_shim::v8_cancel_terminate();
+    }
+    disarm_watchdog_shared(shared);
 
-        // If V8 termination fired, cancel it before any NAPI calls to clear
-        // V8's internal termination flag. disarm() calls cancel again -
-        // idempotent, harmless.
+    build_call_result_object(raw_env, call_status, result_value, timed_out)
+}
+
+/// Build the `{ exitKind, error?, result? }` return object from a raw NAPI
+/// call result.
+///
+/// Shared between the `run_target_with_shared` fallback path and
+/// `run_target_without_watchdog` to avoid duplicating ~30 lines of
+/// status/exception/object construction logic.
+fn build_call_result_object<'a>(
+    raw_env: napi::sys::napi_env,
+    call_status: napi::sys::napi_status,
+    result_value: napi::sys::napi_value,
+    timed_out: bool,
+) -> Result<Object<'a>> {
+    let mut raw_obj: napi::sys::napi_value = std::ptr::null_mut();
+    let status = unsafe { napi::sys::napi_create_object(raw_env, &mut raw_obj) };
+    if status != napi::sys::Status::napi_ok {
+        return Err(Error::new(
+            Status::GenericFailure,
+            "napi_create_object failed",
+        ));
+    }
+    let mut obj = Object::from_raw(raw_env, raw_obj);
+
+    if call_status == napi::sys::Status::napi_ok {
+        obj.set("exitKind", 0u32)?;
+        obj.set("result", result_value)?;
+        Ok(obj)
+    } else if call_status == napi::sys::Status::napi_pending_exception {
+        let mut exception: napi::sys::napi_value = std::ptr::null_mut();
+        let exc_status =
+            unsafe { napi::sys::napi_get_and_clear_last_exception(raw_env, &mut exception) };
         if timed_out {
-            v8_shim::v8_cancel_terminate();
-        }
+            obj.set("exitKind", 2u32)?;
 
-        // Stop the watchdog timer to prevent _exit from firing while we
-        // build the result object.
-        self.disarm();
-
-        let mut raw_obj: napi::sys::napi_value = std::ptr::null_mut();
-        let status = unsafe { napi::sys::napi_create_object(raw_env, &mut raw_obj) };
-        if status != napi::sys::Status::napi_ok {
-            return Err(Error::new(
-                Status::GenericFailure,
-                "napi_create_object failed in fallback path",
-            ));
-        }
-        let mut obj = Object::from_raw(raw_env, raw_obj);
-
-        if call_status == napi::sys::Status::napi_ok {
-            obj.set("exitKind", 0u32)?;
-            obj.set("result", result_value)?;
-            Ok(obj)
-        } else if call_status == napi::sys::Status::napi_pending_exception {
-            let mut exception: napi::sys::napi_value = std::ptr::null_mut();
-            let exc_status =
-                unsafe { napi::sys::napi_get_and_clear_last_exception(raw_env, &mut exception) };
-            if timed_out {
-                obj.set("exitKind", 2u32)?;
-
-                // Create a timeout error for consistency with the C++ shim path.
-                // Best-effort - exitKind is already set for classification.
-                let msg = "fuzz target timed out";
-                let mut js_msg: napi::sys::napi_value = std::ptr::null_mut();
-                let msg_status = unsafe {
-                    napi::sys::napi_create_string_utf8(
+            let msg = "fuzz target timed out";
+            let mut js_msg: napi::sys::napi_value = std::ptr::null_mut();
+            let msg_status = unsafe {
+                napi::sys::napi_create_string_utf8(
+                    raw_env,
+                    msg.as_ptr().cast(),
+                    msg.len() as isize,
+                    &mut js_msg,
+                )
+            };
+            if exc_status == napi::sys::Status::napi_ok && msg_status == napi::sys::Status::napi_ok
+            {
+                let mut js_error: napi::sys::napi_value = std::ptr::null_mut();
+                let err_status = unsafe {
+                    napi::sys::napi_create_error(
                         raw_env,
-                        msg.as_ptr().cast(),
-                        msg.len() as isize,
-                        &mut js_msg,
+                        std::ptr::null_mut(),
+                        js_msg,
+                        &mut js_error,
                     )
                 };
-                if exc_status == napi::sys::Status::napi_ok
-                    && msg_status == napi::sys::Status::napi_ok
-                {
-                    let mut js_error: napi::sys::napi_value = std::ptr::null_mut();
-                    let err_status = unsafe {
-                        napi::sys::napi_create_error(
-                            raw_env,
-                            std::ptr::null_mut(),
-                            js_msg,
-                            &mut js_error,
-                        )
-                    };
-                    if err_status == napi::sys::Status::napi_ok {
-                        obj.set("error", js_error)?;
-                    }
-                }
-            } else {
-                obj.set("exitKind", 1u32)?;
-                if exc_status == napi::sys::Status::napi_ok {
-                    obj.set("error", exception)?;
+                if err_status == napi::sys::Status::napi_ok {
+                    obj.set("error", js_error)?;
                 }
             }
-            Ok(obj)
         } else {
-            Err(Error::new(
-                Status::GenericFailure,
-                format!("napi_call_function failed with status {call_status}"),
-            ))
+            obj.set("exitKind", 1u32)?;
+            if exc_status == napi::sys::Status::napi_ok {
+                obj.set("error", exception)?;
+            }
         }
+        Ok(obj)
+    } else {
+        Err(Error::new(
+            Status::GenericFailure,
+            format!("napi_call_function failed with status {call_status}"),
+        ))
     }
+}
+
+/// Execute a target function without watchdog protection.
+///
+/// Used by `Fuzzer::run_target` when no watchdog was provided at construction.
+/// Calls the target directly, handles exceptions, and returns the same
+/// `{ exitKind, error?, result? }` shape as the watchdog-protected path.
+pub(crate) fn run_target_without_watchdog<'a>(
+    env: Env,
+    target: Unknown<'a>,
+    input: Buffer,
+) -> Result<Object<'a>> {
+    let raw_env = env.raw();
+    // SAFETY: `raw_env` is valid, `input` and `target` are owned Rust values.
+    let input_value = unsafe { Buffer::to_napi_value(raw_env, input)? };
+    let target_value = unsafe { Unknown::to_napi_value(raw_env, target)? };
+
+    let mut result_value: napi::sys::napi_value = std::ptr::null_mut();
+    let mut global: napi::sys::napi_value = std::ptr::null_mut();
+    let status = unsafe { napi::sys::napi_get_global(raw_env, &mut global) };
+    if status != napi::sys::Status::napi_ok {
+        return Err(Error::new(Status::GenericFailure, "napi_get_global failed"));
+    }
+
+    let call_status = unsafe {
+        napi::sys::napi_call_function(
+            raw_env,
+            global,
+            target_value,
+            1,
+            &input_value,
+            &mut result_value,
+        )
+    };
+
+    build_call_result_object(raw_env, call_status, result_value, false)
 }
 
 impl Drop for Watchdog {

@@ -31,7 +31,7 @@ fn valid_dictionary_loads_tokens_into_state() {
 
     let coverage_map: Buffer = vec![0u8; 256].into();
     let config = make_config_with_dict(dict_path.to_str().unwrap());
-    let fuzzer = Fuzzer::new(coverage_map, Some(config)).unwrap();
+    let fuzzer = Fuzzer::new(coverage_map, Some(config), None, None).unwrap();
 
     let tokens = fuzzer.state.metadata::<Tokens>().unwrap();
     let token_list: Vec<&[u8]> = tokens.tokens().iter().map(|t| t.as_slice()).collect();
@@ -54,7 +54,7 @@ fn valid_dictionary_loads_tokens_into_state() {
 fn nonexistent_dictionary_returns_error() {
     let coverage_map: Buffer = vec![0u8; 256].into();
     let config = make_config_with_dict("/nonexistent/path/to/dict.dict");
-    let result = Fuzzer::new(coverage_map, Some(config));
+    let result = Fuzzer::new(coverage_map, Some(config), None, None);
 
     let err = result
         .err()
@@ -74,7 +74,7 @@ fn malformed_dictionary_returns_error() {
 
     let coverage_map: Buffer = vec![0u8; 256].into();
     let config = make_config_with_dict(dict_path.to_str().unwrap());
-    let result = Fuzzer::new(coverage_map, Some(config));
+    let result = Fuzzer::new(coverage_map, Some(config), None, None);
 
     let err = result
         .err()
@@ -94,7 +94,7 @@ fn empty_dictionary_succeeds_with_no_tokens() {
 
     let coverage_map: Buffer = vec![0u8; 256].into();
     let config = make_config_with_dict(dict_path.to_str().unwrap());
-    let fuzzer = Fuzzer::new(coverage_map, Some(config)).unwrap();
+    let fuzzer = Fuzzer::new(coverage_map, Some(config), None, None).unwrap();
 
     let tokens = fuzzer.state.metadata::<Tokens>().unwrap();
     assert_eq!(
@@ -116,7 +116,7 @@ fn no_dictionary_path_does_not_add_tokens_metadata() {
         dictionary_path: None,
         detector_tokens: None,
     };
-    let fuzzer = Fuzzer::new(coverage_map, Some(config)).unwrap();
+    let fuzzer = Fuzzer::new(coverage_map, Some(config), None, None).unwrap();
 
     assert!(
         !fuzzer.state.has_metadata::<Tokens>(),

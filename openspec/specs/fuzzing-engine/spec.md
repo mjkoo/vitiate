@@ -2,110 +2,91 @@
 
 ### Requirement: Create fuzzer instance
 
-The system SHALL provide a `Fuzzer` class constructable via
-`new Fuzzer(coverageMap, config?)` that accepts a required coverage map `Buffer` and an
-optional `FuzzerConfig` object. The Fuzzer SHALL stash a reference to the coverage map
-buffer for zero-copy access on each iteration.
+Provide `Fuzzer` class constructable via `new Fuzzer(coverageMap, config?, watchdog?, shmemHandle?)`.
 
-The config SHALL support the following fields, all optional with defaults:
+Required: coverage map `Buffer`.
 
-- `maxInputLen` (number, default 4096): Maximum byte length of generated inputs.
-- `seed` (number, optional): RNG seed for reproducible mutation sequences. If omitted,
-  a random seed is used. Negative values are reinterpreted as unsigned 64-bit integers.
-- `dictionaryPath` (string, optional): Absolute path to an AFL/libfuzzer-format dictionary file. If provided, the file SHALL be parsed via `Tokens::from_file()` during construction and the resulting tokens SHALL be added as `Tokens` state metadata before any fuzz iterations execute. If the file does not exist or contains malformed content, construction SHALL fail with an error indicating the file path and nature of the failure.
-- `detectorTokens` (array of `Buffer`, optional): Pre-seeded dictionary tokens from active bug detectors. If provided, each buffer SHALL be inserted into the `Tokens` state metadata during construction, after any user-provided dictionary tokens. Detector tokens SHALL be exempt from the `MAX_DICTIONARY_SIZE` cap (treated identically to user-provided dictionary tokens). If CmpLog subsequently observes a comparison operand matching a pre-seeded detector token, the token SHALL NOT be promoted a second time into the dictionary.
-- `grimoire` (boolean, optional): Grimoire structure-aware fuzzing control. `true` = force enable, `false` = force disable, absent = auto-detect from corpus UTF-8 content.
-- `unicode` (boolean, optional): Unicode-aware mutation control. `true` = force enable, `false` = force disable, absent = auto-detect from corpus UTF-8 content.
-- `redqueen` (boolean, optional): REDQUEEN transform-aware mutation control. `true` = force enable, `false` = force disable, absent = auto-detect (inverted: enabled for binary corpus).
+Optional:
+- `FuzzerConfig` object (all fields optional with defaults as specified below)
+- `Watchdog` instance - the Fuzzer takes ownership; used for arming/disarming during `runBatch` iterations
+- `ShmemHandle` instance - the Fuzzer takes ownership; used for stashing inputs during `runBatch` iterations and exposed via `stashInput()` pass-through
 
-On construction, the Fuzzer SHALL enable the CmpLog accumulator so that `traceCmp` calls
-record comparison operands. The Fuzzer SHALL also initialize `CmpValuesMetadata` on the
-fuzzer state and include `I2SSpliceReplace` (wrapping `I2SRandReplace`) in its mutation pipeline. This replaces the prior `I2SRandReplace` as the post-havoc I2S mutator.
+Config fields (all optional with defaults):
+- `maxInputLen` (number, default 4096)
+- `seed` (number, optional, negative reinterpreted as unsigned 64-bit)
+- `dictionaryPath` (string, optional, absolute path to AFL/libfuzzer-format dictionary)
+- `detectorTokens` (array of `Buffer`, optional, pre-seeded from bug detectors)
+- `grimoire` (boolean, optional: true=force enable, false=force disable, absent=auto-detect)
+- `unicode` (boolean, optional: true=force enable, false=force disable, absent=auto-detect)
+- `redqueen` (boolean, optional: true=force enable, false=force disable, absent=auto-detect)
 
-On construction, the Fuzzer SHALL initialize `SchedulerMetadata` with `PowerSchedule::fast()` on the fuzzer state. The scheduler SHALL use `CorpusPowerTestcaseScore` as its `TestcaseScore` implementation (replacing the prior `UniformScore`).
-
-On construction, the Fuzzer SHALL initialize the havoc mutator with `havoc_mutations()` merged with `tokens_mutations()`, providing both standard havoc mutations and dictionary-based token mutations in a single scheduled mutator.
-
-On construction, the Fuzzer SHALL initialize `TopRatedsMetadata` on the fuzzer state. This metadata is consumed by the `MinimizerScheduler` to track the best corpus entry per coverage edge (see corpus-minimizer spec).
-
-On construction, the Fuzzer SHALL additionally initialize:
-
-- `stage_state` to `StageState::None`.
-- `last_interesting_corpus_id` to `None` (`Option<CorpusId>`). This field is set by `report_result()` when an input is added to the corpus, and consumed (cleared) by `begin_stage()`.
-- `last_stage_input` to `None` (or equivalent empty state). This field stores the most recently generated stage input so that `advanceStage()` can add it to the corpus if coverage evaluation deems it interesting.
+On construction:
+- Enable CmpLog accumulator for `traceCmp` calls
+- Initialize `CmpValuesMetadata` on fuzzer state
+- Include `I2SSpliceReplace` (wrapping `I2SRandReplace`) in mutation pipeline
+- Initialize `SchedulerMetadata` with `PowerSchedule::fast()` using `CorpusPowerTestcaseScore`
+- Initialize havoc mutator with `havoc_mutations()` merged with `tokens_mutations()`
+- Initialize `TopRatedsMetadata` on fuzzer state
+- Initialize: `stage_state` to `StageState::None`, `last_interesting_corpus_id` to `None`, `last_stage_input` to `None`
+- Allocate pre-allocated input buffer of `maxInputLen` bytes for `runBatch` use
+- Store owned `Watchdog` reference (if provided)
+- Store owned `ShmemHandle` reference (if provided)
 
 #### Scenario: Create with defaults
-
-- **WHEN** `new Fuzzer(createCoverageMap(65536))` is called with no config
-- **THEN** a Fuzzer instance is created with maxInputLen=4096 and a random seed, holding
-  a reference to the provided coverage map
-- **AND** the CmpLog accumulator is enabled
-- **AND** `SchedulerMetadata` with `PowerSchedule::fast()` is present on the state
-- **AND** `TopRatedsMetadata` is present on the state with an empty edge-to-corpus-ID map
-- **AND** the havoc mutator includes token mutations
-- **AND** no `Tokens` metadata is present on the state (no dictionary provided)
+- **WHEN** `new Fuzzer(coverageMap)` is called with only a coverage map
+- **THEN** fuzzer is created with default config, no watchdog, no shmem handle, and a pre-allocated input buffer of 4096 bytes
 
 #### Scenario: Create with custom config
-
-- **WHEN** `new Fuzzer(createCoverageMap(32768), { maxInputLen: 1024, seed: 42 })` is called
-- **THEN** a Fuzzer instance is created with the specified configuration
-- **AND** the CmpLog accumulator is enabled
+- **WHEN** `new Fuzzer(coverageMap, { maxInputLen: 8192, seed: 42 })` is called
+- **THEN** fuzzer uses specified maxInputLen and seed, pre-allocated buffer is 8192 bytes
 
 #### Scenario: Create with dictionary path
-
-- **WHEN** `new Fuzzer(coverageMap, { dictionaryPath: "/path/to/json.dict" })` is called
-- **AND** the file contains valid AFL/libfuzzer dictionary entries
-- **THEN** the `Tokens` state metadata SHALL contain the parsed tokens from the file
-- **AND** the tokens SHALL be available to `TokenInsert` and `TokenReplace` from the first `getNextInput()` call
+- **WHEN** `new Fuzzer(coverageMap, { dictionaryPath: "/path/to/dict" })` is called with a valid dictionary file
+- **THEN** dictionary tokens are loaded and added to the `Tokens` metadata
 
 #### Scenario: Create with nonexistent dictionary path
-
-- **WHEN** `new Fuzzer(coverageMap, { dictionaryPath: "/nonexistent.dict" })` is called
-- **THEN** construction SHALL fail with an error indicating the file was not found
+- **WHEN** `new Fuzzer(coverageMap, { dictionaryPath: "/nonexistent" })` is called
+- **THEN** constructor throws an error
 
 #### Scenario: Create with malformed dictionary
-
-- **WHEN** `new Fuzzer(coverageMap, { dictionaryPath: "/path/to/bad.dict" })` is called
-- **AND** the file contains malformed content
-- **THEN** construction SHALL fail with an error indicating the parse failure
+- **WHEN** a dictionary file contains unparseable entries
+- **THEN** constructor throws an error
 
 #### Scenario: Reproducible with same seed
-
-- **WHEN** two Fuzzer instances are created with the same seed and coverage maps of the
-  same size, and the same sequence of addSeed/getNextInput/reportResult calls is performed
-- **THEN** both instances SHALL produce identical mutation sequences
+- **WHEN** two fuzzers are created with identical seeds and identical initial conditions
+- **THEN** `getNextInput()` produces the same sequence of mutations
 
 #### Scenario: Create with defaults includes stage state
-
-- **WHEN** `new Fuzzer(createCoverageMap(65536))` is called with no config
-- **THEN** `stage_state` SHALL be `StageState::None`
-- **AND** `last_interesting_corpus_id` SHALL be `None`
+- **WHEN** `new Fuzzer(coverageMap)` is called
+- **THEN** `stage_state` is `StageState::None`, `last_interesting_corpus_id` is `None`, `last_stage_input` is `None`
 
 #### Scenario: Create with detector tokens
-
-- **WHEN** `new Fuzzer(coverageMap, { detectorTokens: [Buffer.from("__proto__"), Buffer.from("../")] })` is called
-- **THEN** the `Tokens` state metadata SHALL contain `"__proto__"` and `"../"` as token entries
-- **AND** the tokens SHALL be available to `TokenInsert` and `TokenReplace` from the first `getNextInput()` call
+- **WHEN** `new Fuzzer(coverageMap, { detectorTokens: [buf1, buf2] })` is called
+- **THEN** tokens are added to `Tokens` metadata as pre-promoted entries
 
 #### Scenario: Detector tokens coexist with user dictionary
-
-- **WHEN** `new Fuzzer(coverageMap, { dictionaryPath: "/path/to/json.dict", detectorTokens: [Buffer.from("__proto__")] })` is called
-- **AND** the dictionary file contains valid entries
-- **THEN** both user dictionary tokens and detector tokens SHALL be present in `Tokens` metadata
-- **AND** user dictionary tokens SHALL be loaded first, followed by detector tokens
+- **WHEN** both `dictionaryPath` and `detectorTokens` are provided
+- **THEN** both sets of tokens are present in `Tokens` metadata
 
 #### Scenario: Detector tokens exempt from CmpLog cap
-
-- **WHEN** the `Fuzzer` is constructed with 50 detector tokens
-- **AND** CmpLog promotion reaches `MAX_DICTIONARY_SIZE`
-- **THEN** all 50 detector tokens SHALL remain in `Tokens` metadata (not counted toward cap)
+- **WHEN** detector tokens are provided
+- **THEN** they do not count against CmpLog token promotion threshold
 
 #### Scenario: CmpLog does not re-promote detector tokens
+- **WHEN** a CmpLog entry matches an already-promoted detector token
+- **THEN** the token is not re-added to `Tokens` metadata
 
-- **WHEN** the `Fuzzer` is constructed with detector token `"__proto__"`
-- **AND** CmpLog observes `"__proto__"` as a comparison operand at runtime
-- **THEN** `"__proto__"` SHALL NOT be promoted a second time
-- **AND** `"__proto__"` SHALL appear exactly once in `Tokens` metadata
+#### Scenario: Create with watchdog
+- **WHEN** `new Fuzzer(coverageMap, config, watchdog)` is called with a Watchdog instance
+- **THEN** the Fuzzer takes ownership of the Watchdog for use in `runBatch`
+
+#### Scenario: Create with shmem handle
+- **WHEN** `new Fuzzer(coverageMap, config, watchdog, shmemHandle)` is called with a ShmemHandle instance
+- **THEN** the Fuzzer takes ownership of the ShmemHandle for stashing inputs
+
+#### Scenario: Create without watchdog or shmem
+- **WHEN** `new Fuzzer(coverageMap, config)` is called without watchdog or shmem
+- **THEN** `runBatch` operates without watchdog arming/disarming and without shmem stashing
 
 ### Requirement: Add seed inputs
 
@@ -530,3 +511,79 @@ corpus SHALL grow as new coverage is discovered.
   different coverage map bytes depending on input content
 - **THEN** the corpus size is greater than the initial seed count
 - **AND** the coverage edge count is greater than 0
+
+### Requirement: Input stashing via owned ShmemHandle
+
+The `Fuzzer` SHALL expose a `stashInput(input: Buffer)` method that delegates to the owned `ShmemHandle`'s stash protocol. This allows JS-orchestrated paths (calibration, stages, minimization) to stash inputs when the `ShmemHandle` is owned by the Fuzzer.
+
+If no `ShmemHandle` was provided at construction, `stashInput` SHALL be a no-op.
+
+#### Scenario: stashInput delegates to owned handle
+- **WHEN** `fuzzer.stashInput(input)` is called on a Fuzzer that owns a ShmemHandle
+- **THEN** the input is written to shared memory using the seqlock protocol
+
+#### Scenario: stashInput is no-op without handle
+- **WHEN** `fuzzer.stashInput(input)` is called on a Fuzzer constructed without a ShmemHandle
+- **THEN** the call returns without error and no shared memory write occurs
+
+### Requirement: Target execution via owned Watchdog
+
+The `Fuzzer` SHALL expose a `runTarget(target, input, timeoutMs)` method for JS-orchestrated paths (calibration, stages, minimization) to execute a target function with watchdog protection when the Watchdog is owned by the Fuzzer.
+
+The method SHALL:
+1. Arm the owned Watchdog with `timeoutMs`
+2. Call the target function at the NAPI C level with V8 termination handling (same mechanism as `Watchdog.runTarget`)
+3. Disarm the watchdog after the target returns or throws
+4. Return an object with `{ exitKind: number, error?: Error, result?: unknown }`
+
+If no Watchdog was provided at construction, `runTarget` SHALL call the target function directly (no timeout enforcement) and return the same result shape.
+
+#### Scenario: runTarget delegates to owned watchdog
+- **WHEN** `fuzzer.runTarget(target, input, 1000)` is called on a Fuzzer that owns a Watchdog
+- **THEN** the Watchdog is armed with 1000ms, the target is called with V8 termination handling, and the Watchdog is disarmed after the call
+
+#### Scenario: runTarget without watchdog calls target directly
+- **WHEN** `fuzzer.runTarget(target, input, 1000)` is called on a Fuzzer constructed without a Watchdog
+- **THEN** the target is called directly without timeout enforcement and the result is returned in the same shape
+
+#### Scenario: runTarget handles watchdog timeout
+- **WHEN** the target exceeds `timeoutMs` during `fuzzer.runTarget`
+- **THEN** V8 terminates execution, the Watchdog is disarmed, and the method returns `{ exitKind: 2 }` (Timeout)
+
+#### Scenario: runTarget handles target exception
+- **WHEN** the target throws during `fuzzer.runTarget`
+- **THEN** the Watchdog is disarmed and the method returns `{ exitKind: 1, error: <thrown error> }`
+
+### Requirement: Watchdog arm/disarm pass-through
+
+The `Fuzzer` SHALL expose `armWatchdog(timeoutMs: number)` and `disarmWatchdog()` methods for JS-orchestrated async target continuation. When the per-iteration fallback path detects an async target (Promise return from `runTarget`), JS needs to re-arm the watchdog before awaiting the Promise and disarm after.
+
+If no Watchdog was provided at construction, both methods SHALL be no-ops.
+
+#### Scenario: armWatchdog delegates to owned watchdog
+- **WHEN** `fuzzer.armWatchdog(1000)` is called on a Fuzzer that owns a Watchdog
+- **THEN** the Watchdog is armed with a 1000ms deadline
+
+#### Scenario: disarmWatchdog delegates to owned watchdog
+- **WHEN** `fuzzer.disarmWatchdog()` is called on a Fuzzer that owns a Watchdog
+- **THEN** the Watchdog deadline is cleared
+
+#### Scenario: arm/disarm are no-ops without watchdog
+- **WHEN** `fuzzer.armWatchdog(1000)` or `fuzzer.disarmWatchdog()` is called on a Fuzzer without a Watchdog
+- **THEN** the calls return without error
+
+### Requirement: Fuzzer shutdown
+
+The `Fuzzer` SHALL expose a `shutdown()` method that shuts down the owned Watchdog thread (if present). This SHALL be called from the fuzz loop's finally block, replacing the current `watchdog.shutdown()` call.
+
+If no Watchdog was provided at construction, `shutdown` SHALL be a no-op.
+
+The Watchdog's Rust `Drop` implementation also signals the thread to exit as a safety net, but explicit shutdown via this method is preferred for deterministic cleanup.
+
+#### Scenario: shutdown terminates watchdog thread
+- **WHEN** `fuzzer.shutdown()` is called on a Fuzzer that owns a Watchdog
+- **THEN** the Watchdog background thread is signaled to exit and joined
+
+#### Scenario: shutdown is no-op without watchdog
+- **WHEN** `fuzzer.shutdown()` is called on a Fuzzer constructed without a Watchdog
+- **THEN** the call returns without error

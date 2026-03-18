@@ -8,7 +8,12 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
-import { runFuzzLoop, checkDedupPolicy } from "./loop.js";
+import {
+  runFuzzLoop,
+  checkDedupPolicy,
+  computeBatchSize,
+  makeBatchCallback,
+} from "./loop.js";
 import { initGlobals } from "./globals.js";
 import { hashTestPath } from "./nix-base32.js";
 import {
@@ -1545,5 +1550,183 @@ describe("checkDedupPolicy", () => {
       dedupKey: "key-abc",
       existing,
     });
+  });
+});
+
+// ── 5.10: Batch callback wrapper ────────────────────────────────────
+
+describe("makeBatchCallback", () => {
+  type MockDetectorManager = Parameters<typeof makeBatchCallback>[1];
+
+  it("calls detector hooks per-iteration (beforeIteration and endIteration)", () => {
+    let beforeCount = 0;
+    let endCount = 0;
+    const mockManager: MockDetectorManager = {
+      beforeIteration: () => {
+        beforeCount++;
+      },
+      endIteration: (_ok: boolean) => {
+        endCount++;
+        return undefined;
+      },
+    };
+
+    const callback = makeBatchCallback((_data: Buffer) => {}, mockManager);
+
+    callback(Buffer.alloc(10), 5);
+    callback(Buffer.alloc(10), 5);
+
+    expect(beforeCount).toBe(2);
+    expect(endCount).toBe(2);
+  });
+
+  it("returns ExitKind.Crash (1) when endIteration returns VulnerabilityError", async () => {
+    const { VulnerabilityError } = await import("./detectors/index.js");
+    const mockManager: MockDetectorManager = {
+      beforeIteration: () => {},
+      endIteration: (_ok: boolean) =>
+        new VulnerabilityError("test-detector", "Test Vulnerability", {}),
+    };
+
+    const callback = makeBatchCallback((_data: Buffer) => {}, mockManager);
+
+    expect(callback(Buffer.alloc(10), 5)).toBe(1);
+  });
+
+  it("returns ExitKind.Crash (1) when target throws (exception not re-thrown)", () => {
+    let endCalledWithFalse = false;
+    const mockManager: MockDetectorManager = {
+      beforeIteration: () => {},
+      endIteration: (ok: boolean) => {
+        if (!ok) endCalledWithFalse = true;
+        return undefined;
+      },
+    };
+
+    const callback = makeBatchCallback((_data: Buffer) => {
+      throw new Error("target error");
+    }, mockManager);
+
+    // Should NOT throw - the callback catches exceptions and returns 1
+    const result = callback(Buffer.alloc(10), 5);
+    expect(result).toBe(1);
+    expect(endCalledWithFalse).toBe(true);
+  });
+
+  it("passes correct subarray to target based on inputLength", () => {
+    let receivedLength = 0;
+    const mockManager: MockDetectorManager = {
+      beforeIteration: () => {},
+      endIteration: () => undefined,
+    };
+
+    const callback = makeBatchCallback((data: Buffer) => {
+      receivedLength = data.length;
+    }, mockManager);
+
+    // Buffer of 100 bytes but only 42 valid bytes
+    callback(Buffer.alloc(100), 42);
+    expect(receivedLength).toBe(42);
+  });
+});
+
+// ── 5.11: Adaptive batch size ───────────────────────────────────────
+
+describe("computeBatchSize", () => {
+  it("fast target gets large batch size (clamped to 1024)", () => {
+    // 10,000 exec/s * 3 seconds = 30,000, clamped to 1024
+    expect(computeBatchSize(10_000)).toBe(1024);
+  });
+
+  it("slow target gets small batch size", () => {
+    // 10 exec/s * 3 seconds = 30
+    expect(computeBatchSize(10)).toBe(30);
+  });
+
+  it("first batch uses minimum size (execsPerSec = 0)", () => {
+    expect(computeBatchSize(0)).toBe(16);
+  });
+
+  it("very slow target uses minimum batch size", () => {
+    // 1 exec/s * 3 seconds = 3, clamped to 16
+    expect(computeBatchSize(1)).toBe(16);
+  });
+
+  it("negative execsPerSec uses minimum batch size", () => {
+    expect(computeBatchSize(-5)).toBe(16);
+  });
+
+  it("moderate target gets proportional batch size", () => {
+    // 100 exec/s * 3 seconds = 300
+    expect(computeBatchSize(100)).toBe(300);
+  });
+});
+
+// ── 5.12: Async target detection ────────────────────────────────────
+
+describe("async target detection", () => {
+  let tmpDir: string;
+  const originalFuzz = process.env["VITIATE_FUZZ"];
+  const originalCov = globalThis.__vitiate_cov;
+  const originalTrace = globalThis.__vitiate_trace_cmp;
+
+  async function setupFuzzingModeLocal(): Promise<void> {
+    process.env["VITIATE_FUZZ"] = "1";
+    await initGlobals();
+    tmpDir = path.join(
+      tmpdir(),
+      `vitiate-async-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    mkdirSync(tmpDir, { recursive: true });
+    setDataDir(tmpDir);
+    setProjectRoot(tmpDir);
+  }
+
+  afterEach(() => {
+    if (originalFuzz === undefined) {
+      delete process.env["VITIATE_FUZZ"];
+    } else {
+      process.env["VITIATE_FUZZ"] = originalFuzz;
+    }
+    resetDataDir();
+    resetProjectRoot();
+    globalThis.__vitiate_cov = originalCov;
+    globalThis.__vitiate_trace_cmp = originalTrace;
+    if (tmpDir) {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+    resetDetectorHooks();
+  });
+
+  /**
+   * Simulate instrumentation by writing to the coverage map.
+   */
+  function simulateCoverageLocal(_data: Buffer): void {
+    const cov = globalThis.__vitiate_cov;
+    if (!cov || !Buffer.isBuffer(cov)) return;
+    cov[0] = 1;
+  }
+
+  it("Promise-returning target triggers per-iteration fallback and completes", async () => {
+    await setupFuzzingModeLocal();
+    let callCount = 0;
+
+    // An async target that returns a Promise
+    const target = async (data: Buffer): Promise<void> => {
+      simulateCoverageLocal(data);
+      callCount++;
+      await Promise.resolve();
+    };
+
+    const result = await runFuzzLoop(target, "async-detect", "test.fuzz.ts", {
+      fuzzExecs: 50,
+      grimoire: false,
+      unicode: false,
+    });
+
+    expect(result.crashed).toBe(false);
+    // The loop should have completed the requested iterations using per-iteration path
+    expect(callCount).toBeGreaterThanOrEqual(50);
+    expect(result.totalExecs).toBe(50);
   });
 });
