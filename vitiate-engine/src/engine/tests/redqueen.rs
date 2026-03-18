@@ -14,6 +14,7 @@ use napi::bindgen_prelude::Buffer;
 
 #[test]
 fn test_begin_stage_starts_colorization_when_redqueen_enabled() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let mut fuzzer = TestFuzzerBuilder::new(256).build_ready_for_stage();
     fuzzer.features.redqueen_enabled = true;
 
@@ -28,12 +29,11 @@ fn test_begin_stage_starts_colorization_when_redqueen_enabled() {
         fuzzer.redqueen_ran_for_entry,
         "redqueen_ran_for_entry should be true"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_begin_stage_falls_to_i2s_when_redqueen_disabled() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let mut fuzzer = TestFuzzerBuilder::new(256).build_ready_for_stage();
     fuzzer.features.redqueen_enabled = false;
 
@@ -47,12 +47,11 @@ fn test_begin_stage_falls_to_i2s_when_redqueen_disabled() {
         !fuzzer.redqueen_ran_for_entry,
         "redqueen_ran_for_entry should be false"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_begin_stage_falls_to_i2s_when_input_too_large() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let mut fuzzer = TestFuzzerBuilder::new(256).build_ready_for_stage();
     fuzzer.features.redqueen_enabled = true;
 
@@ -84,12 +83,11 @@ fn test_begin_stage_falls_to_i2s_when_input_too_large() {
         !fuzzer.redqueen_ran_for_entry,
         "redqueen_ran_for_entry should be false for oversized input"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_redqueen_ran_for_entry_reset_on_begin_stage() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let mut fuzzer = TestFuzzerBuilder::new(256).build_ready_for_stage();
 
     // Manually set the flag to true.
@@ -103,12 +101,11 @@ fn test_redqueen_ran_for_entry_reset_on_begin_stage() {
         !fuzzer.redqueen_ran_for_entry,
         "redqueen_ran_for_entry should be reset"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_redqueen_explicit_enable() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let coverage_map: Buffer = vec![0u8; 256].into();
     let fuzzer = Fuzzer::new(
         coverage_map,
@@ -133,6 +130,7 @@ fn test_redqueen_explicit_enable() {
 
 #[test]
 fn test_redqueen_explicit_disable() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let coverage_map: Buffer = vec![0u8; 256].into();
     let fuzzer = Fuzzer::new(
         coverage_map,
@@ -157,6 +155,7 @@ fn test_redqueen_explicit_disable() {
 
 #[test]
 fn test_redqueen_auto_detect_empty_corpus_defaults_false() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let coverage_map: Buffer = vec![0u8; 256].into();
     let fuzzer = Fuzzer::new(
         coverage_map,
@@ -185,7 +184,8 @@ fn test_redqueen_auto_detect_empty_corpus_defaults_false() {
 
 #[test]
 fn test_redqueen_deferred_detection_binary_corpus_enables() {
-    cmplog::force_disable();
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    cmplog::disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
@@ -215,13 +215,12 @@ fn test_redqueen_deferred_detection_binary_corpus_enables() {
         fuzzer.features.deferred_detection_count.is_none(),
         "detection should be resolved"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_redqueen_deferred_detection_utf8_corpus_disables() {
-    cmplog::force_disable();
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    cmplog::disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
@@ -251,13 +250,12 @@ fn test_redqueen_deferred_detection_utf8_corpus_disables() {
         fuzzer.features.deferred_detection_count.is_none(),
         "detection should be resolved"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_redqueen_complementary_to_grimoire_unicode() {
-    cmplog::force_disable();
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    cmplog::disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
@@ -296,6 +294,4 @@ fn test_redqueen_complementary_to_grimoire_unicode() {
         !fuzzer.features.unicode_enabled,
         "binary corpus → Unicode disabled"
     );
-
-    cmplog::force_disable();
 }

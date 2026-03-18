@@ -13,6 +13,7 @@ use napi::bindgen_prelude::Buffer;
 // Grimoire mutational stage tests
 #[test]
 fn test_grimoire_stage_begins_with_metadata() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .grimoire(true)
         .build_with_grimoire_entry(b"fn foo() {}");
@@ -26,13 +27,12 @@ fn test_grimoire_stage_begins_with_metadata() {
         matches!(fuzzer.stage_state, StageState::Grimoire { .. }),
         "stage should be Grimoire"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_grimoire_stage_skipped_without_metadata() {
-    cmplog::force_disable();
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    cmplog::disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).grimoire(true).build();
@@ -47,12 +47,11 @@ fn test_grimoire_stage_skipped_without_metadata() {
         result.is_none(),
         "begin_grimoire should return None without metadata"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_grimoire_stage_skipped_when_disabled() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .grimoire(true)
         .build_with_grimoire_entry(b"fn foo() {}");
@@ -63,12 +62,11 @@ fn test_grimoire_stage_skipped_when_disabled() {
         result.is_none(),
         "begin_grimoire should return None when Grimoire disabled"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_grimoire_stage_completes_after_iterations() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .grimoire(true)
         .build_with_grimoire_entry(b"fn foo() {}");
@@ -100,12 +98,11 @@ fn test_grimoire_stage_completes_after_iterations() {
     let done = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
     assert!(done.is_none(), "iteration 3 should complete the stage");
     assert!(matches!(fuzzer.stage_state, StageState::None));
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_grimoire_execution_counting() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .grimoire(true)
         .build_with_grimoire_entry(b"fn foo() {}");
@@ -133,12 +130,11 @@ fn test_grimoire_execution_counting() {
 
     let _ = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
     assert_eq!(fuzzer.total_execs, total_before + 2);
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_grimoire_cmplog_drained() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .grimoire(true)
         .build_with_grimoire_entry(b"fn foo() {}");
@@ -163,12 +159,11 @@ fn test_grimoire_cmplog_drained() {
         drained.is_empty(),
         "CmpLog should be drained during Grimoire stage"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_grimoire_max_input_len_enforced() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .grimoire(true)
         .build_with_grimoire_entry(b"fn foo() {}");
@@ -183,12 +178,11 @@ fn test_grimoire_max_input_len_enforced() {
         bytes.len() <= 5,
         "output should be truncated to max_input_len"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_grimoire_non_cumulative_mutations() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let input = b"fn foo() {}";
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .grimoire(true)
@@ -227,12 +221,11 @@ fn test_grimoire_non_cumulative_mutations() {
             "corpus entry metadata should not be modified by mutations"
         );
     }
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_grimoire_abort_transitions_to_none() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .grimoire(true)
         .build_with_grimoire_entry(b"fn foo() {}");
@@ -249,8 +242,6 @@ fn test_grimoire_abort_transitions_to_none() {
         total_before + 1,
         "abort should increment total_execs by 1"
     );
-
-    cmplog::force_disable();
 }
 
 // -----------------------------------------------------------------------
@@ -259,6 +250,7 @@ fn test_grimoire_abort_transitions_to_none() {
 
 #[test]
 fn test_grimoire_override_through_constructor() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // When FuzzerConfig.grimoire = Some(true), grimoire_enabled should be true
     // and deferred_detection_count should be None (already resolved).
     let coverage_map: Buffer = vec![0u8; 256].into();
@@ -290,6 +282,7 @@ fn test_grimoire_override_through_constructor() {
 
 #[test]
 fn test_grimoire_override_disabled_through_constructor() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let coverage_map: Buffer = vec![0u8; 256].into();
     let fuzzer = Fuzzer::new(
         coverage_map,
@@ -323,6 +316,7 @@ fn test_grimoire_override_disabled_through_constructor() {
 
 #[test]
 fn test_grimoire_iteration_advances_regardless_of_mutation_result() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // Verify that the iteration counter advances on each advance_stage call,
     // regardless of whether the underlying Grimoire mutator returns Mutated
     // or Skipped.
@@ -359,6 +353,4 @@ fn test_grimoire_iteration_advances_regardless_of_mutation_result() {
         }
         _ => panic!("unexpected stage state"),
     }
-
-    cmplog::force_disable();
 }

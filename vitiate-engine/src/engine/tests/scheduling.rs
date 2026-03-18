@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use super::helpers::{TestFuzzerBuilder, make_coverage_map, make_fuzzer};
+use crate::cmplog;
 use crate::types::{ExitKind, IterationResult};
 use libafl::HasMetadata;
 use libafl::corpus::{Corpus, CorpusId, SchedulerTestcaseMetadata, Testcase};
@@ -59,6 +60,7 @@ fn test_power_scoring_favors_fast_high_coverage_entry() {
 
 #[test]
 fn test_n_fuzz_entry_set_on_interesting_input() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
 
     // Add a seed so the fuzzer has something to evaluate.
@@ -92,6 +94,7 @@ fn test_n_fuzz_entry_set_on_interesting_input() {
 
 #[test]
 fn test_seeds_not_in_corpus_before_evaluation() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
 
     // Add two seeds.
@@ -113,6 +116,7 @@ fn test_seeds_not_in_corpus_before_evaluation() {
 
 #[test]
 fn test_n_fuzz_incremented_on_selection() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
 
     // Add two seeds.

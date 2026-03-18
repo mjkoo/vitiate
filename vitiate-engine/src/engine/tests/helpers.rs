@@ -261,7 +261,7 @@ impl TestFuzzerBuilder {
     /// Build a `Fuzzer` ready for stage testing: seeded, with novel coverage
     /// reported and calibration completed.
     pub(super) fn build_ready_for_stage(self) -> Fuzzer {
-        cmplog::force_disable();
+        cmplog::disable();
         cmplog::drain();
         // Fuzzer::new (called by build) re-enables cmplog.
         let mut fuzzer = self.build();
@@ -317,7 +317,7 @@ impl TestFuzzerBuilder {
         input: &[u8],
         novelty_indices: &[usize],
     ) -> (Fuzzer, CorpusId) {
-        cmplog::force_disable();
+        cmplog::disable();
         cmplog::drain();
         let has_feature_override =
             self.grimoire.is_some() || self.unicode.is_some() || self.redqueen.is_some();
@@ -377,7 +377,7 @@ impl TestFuzzerBuilder {
     /// Build a `Fuzzer` with a corpus entry that has `GeneralizedInputMetadata`,
     /// ready for the Grimoire stage. Novelty index is hardcoded to `[10]`.
     pub(super) fn build_with_grimoire_entry(self, input: &[u8]) -> (Fuzzer, CorpusId) {
-        cmplog::force_disable();
+        cmplog::disable();
         cmplog::drain();
         let has_feature_override =
             self.grimoire.is_some() || self.unicode.is_some() || self.redqueen.is_some();

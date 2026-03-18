@@ -1,4 +1,5 @@
 use super::helpers::{TestFuzzerBuilder, make_seed_testcase};
+use crate::cmplog;
 use crate::types::{ExitKind, IterationResult};
 use libafl::corpus::Corpus;
 use libafl::inputs::BytesInput;
@@ -7,12 +8,14 @@ use libafl::state::HasCorpus;
 
 #[test]
 fn calibration_execs_starts_at_zero() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let fuzzer = TestFuzzerBuilder::new(256).build();
     assert_eq!(fuzzer.stats().calibration_execs, 0);
 }
 
 #[test]
 fn calibrate_run_increments_calibration_execs() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
 
     // Add a seed so the scheduler has something to select.
@@ -53,6 +56,7 @@ fn calibrate_run_increments_calibration_execs() {
 
 #[test]
 fn calibrate_run_does_not_increment_total_execs() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
 
     let seed_tc = make_seed_testcase(b"seed");
@@ -87,6 +91,7 @@ fn calibrate_run_does_not_increment_total_execs() {
 
 #[test]
 fn calibration_execs_accumulate_across_entries() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
 
     let seed_tc = make_seed_testcase(b"seed");

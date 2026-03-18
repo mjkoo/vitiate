@@ -10,6 +10,7 @@ use napi::bindgen_prelude::Buffer;
 
 #[test]
 fn test_begin_stage_returns_null_during_active_stage() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let mut fuzzer = TestFuzzerBuilder::new(256).build_ready_for_stage();
 
     // First beginStage should return Some (stage starts).
@@ -32,13 +33,12 @@ fn test_begin_stage_returns_null_during_active_stage() {
         matches!(fuzzer.stage_state, StageState::I2S { .. }),
         "stage should still be I2S"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_advance_stage_returns_null_with_no_active_stage() {
-    cmplog::force_disable();
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    cmplog::disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
@@ -52,13 +52,12 @@ fn test_advance_stage_returns_null_with_no_active_stage() {
     );
     // Verify no side effects (total_execs unchanged).
     assert_eq!(fuzzer.total_execs, total_before);
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_single_iteration_stage_completes_immediately() {
-    cmplog::force_disable();
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    cmplog::disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
@@ -117,12 +116,11 @@ fn test_single_iteration_stage_completes_immediately() {
         matches!(fuzzer.stage_state, StageState::None),
         "stage should be None after completion"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_cmplog_drained_and_discarded_during_stage() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let mut fuzzer = TestFuzzerBuilder::new(256).build_ready_for_stage();
 
     // Record original CmpValuesMetadata.
@@ -174,12 +172,11 @@ fn test_cmplog_drained_and_discarded_during_stage() {
             .contains_key(b"stage_operand_1".as_slice()),
         "stage CmpLog operands should not enter token_candidates"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_non_cumulative_mutations() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let mut fuzzer = TestFuzzerBuilder::new(256).build_ready_for_stage();
 
     // Get the original corpus entry bytes for comparison.
@@ -223,13 +220,12 @@ fn test_non_cumulative_mutations() {
             break;
         }
     }
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_abort_stage_noop_with_no_active_stage() {
-    cmplog::force_disable();
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    cmplog::disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
@@ -253,6 +249,4 @@ fn test_abort_stage_noop_with_no_active_stage() {
         matches!(fuzzer.stage_state, StageState::None),
         "stage should remain None"
     );
-
-    cmplog::force_disable();
 }

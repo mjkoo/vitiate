@@ -1,4 +1,5 @@
 use super::helpers::{TestFuzzerBuilder, make_seed_testcase};
+use crate::cmplog;
 use crate::engine::compute_coverage_features;
 use crate::types::{ExitKind, IterationResult};
 use libafl::corpus::Corpus;
@@ -65,6 +66,7 @@ fn bucket_index_boundary_values() {
 
 #[test]
 fn features_integrates_with_stats() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
 
     // Initially: no coverage -> 0 features.

@@ -5,13 +5,14 @@ use libafl::observers::cmp::{CmpValues, CmpValuesMetadata};
 
 #[test]
 fn test_cmplog_enable_disable_on_fuzzer_lifecycle() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // Reset cmplog state.
-    cmplog::force_disable();
+    cmplog::disable();
     cmplog::drain();
     assert!(!cmplog::is_enabled());
 
-    // Simulate Fuzzer construction (guard enables cmplog).
-    let guard = cmplog::CmpLogGuard::new();
+    // Simulate Fuzzer construction (enable() called in Fuzzer::new).
+    cmplog::enable();
     assert!(cmplog::is_enabled());
 
     // Push should work while enabled.
@@ -23,8 +24,8 @@ fn test_cmplog_enable_disable_on_fuzzer_lifecycle() {
     let entries = cmplog::drain();
     assert_eq!(entries.len(), 1);
 
-    // Simulate Fuzzer drop (guard dropped -> disables cmplog).
-    drop(guard);
+    // Simulate Fuzzer shutdown (disable() called in Fuzzer::shutdown).
+    cmplog::disable();
     assert!(!cmplog::is_enabled());
 
     // Push should be silently dropped while disabled.
@@ -39,8 +40,9 @@ fn test_cmplog_enable_disable_on_fuzzer_lifecycle() {
 
 #[test]
 fn test_cmplog_entries_drained_into_metadata() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // Reset cmplog state.
-    cmplog::force_disable();
+    cmplog::disable();
     cmplog::drain();
 
     let (map_ptr, _map) = make_coverage_map(65536);
@@ -49,8 +51,8 @@ fn test_cmplog_entries_drained_into_metadata() {
     // Initialize CmpValuesMetadata on state (as Fuzzer::new() does).
     state.metadata_map_mut().insert(CmpValuesMetadata::new());
 
-    // Simulate a fuzz iteration: guard enables, push entries, drain to metadata.
-    let _guard = cmplog::CmpLogGuard::new();
+    // Simulate a fuzz iteration: enable, push entries, drain to metadata.
+    cmplog::enable();
     cmplog::push(
         CmpValues::U8((10, 20, false)),
         0,

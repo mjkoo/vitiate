@@ -3,6 +3,7 @@ use libafl::mutators::Tokens;
 use napi::bindgen_prelude::Buffer;
 use std::io::Write;
 
+use crate::cmplog;
 use crate::engine::Fuzzer;
 use crate::types::FuzzerConfig;
 
@@ -20,6 +21,7 @@ fn make_config_with_dict(dict_path: &str) -> FuzzerConfig {
 
 #[test]
 fn valid_dictionary_loads_tokens_into_state() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let dir = tempfile::tempdir().unwrap();
     let dict_path = dir.path().join("test.dict");
     let mut file = std::fs::File::create(&dict_path).unwrap();
@@ -52,6 +54,7 @@ fn valid_dictionary_loads_tokens_into_state() {
 
 #[test]
 fn nonexistent_dictionary_returns_error() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let coverage_map: Buffer = vec![0u8; 256].into();
     let config = make_config_with_dict("/nonexistent/path/to/dict.dict");
     let result = Fuzzer::new(coverage_map, Some(config), None, None);
@@ -68,6 +71,7 @@ fn nonexistent_dictionary_returns_error() {
 
 #[test]
 fn malformed_dictionary_returns_error() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let dir = tempfile::tempdir().unwrap();
     let dict_path = dir.path().join("bad.dict");
     std::fs::write(&dict_path, "not a valid line\n").unwrap();
@@ -88,6 +92,7 @@ fn malformed_dictionary_returns_error() {
 
 #[test]
 fn empty_dictionary_succeeds_with_no_tokens() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let dir = tempfile::tempdir().unwrap();
     let dict_path = dir.path().join("empty.dict");
     std::fs::write(&dict_path, "# only a comment\n\n").unwrap();
@@ -106,6 +111,7 @@ fn empty_dictionary_succeeds_with_no_tokens() {
 
 #[test]
 fn no_dictionary_path_does_not_add_tokens_metadata() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let coverage_map: Buffer = vec![0u8; 256].into();
     let config = FuzzerConfig {
         max_input_len: None,

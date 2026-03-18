@@ -10,6 +10,7 @@ use napi::bindgen_prelude::Buffer;
 
 #[test]
 fn test_novelty_indices_recorded_for_interesting_input() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // When an input triggers new coverage, MapNoveltiesMetadata should be
     // stored on the testcase containing exactly the newly-maximized indices.
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
@@ -45,6 +46,7 @@ fn test_novelty_indices_recorded_for_interesting_input() {
 
 #[test]
 fn test_novelty_only_newly_maximized_not_all_covered() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // When input covers indices that already have equal-or-higher history values,
     // only the truly-novel (newly maximized) indices should be in MapNoveltiesMetadata.
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
@@ -91,9 +93,10 @@ fn test_novelty_only_newly_maximized_not_all_covered() {
 
 #[test]
 fn test_novelty_metadata_stored_during_stage_execution() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // When a stage execution (e.g., I2S) triggers new coverage and the input
     // is added to the corpus, it should also have MapNoveltiesMetadata.
-    cmplog::force_disable();
+    cmplog::disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
@@ -139,12 +142,11 @@ fn test_novelty_metadata_stored_during_stage_execution() {
         tc.metadata::<MapNoveltiesMetadata>().is_ok(),
         "stage-found corpus entry should have MapNoveltiesMetadata"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_no_novelty_metadata_for_non_interesting_input() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // Non-interesting inputs are not added to corpus, so no metadata stored.
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
     fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();

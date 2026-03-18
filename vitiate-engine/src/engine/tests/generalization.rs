@@ -18,6 +18,7 @@ use libafl::state::{HasCorpus, HasExecutions};
 
 #[test]
 fn test_generalization_skipped_when_grimoire_disabled() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .grimoire(true)
         .build_with_corpus_entry(b"fn foo() {}", &[10, 20]);
@@ -29,12 +30,11 @@ fn test_generalization_skipped_when_grimoire_disabled() {
         "generalization should be skipped when Grimoire disabled"
     );
     assert!(matches!(fuzzer.stage_state, StageState::None));
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_generalization_skipped_for_large_input() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let large_input = vec![b'A'; MAX_GENERALIZED_LEN + 1];
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .grimoire(true)
@@ -45,13 +45,12 @@ fn test_generalization_skipped_for_large_input() {
         result.is_none(),
         "generalization should be skipped for input > MAX_GENERALIZED_LEN"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_generalization_skipped_when_no_novelties() {
-    cmplog::force_disable();
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    cmplog::disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).grimoire(true).build();
@@ -66,12 +65,11 @@ fn test_generalization_skipped_when_no_novelties() {
         result.is_none(),
         "generalization should be skipped without novelties"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_generalization_skipped_when_already_generalized() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .grimoire(true)
         .build_with_corpus_entry(b"fn foo() {}", &[10, 20]);
@@ -92,12 +90,11 @@ fn test_generalization_skipped_when_already_generalized() {
         result.is_none(),
         "generalization should be skipped when already generalized"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_generalization_verification_succeeds() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let input = b"fn foo() {}";
     let novelty_indices = vec![10, 20];
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
@@ -141,12 +138,11 @@ fn test_generalization_verification_succeeds() {
             ..
         }
     ));
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_generalization_verification_fails() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let input = b"fn foo() {}";
     let novelty_indices = vec![10, 20];
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
@@ -175,12 +171,11 @@ fn test_generalization_verification_fails() {
         !tc.has_metadata::<GeneralizedInputMetadata>(),
         "no metadata should be stored on verification failure"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_generalization_offset_marks_gaps() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // Use a small input so offset-0 pass tests each byte individually.
     let input = b"ab";
     let novelty_indices = vec![10];
@@ -243,12 +238,11 @@ fn test_generalization_offset_marks_gaps() {
         meta.generalized().contains(&GeneralizedItem::Gap),
         "metadata should contain Gap items"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_generalization_offset_preserves_structural() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // 4-byte input. We'll make the first offset-255 candidate fail (novelties don't survive),
     // meaning those bytes are structural.
     let input = b"test";
@@ -315,12 +309,11 @@ fn test_generalization_offset_preserves_structural() {
             .any(|item| matches!(item, GeneralizedItem::Bytes(b) if b == b"test")),
         "should have the original bytes as structural"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_generalization_execution_counting() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let input = b"ab";
     let novelty_indices = vec![10];
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
@@ -373,12 +366,11 @@ fn test_generalization_execution_counting() {
         total_before + advance_count as u64,
         "total_execs should match number of advance calls"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_generalization_cmplog_drained() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let input = b"fn foo() {}";
     let novelty_indices = vec![10];
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
@@ -406,8 +398,6 @@ fn test_generalization_cmplog_drained() {
         drained.is_empty(),
         "CmpLog should be drained by advance_stage during generalization"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
@@ -505,6 +495,7 @@ fn test_build_candidate_skips_gaps() {
 
 #[test]
 fn test_generalization_delimiter_gap_finding() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // Use "line1\nline2" and test that the delimiter pass can split on \n.
     let input = b"line1\nline2";
     let novelty_indices = vec![10];
@@ -581,8 +572,6 @@ fn test_generalization_delimiter_gap_finding() {
         has_gaps,
         "delimiter-based generalization should produce gaps when novelties survive"
     );
-
-    cmplog::force_disable();
 }
 
 // -----------------------------------------------------------------------
@@ -591,6 +580,7 @@ fn test_generalization_delimiter_gap_finding() {
 
 #[test]
 fn test_generalization_gap_finding_adds_to_corpus() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // During an offset pass, new coverage at a previously-unseen index should
     // cause the candidate to be added to the corpus with MapNoveltiesMetadata.
     let input = b"abcdefgh";
@@ -636,8 +626,6 @@ fn test_generalization_gap_finding_adds_to_corpus() {
         fuzzer.last_interesting_corpus_id.is_none(),
         "last_interesting_corpus_id should be None for stage-found entries"
     );
-
-    cmplog::force_disable();
 }
 
 // -----------------------------------------------------------------------
@@ -683,6 +671,7 @@ fn advance_to_bracket_phase(fuzzer: &mut Fuzzer, novelty_indices: &[usize]) {
 
 #[test]
 fn test_bracket_gaps_marked_on_novelty_survival() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // Input with brackets: "(abc)". When novelties survive, the range between
     // open and close bracket should be marked as gaps.
     let input = b"(abc)";
@@ -736,12 +725,11 @@ fn test_bracket_gaps_marked_on_novelty_survival() {
         opener_preserved,
         "opener byte '(' should be preserved in generalized metadata, not gapped"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_bracket_no_gaps_when_novelties_fail() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // Input with brackets: "(abc)". When novelties DON'T survive, no gaps
     // should be added during bracket phase.
     let input = b"(abc)";
@@ -775,12 +763,11 @@ fn test_bracket_no_gaps_when_novelties_fail() {
         tc.has_metadata::<GeneralizedInputMetadata>(),
         "should have GeneralizedInputMetadata even without gaps"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_bracket_same_char_pairs() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // Input with quotes: "'hello'". Same-character pairs should work.
     let input = b"'hello'";
     let novelty_indices = vec![10];
@@ -814,12 +801,11 @@ fn test_bracket_same_char_pairs() {
         tc.has_metadata::<GeneralizedInputMetadata>(),
         "same-char bracket pairs should produce metadata"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_bracket_no_closer_advances_to_next_pair() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // Input with opener but no closer: "(abc". Should advance through all
     // bracket pairs and finalize without getting stuck.
     // Note: bracket scanning for inputs without closers completes within a
@@ -858,6 +844,4 @@ fn test_bracket_no_closer_advances_to_next_pair() {
         tc.has_metadata::<GeneralizedInputMetadata>(),
         "should finalize even without matching closers"
     );
-
-    cmplog::force_disable();
 }

@@ -16,6 +16,7 @@ use std::time::Duration;
 
 #[test]
 fn test_pipeline_i2s_to_generalization_to_grimoire_to_none() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // Full pipeline: I2S (1 iteration) → Generalization → Grimoire → None.
     let mut fuzzer = TestFuzzerBuilder::new(256).build_ready_for_stage();
     fuzzer.features.grimoire_enabled = true;
@@ -85,12 +86,11 @@ fn test_pipeline_i2s_to_generalization_to_grimoire_to_none() {
     let next = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
     assert!(next.is_none(), "Grimoire should complete and return None");
     assert!(matches!(fuzzer.stage_state, StageState::None));
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_pipeline_i2s_to_grimoire_preexisting_metadata() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // I2S → Grimoire (generalization skipped because entry already has GeneralizedInputMetadata).
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .grimoire(true)
@@ -121,12 +121,11 @@ fn test_pipeline_i2s_to_grimoire_preexisting_metadata() {
         matches!(fuzzer.stage_state, StageState::Grimoire { .. }),
         "should be in Grimoire stage (generalization skipped)"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_pipeline_i2s_to_none_grimoire_disabled() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // I2S → None (Grimoire disabled).
     let mut fuzzer = TestFuzzerBuilder::new(256).build_ready_for_stage();
     fuzzer.features.grimoire_enabled = false;
@@ -141,12 +140,11 @@ fn test_pipeline_i2s_to_none_grimoire_disabled() {
     let next = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
     assert!(next.is_none(), "should return None when Grimoire disabled");
     assert!(matches!(fuzzer.stage_state, StageState::None));
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_pipeline_none_to_generalization_no_cmplog() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // No CmpLog → Generalization (Grimoire enabled, input qualifies).
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .grimoire(true)
@@ -168,12 +166,11 @@ fn test_pipeline_none_to_generalization_no_cmplog() {
         matches!(fuzzer.stage_state, StageState::Generalization { .. }),
         "should be in Generalization stage"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_pipeline_none_to_grimoire_no_cmplog_preexisting_metadata() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // No CmpLog → Grimoire (Grimoire enabled, pre-existing GeneralizedInputMetadata).
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .grimoire(true)
@@ -195,12 +192,11 @@ fn test_pipeline_none_to_grimoire_no_cmplog_preexisting_metadata() {
         matches!(fuzzer.stage_state, StageState::Grimoire { .. }),
         "should be in Grimoire stage"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_pipeline_generalization_fail_to_none() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // Generalization verification fails → None.
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .grimoire(true)
@@ -223,12 +219,11 @@ fn test_pipeline_generalization_fail_to_none() {
         !tc.has_metadata::<GeneralizedInputMetadata>(),
         "should not store metadata when verification fails"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_pipeline_abort_from_generalization() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .grimoire(true)
         .build_with_corpus_entry(b"hello", &[10]);
@@ -248,12 +243,11 @@ fn test_pipeline_abort_from_generalization() {
     // Verify no GeneralizedInputMetadata was stored.
     let tc = fuzzer.state.corpus().get(corpus_id).unwrap().borrow();
     assert!(!tc.has_metadata::<GeneralizedInputMetadata>());
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_pipeline_abort_from_grimoire() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .grimoire(true)
         .build_with_grimoire_entry(b"fn foo() {}");
@@ -266,12 +260,11 @@ fn test_pipeline_abort_from_grimoire() {
 
     assert!(matches!(fuzzer.stage_state, StageState::None));
     assert_eq!(fuzzer.total_execs, total_before + 1);
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_pipeline_abort_from_i2s() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let mut fuzzer = TestFuzzerBuilder::new(256).build_ready_for_stage();
 
     let _first = fuzzer.begin_stage().unwrap();
@@ -282,14 +275,13 @@ fn test_pipeline_abort_from_i2s() {
 
     assert!(matches!(fuzzer.stage_state, StageState::None));
     assert_eq!(fuzzer.total_execs, total_before + 1);
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_pipeline_i2s_to_unicode_grimoire_disabled() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // I2S → Unicode → None (grimoire disabled, unicode enabled).
-    cmplog::force_disable();
+    cmplog::disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
@@ -350,12 +342,11 @@ fn test_pipeline_i2s_to_unicode_grimoire_disabled() {
         "unicode should complete and return None"
     );
     assert!(matches!(fuzzer.stage_state, StageState::None));
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_pipeline_grimoire_to_unicode() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // Grimoire → Unicode → None (both enabled).
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .grimoire(true)
@@ -378,12 +369,11 @@ fn test_pipeline_grimoire_to_unicode() {
         matches!(fuzzer.stage_state, StageState::Unicode { .. }),
         "stage should be Unicode after Grimoire completion"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_pipeline_unicode_disabled_existing_transitions_unchanged() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // With unicode disabled, Grimoire → None (no unicode fallthrough).
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .grimoire(true)
@@ -402,12 +392,11 @@ fn test_pipeline_unicode_disabled_existing_transitions_unchanged() {
         "should return None when unicode disabled"
     );
     assert!(matches!(fuzzer.stage_state, StageState::None));
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_pipeline_unicode_only_begin_no_cmplog() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // No CmpLog, Grimoire not applicable, unicode enabled → direct to Unicode.
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .unicode(true)
@@ -429,15 +418,14 @@ fn test_pipeline_unicode_only_begin_no_cmplog() {
         matches!(fuzzer.stage_state, StageState::Unicode { .. }),
         "stage should be Unicode"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_pipeline_grimoire_enabled_but_not_applicable_transitions_to_unicode() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // Grimoire enabled, but entry doesn't qualify for generalization and has no
     // GeneralizedInputMetadata → should fall through to Unicode.
-    cmplog::force_disable();
+    cmplog::disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
@@ -480,12 +468,11 @@ fn test_pipeline_grimoire_enabled_but_not_applicable_transitions_to_unicode() {
         matches!(fuzzer.stage_state, StageState::Unicode { .. }),
         "stage should be Unicode"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_pipeline_generalization_failure_transitions_to_none_not_unicode() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // Generalization failure → None (not Unicode).
     // Unstable inputs produce unreliable coverage.
     let input = b"ab";
@@ -513,12 +500,11 @@ fn test_pipeline_generalization_failure_transitions_to_none_not_unicode() {
         "generalization failure should transition to None, not Unicode"
     );
     assert!(matches!(fuzzer.stage_state, StageState::None));
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_finalize_generalization_falls_through_to_unicode() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // When grimoire is disabled mid-flight, finalize_generalization must
     // fall through to Unicode instead of returning None.
     let input = b"fn foo() { return 42; }";
@@ -574,12 +560,11 @@ fn test_finalize_generalization_falls_through_to_unicode() {
         matches!(fuzzer.stage_state, StageState::Unicode { .. }),
         "stage should have transitioned to Unicode after generalization"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_pipeline_full_four_stage_lifecycle() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // I2S → Generalization → Grimoire → Unicode → None.
     // This is the most comprehensive pipeline test.
     let input = b"fn foo() { return 42; }";
@@ -683,6 +668,4 @@ fn test_pipeline_full_four_stage_lifecycle() {
         matches!(fuzzer.stage_state, StageState::None),
         "pipeline should end in None"
     );
-
-    cmplog::force_disable();
 }

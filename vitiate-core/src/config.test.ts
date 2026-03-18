@@ -452,6 +452,7 @@ describe("config", () => {
         "VITIATE_OPTIMIZE",
         "VITIATE_SUPERVISOR",
         "VITIATE_SHMEM",
+        "VITIATE_SHMEM_SIZE",
         "VITIATE_FUZZ_OPTIONS",
         "VITIATE_CLI_IPC",
         "VITIATE_RESULTS_FILE",

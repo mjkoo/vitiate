@@ -9,7 +9,8 @@ use crate::types::{ExitKind, IterationResult};
 /// before the scheduler+mutation path is used.
 #[test]
 fn seeds_returned_verbatim_before_mutation() {
-    cmplog::force_disable();
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    cmplog::disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(64).build();
@@ -38,7 +39,8 @@ fn seeds_returned_verbatim_before_mutation() {
 /// pipeline: novel coverage is reported as `Interesting`.
 #[test]
 fn seed_evaluation_integrates_with_report_result() {
-    cmplog::force_disable();
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    cmplog::disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(64).build();
@@ -68,7 +70,8 @@ fn seed_evaluation_integrates_with_report_result() {
 /// the next `get_next_input()` returns an error instead of re-queuing.
 #[test]
 fn all_auto_seeds_without_coverage_returns_error() {
-    cmplog::force_disable();
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    cmplog::disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(64).build();
@@ -98,7 +101,8 @@ fn all_auto_seeds_without_coverage_returns_error() {
 /// NOT tried - the error fires immediately.
 #[test]
 fn user_seeds_without_coverage_skips_auto_seeds_and_errors() {
-    cmplog::force_disable();
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    cmplog::disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(64).build();
@@ -132,7 +136,8 @@ fn user_seeds_without_coverage_skips_auto_seeds_and_errors() {
 /// confusing "Scheduler failed" message from an empty corpus.
 #[test]
 fn all_seeds_crash_without_coverage_returns_clear_error() {
-    cmplog::force_disable();
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    cmplog::disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(64).build();
@@ -176,7 +181,8 @@ fn all_seeds_crash_without_coverage_returns_clear_error() {
 /// to normal mutation-based fuzzing.
 #[test]
 fn seed_with_coverage_transitions_to_normal_fuzzing() {
-    cmplog::force_disable();
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    cmplog::disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(64).build();

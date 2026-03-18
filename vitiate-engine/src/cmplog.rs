@@ -3,23 +3,22 @@
 //! CmpLog state is thread-local. Only one [`Fuzzer`](crate::engine::Fuzzer) should
 //! be active per thread at a time. Multiple concurrent Fuzzers on the same thread
 //! share the enable flag and entry buffer, which leads to incorrect behavior:
-//! the first Fuzzer dropped disables recording for the survivor, and interleaved
-//! `getNextInput`/`reportResult` calls mix comparison entries between Fuzzers.
+//! interleaved `getNextInput`/`reportResult` calls mix comparison entries between
+//! Fuzzers.
+//!
+//! CmpLog is enabled explicitly via [`enable()`] (called by `Fuzzer::new()`) and
+//! disabled via [`disable()`] (called by `Fuzzer::shutdown()`). `Fuzzer::drop()`
+//! does not touch CmpLog, so non-deterministic GC timing is irrelevant.
 
 use std::cell::RefCell;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use libafl::observers::cmp::{CmpValues, CmplogBytes};
 
 /// Maximum number of comparison entries per iteration.
 const MAX_ENTRIES: usize = 4096;
 
-/// Reference count of active `CmpLogGuard` instances. CmpLog is enabled
-/// when > 0. Incremented by `CmpLogGuard::new()`, decremented by
-/// `CmpLogGuard::drop()`. This prevents a stale Fuzzer destructor
-/// (fired by non-deterministic GC) from disabling CmpLog while a newer
-/// Fuzzer is still active.
-static CMPLOG_REFCOUNT: AtomicU64 = AtomicU64::new(0);
+/// Largest integer JavaScript can represent exactly (`2^53 - 1`).
+const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 
 /// Comparison operator type derived from the `op` string parameter in
 /// `__vitiate_trace_cmp()`. Used to populate `AflppCmpLogHeader` attributes.
@@ -50,9 +49,6 @@ impl CmpLogOperator {
     }
 }
 
-/// Largest integer JavaScript can represent exactly (`2^53 - 1`).
-const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
-
 /// Enriched CmpLog entry: comparison values, site ID, and operator type.
 pub type CmpLogEntry = (CmpValues, u32, CmpLogOperator);
 
@@ -65,60 +61,34 @@ thread_local! {
     static CMPLOG_STATE: RefCell<CmpLogState> = const { RefCell::new(CmpLogState { enabled: false, entries: Vec::new() }) };
 }
 
-/// RAII guard that keeps CmpLog recording enabled while held.
-///
-/// Created by [`CmpLogGuard::new()`], intended to be stored as a field in
-/// `Fuzzer`. On drop, decrements the refcount. CmpLog is only disabled
-/// when the last guard is dropped. This prevents a stale Fuzzer destructor
-/// (fired by non-deterministic GC) from disabling CmpLog while a newer
-/// Fuzzer is still active.
-pub struct CmpLogGuard(());
-
-impl CmpLogGuard {
-    /// Enable CmpLog recording and return a guard that keeps it enabled.
-    ///
-    /// Drains stale entries on the first enable (transition from 0 to 1).
-    pub fn new() -> Self {
-        let prev = CMPLOG_REFCOUNT.fetch_add(1, Ordering::Relaxed);
-        CMPLOG_STATE.with(|s| {
-            let mut state = s.borrow_mut();
-            if prev == 0 {
-                // First guard - drain any stale entries left by a previous
-                // session whose guard was dropped after this one was created.
-                state.entries.clear();
-            }
-            state.enabled = true;
-        });
-        Self(())
-    }
+/// Enable CmpLog recording, clearing any stale entries from a prior session.
+pub fn enable() {
+    CMPLOG_STATE.with(|s| {
+        let mut state = s.borrow_mut();
+        state.entries.clear();
+        state.enabled = true;
+    });
 }
 
-impl Drop for CmpLogGuard {
-    fn drop(&mut self) {
-        let prev = CMPLOG_REFCOUNT.fetch_sub(1, Ordering::Relaxed);
-        if prev != 1 {
-            return; // Other guards still alive - don't disable.
-        }
-        CMPLOG_STATE.with(|s| {
-            let mut state = s.borrow_mut();
-            state.enabled = false;
-            state.entries.clear();
-        });
-    }
-}
-
-/// Unconditionally disable CmpLog recording, resetting the refcount to 0.
-///
-/// Used by Rust unit tests for deterministic cleanup between tests.
-/// Not for production use - production code uses [`CmpLogGuard`].
-#[cfg(test)]
-pub fn force_disable() {
-    CMPLOG_REFCOUNT.store(0, Ordering::Relaxed);
+/// Disable CmpLog recording and clear accumulated entries.
+pub fn disable() {
     CMPLOG_STATE.with(|s| {
         let mut state = s.borrow_mut();
         state.enabled = false;
         state.entries.clear();
     });
+}
+
+/// Drop guard that calls [`disable()`] on drop, ensuring CmpLog cleanup
+/// even if a test panics.
+#[cfg(test)]
+pub struct TestCleanupGuard;
+
+#[cfg(test)]
+impl Drop for TestCleanupGuard {
+    fn drop(&mut self) {
+        disable();
+    }
 }
 
 /// Check if CmpLog recording is currently enabled.
@@ -322,32 +292,34 @@ mod tests {
     use super::*;
     use libafl_bolts::{AsSlice, HasLen};
 
-    /// Reset cmplog state between tests.
-    fn reset() {
-        force_disable();
+    /// Reset cmplog state and return a cleanup guard that calls [`disable()`]
+    /// on drop, ensuring isolation even if the test panics.
+    fn reset() -> TestCleanupGuard {
+        disable();
+        TestCleanupGuard
     }
 
     // === Accumulator tests ===
 
     #[test]
     fn test_disabled_by_default() {
-        reset();
+        let _cleanup = reset();
         assert!(!is_enabled());
     }
 
     #[test]
     fn test_enable_disable_lifecycle() {
-        reset();
-        let guard = CmpLogGuard::new();
+        let _cleanup = reset();
+        enable();
         assert!(is_enabled());
-        drop(guard);
+        disable();
         assert!(!is_enabled());
     }
 
     #[test]
     fn test_push_when_enabled() {
-        reset();
-        let _guard = CmpLogGuard::new();
+        let _cleanup = reset();
+        enable();
         push(CmpValues::U8((1, 2, false)), 0, CmpLogOperator::Equal);
         let entries = drain();
         assert_eq!(entries.len(), 1);
@@ -355,7 +327,7 @@ mod tests {
 
     #[test]
     fn test_push_when_disabled() {
-        reset();
+        let _cleanup = reset();
         push(CmpValues::U8((1, 2, false)), 0, CmpLogOperator::Equal);
         let entries = drain();
         assert!(entries.is_empty());
@@ -363,8 +335,8 @@ mod tests {
 
     #[test]
     fn test_capacity_limit() {
-        reset();
-        let _guard = CmpLogGuard::new();
+        let _cleanup = reset();
+        enable();
         for i in 0..MAX_ENTRIES + 100 {
             push(
                 CmpValues::U8((0, 0, false)),
@@ -378,8 +350,8 @@ mod tests {
 
     #[test]
     fn test_drain_returns_and_clears() {
-        reset();
-        let _guard = CmpLogGuard::new();
+        let _cleanup = reset();
+        enable();
         push(CmpValues::U8((1, 2, false)), 0, CmpLogOperator::Equal);
         push(CmpValues::U8((3, 4, false)), 1, CmpLogOperator::Less);
         let entries = drain();
@@ -390,8 +362,8 @@ mod tests {
 
     #[test]
     fn test_enriched_entry_preserves_site_id_and_operator() {
-        reset();
-        let _guard = CmpLogGuard::new();
+        let _cleanup = reset();
+        enable();
         push(CmpValues::U8((10, 20, false)), 42, CmpLogOperator::Less);
         let entries = drain();
         assert_eq!(entries.len(), 1);
@@ -563,36 +535,24 @@ mod tests {
     }
 
     #[test]
-    fn test_guard_drop_drains_stale_entries() {
-        reset();
-        {
-            let _guard = CmpLogGuard::new();
-            push(CmpValues::U8((1, 2, false)), 0, CmpLogOperator::Equal);
-            // guard drop should drain stale entries
-        }
-        // New session should not see entries from the prior one
-        let _guard = CmpLogGuard::new();
+    fn test_enable_clears_stale_entries() {
+        let _cleanup = reset();
+        enable();
+        push(CmpValues::U8((1, 2, false)), 0, CmpLogOperator::Equal);
+        // Re-enable should clear stale entries from the prior session
+        enable();
         let entries = drain();
-        assert!(entries.is_empty(), "guard drop must drain stale entries");
+        assert!(entries.is_empty(), "enable() must clear stale entries");
     }
 
     #[test]
-    fn test_overlapping_guards_keep_cmplog_enabled() {
-        reset();
-        let guard1 = CmpLogGuard::new();
+    fn test_double_enable_then_disable() {
+        let _cleanup = reset();
+        enable();
         assert!(is_enabled());
-        let guard2 = CmpLogGuard::new();
+        enable(); // second enable clears entries, stays enabled
         assert!(is_enabled());
-        drop(guard1); // refcount 2 -> 1, still enabled
-        assert!(is_enabled());
-        push(CmpValues::U8((1, 2, false)), 0, CmpLogOperator::Equal);
-        let entries = drain();
-        assert_eq!(
-            entries.len(),
-            1,
-            "CmpLog should still record with one guard alive"
-        );
-        drop(guard2); // refcount 1 -> 0, disabled
+        disable(); // single disable is sufficient
         assert!(!is_enabled());
     }
 

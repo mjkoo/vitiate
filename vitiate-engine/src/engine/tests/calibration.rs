@@ -1,6 +1,7 @@
 use super::helpers::{
     TestFuzzerBuilder, make_coverage_map, make_fuzzer, make_scheduler, make_seed_testcase,
 };
+use crate::cmplog;
 use crate::engine::EDGES_OBSERVER_NAME;
 use crate::engine::calibration::{CALIBRATION_STAGE_MAX, CALIBRATION_STAGE_START};
 use crate::types::{ExitKind, IterationResult};
@@ -341,6 +342,7 @@ fn test_crash_during_calibration_partial_data() {
 
 #[test]
 fn test_calibrate_run_and_finish_integration() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
 
     // Add a seed so the scheduler has something to select.
@@ -424,6 +426,7 @@ fn test_calibrate_run_and_finish_integration() {
 
 #[test]
 fn test_calibrate_finish_without_calibrate_run() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
 
     // Add a seed so the scheduler has something to select.
@@ -478,6 +481,7 @@ fn test_calibrate_finish_without_calibrate_run() {
 
 #[test]
 fn test_calibrate_finish_errors_without_pending_calibration() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
 
     // calibrate_finish() on a fresh fuzzer with no prior Interesting result

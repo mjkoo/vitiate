@@ -18,6 +18,7 @@ use napi::bindgen_prelude::Buffer;
 
 #[test]
 fn test_map_indexes_metadata_contains_all_covered_edges() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // Task 1.3: MapIndexesMetadata contains all nonzero indices (not just novel).
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
 
@@ -80,12 +81,11 @@ fn test_map_indexes_metadata_contains_all_covered_edges() {
     assert!(meta.list.contains(&40), "should contain novel edge 40");
     assert!(meta.list.contains(&50), "should contain novel edge 50");
     assert_eq!(meta.list.len(), 5);
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_map_indexes_metadata_absent_for_non_interesting() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // Task 1.3: MapIndexesMetadata not stored for non-interesting inputs.
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
 
@@ -113,8 +113,6 @@ fn test_map_indexes_metadata_absent_for_non_interesting() {
 
     // Corpus should not have grown - no entry was added.
     assert_eq!(fuzzer.state.corpus().count(), corpus_before);
-
-    cmplog::force_disable();
 }
 
 #[test]

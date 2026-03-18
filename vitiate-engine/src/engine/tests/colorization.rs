@@ -3,6 +3,7 @@
 use std::ops::Range;
 
 use super::helpers::{TestFuzzerBuilder, make_cmplog_bytes};
+use crate::cmplog;
 use crate::engine::StageState;
 use crate::engine::colorization::{coverage_hash, merge_ranges, type_replace};
 use libafl::HasMetadata;
@@ -183,6 +184,7 @@ fn test_merge_ranges_unsorted() {
 
 #[test]
 fn test_begin_redqueen_skips_without_taint_metadata() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let mut fuzzer = TestFuzzerBuilder::new(64).build_ready_for_stage();
 
     // Add a corpus entry.
@@ -217,6 +219,7 @@ fn test_begin_redqueen_skips_without_taint_metadata() {
 
 #[test]
 fn test_begin_redqueen_skips_without_cmp_metadata() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let mut fuzzer = TestFuzzerBuilder::new(64).build_ready_for_stage();
 
     // Add a corpus entry.
@@ -240,6 +243,7 @@ fn test_begin_redqueen_skips_without_cmp_metadata() {
 
 #[test]
 fn test_begin_redqueen_skips_with_empty_orig_cmpvals() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let mut fuzzer = TestFuzzerBuilder::new(64).build_ready_for_stage();
 
     // Add a corpus entry.
@@ -265,6 +269,7 @@ fn test_begin_redqueen_skips_with_empty_orig_cmpvals() {
 
 #[test]
 fn test_begin_redqueen_sets_corpus_id() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     use libafl::corpus::HasCurrentCorpusId;
 
     let mut fuzzer = TestFuzzerBuilder::new(64).build_ready_for_stage();

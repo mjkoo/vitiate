@@ -218,6 +218,7 @@ fn test_unicode_mutator_skipped_on_no_utf8_region() {
 
 #[test]
 fn test_unicode_explicit_enable_through_constructor() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let coverage_map: Buffer = vec![0u8; 256].into();
     let fuzzer = Fuzzer::new(
         coverage_map,
@@ -242,6 +243,7 @@ fn test_unicode_explicit_enable_through_constructor() {
 
 #[test]
 fn test_unicode_explicit_disable_through_constructor() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let coverage_map: Buffer = vec![0u8; 256].into();
     let fuzzer = Fuzzer::new(
         coverage_map,
@@ -266,6 +268,7 @@ fn test_unicode_explicit_disable_through_constructor() {
 
 #[test]
 fn test_unicode_and_grimoire_independent_explicit_control() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // Grimoire disabled, unicode enabled.
     let coverage_map: Buffer = vec![0u8; 256].into();
     let fuzzer = Fuzzer::new(
@@ -297,7 +300,8 @@ fn test_unicode_and_grimoire_independent_explicit_control() {
 
 #[test]
 fn test_deferred_detection_resolves_both_features() {
-    cmplog::force_disable();
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    cmplog::disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
@@ -364,12 +368,11 @@ fn test_deferred_detection_resolves_both_features() {
         fuzzer.features.unicode_enabled,
         "unicode should be enabled after deferred detection"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_shared_deferred_threshold_with_one_feature_explicit() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // Grimoire explicitly enabled, unicode auto-detect.
     let coverage_map: Buffer = vec![0u8; 256].into();
     let fuzzer = Fuzzer::new(
@@ -407,6 +410,7 @@ fn test_shared_deferred_threshold_with_one_feature_explicit() {
 
 #[test]
 fn test_begin_unicode_returns_some_for_utf8_entry() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .unicode(true)
         .build_with_corpus_entry(b"hello world", &[10]);
@@ -419,11 +423,11 @@ fn test_begin_unicode_returns_some_for_utf8_entry() {
         matches!(fuzzer.stage_state, StageState::Unicode { .. }),
         "stage should be Unicode"
     );
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_begin_unicode_returns_none_when_disabled() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .unicode(true)
         .build_with_corpus_entry(b"hello world", &[10]);
@@ -433,11 +437,11 @@ fn test_begin_unicode_returns_none_when_disabled() {
         result.is_none(),
         "begin_unicode should return None when disabled"
     );
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_begin_unicode_returns_none_for_non_utf8_entry() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let non_utf8 = vec![0xFF, 0xFE, 0xFD, 0xFC, 0xFB];
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .unicode(true)
@@ -447,11 +451,11 @@ fn test_begin_unicode_returns_none_for_non_utf8_entry() {
         result.is_none(),
         "begin_unicode should return None for non-UTF-8 entry"
     );
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_unicode_stage_iteration_counting() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .unicode(true)
         .build_with_corpus_entry(b"hello world", &[10]);
@@ -487,12 +491,11 @@ fn test_unicode_stage_iteration_counting() {
         matches!(fuzzer.stage_state, StageState::None),
         "stage should transition to None"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_unicode_stage_non_cumulative_mutations() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let input = b"hello world test";
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .unicode(true)
@@ -529,12 +532,11 @@ fn test_unicode_stage_non_cumulative_mutations() {
         original_bytes, input,
         "original corpus entry should be unchanged"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_unicode_stage_cmplog_drained() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .unicode(true)
         .build_with_corpus_entry(b"hello world", &[10]);
@@ -572,12 +574,11 @@ fn test_unicode_stage_cmplog_drained() {
         drained.is_empty(),
         "CmpLog should be empty after unicode advance"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_unicode_stage_abort_transitions_to_none() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .unicode(true)
         .build_with_corpus_entry(b"hello world", &[10]);
@@ -596,12 +597,11 @@ fn test_unicode_stage_abort_transitions_to_none() {
         execs_before + 1,
         "abort should increment total_execs"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_unicode_stage_max_input_length_enforcement() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let input = b"hello world";
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .unicode(true)
@@ -614,11 +614,11 @@ fn test_unicode_stage_max_input_length_enforcement() {
             "output should be truncated to max_input_len"
         );
     }
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_unicode_stage_metadata_stashed_in_stage_state() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .unicode(true)
         .build_with_corpus_entry(b"hello world", &[10]);
@@ -629,8 +629,6 @@ fn test_unicode_stage_metadata_stashed_in_stage_state() {
         matches!(fuzzer.stage_state, StageState::Unicode { ref metadata, .. } if !metadata.ranges().is_empty()),
         "unicode metadata should be stashed in stage state"
     );
-
-    cmplog::force_disable();
 }
 
 // -----------------------------------------------------------------------
@@ -639,6 +637,7 @@ fn test_unicode_stage_metadata_stashed_in_stage_state() {
 
 #[test]
 fn test_unicode_stage_skipped_when_no_valid_utf8_regions() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // Entry with no valid UTF-8 → begin_unicode returns None.
     let non_utf8 = vec![0xFF, 0xFE, 0xFD, 0xFC, 0xFB];
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
@@ -660,12 +659,11 @@ fn test_unicode_stage_skipped_when_no_valid_utf8_regions() {
         "should return None when no valid UTF-8 regions"
     );
     assert!(matches!(fuzzer.stage_state, StageState::None));
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_unicode_enabled_drives_stage_transitions() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // When unicode is enabled, pipeline transitions should reach Unicode stage.
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .unicode(true)
@@ -694,12 +692,11 @@ fn test_unicode_enabled_drives_stage_transitions() {
         result2.is_none(),
         "should return None when unicode disabled"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_unicode_stage_exec_counter_increments() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
         .unicode(true)
         .build_with_corpus_entry(b"hello world", &[10]);
@@ -736,6 +733,4 @@ fn test_unicode_stage_exec_counter_increments() {
         execs_before + 2,
         "second advance should increment total_execs"
     );
-
-    cmplog::force_disable();
 }

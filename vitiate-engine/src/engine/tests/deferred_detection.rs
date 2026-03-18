@@ -97,10 +97,11 @@ fn test_scan_corpus_utf8_skip_all_returns_false() {
 
 #[test]
 fn test_deferred_detection_respects_explicit_false_override() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // grimoire: explicit false, unicode: auto-detect (None).
     // After deferred detection fires with UTF-8 corpus, grimoire must stay
     // false while unicode must be auto-enabled.
-    cmplog::force_disable();
+    cmplog::disable();
     cmplog::drain();
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
     // Simulate: grimoire explicitly disabled, unicode left for auto-detect.
@@ -139,15 +140,15 @@ fn test_deferred_detection_respects_explicit_false_override() {
         fuzzer.features.deferred_detection_count.is_none(),
         "deferred count should be consumed"
     );
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_deferred_detection_respects_explicit_false_unicode_override() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // unicode: explicit false, grimoire: auto-detect (None).
     // After deferred detection fires with UTF-8 corpus, unicode must stay
     // false while grimoire must be auto-enabled.
-    cmplog::force_disable();
+    cmplog::disable();
     cmplog::drain();
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
     // Simulate: unicode explicitly disabled, grimoire left for auto-detect.
@@ -186,11 +187,11 @@ fn test_deferred_detection_respects_explicit_false_unicode_override() {
         fuzzer.features.deferred_detection_count.is_none(),
         "deferred count should be consumed"
     );
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_grimoire_empty_corpus_defers_detection() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let fuzzer = TestFuzzerBuilder::new(256).build();
 
     // Empty corpus with no override → deferred.
@@ -200,7 +201,8 @@ fn test_grimoire_empty_corpus_defers_detection() {
 
 #[test]
 fn test_grimoire_deferred_triggers_after_10_interesting() {
-    cmplog::force_disable();
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    cmplog::disable();
     cmplog::drain();
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
     fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
@@ -231,12 +233,12 @@ fn test_grimoire_deferred_triggers_after_10_interesting() {
         fuzzer.features.deferred_detection_count.is_none(),
         "deferred count should be consumed"
     );
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_grimoire_deferred_ignores_stage_found_entries() {
-    cmplog::force_disable();
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    cmplog::disable();
     cmplog::drain();
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
     fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
@@ -285,11 +287,11 @@ fn test_grimoire_deferred_ignores_stage_found_entries() {
         Some(1),
         "stage-found entries should not increment deferred count"
     );
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_grimoire_deferred_excludes_default_seeds() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // When deferred detection fires, scan_corpus_utf8 should skip the
     // auto-seeds (all valid UTF-8) so only user-found inputs influence the vote.
     let mut fuzzer = TestFuzzerBuilder::new(256).build();

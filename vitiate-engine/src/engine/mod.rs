@@ -191,10 +191,6 @@ pub struct Fuzzer {
     unevaluated_seeds: VecDeque<BytesInput>,
     /// Whether `add_seed()` was called at least once (user-provided seeds).
     has_user_seeds: bool,
-    /// Keeps CmpLog recording enabled while this Fuzzer is alive.
-    /// Prevents non-deterministic GC of stale Fuzzers from disabling CmpLog
-    /// for an active Fuzzer. Dropped automatically when the Fuzzer is dropped.
-    _cmplog_guard: crate::cmplog::CmpLogGuard,
     /// Owned watchdog shared state for arm/disarm/run_target during batch iterations.
     /// `None` when no watchdog was provided at construction.
     watchdog_shared: Option<Arc<WatchdogShared>>,
@@ -214,15 +210,15 @@ pub struct Fuzzer {
     input_buffer_ptr: *mut u8,
 }
 
-// SAFETY: `Fuzzer` contains `*mut u8` fields which are `!Send`. napi-rs requires
-// `Send` for `#[napi]` classes. The raw pointers point into `Buffer` objects held
-// as owned fields (`_coverage_map`, `input_buffer`), which prevents V8 GC from
-// reclaiming the backing memory. Node.js `Buffer` uses a non-detachable
-// `ArrayBuffer`, so the memory cannot be reallocated or moved. The `ShmemView`
-// field contains a raw pointer into OS-level shared memory that is valid for the
-// lifetime of the parent `ShmemHandle` (which outlives the Fuzzer in the fuzz
-// loop). NAPI enforces single-threaded access - the `Fuzzer` is only ever used
-// on the Node.js main thread and is never sent across threads.
+// SAFETY: `Fuzzer` contains `*mut u8` fields which are `!Send`. napi-rs
+// requires `Send` for `#[napi]` classes. The raw pointers point into `Buffer`
+// objects held as owned fields (`_coverage_map`, `input_buffer`), which
+// prevents V8 GC from reclaiming the backing memory. Node.js `Buffer` uses a
+// non-detachable `ArrayBuffer`, so the memory cannot be reallocated or moved.
+// The `ShmemView` field contains a raw pointer into OS-level shared memory
+// that is valid for the lifetime of the parent `ShmemHandle` (which outlives
+// the Fuzzer in the fuzz loop). The `Fuzzer` is only ever used on the Node.js
+// main thread and is never sent across threads.
 unsafe impl Send for Fuzzer {}
 
 #[napi]
@@ -331,9 +327,6 @@ impl Fuzzer {
         // Set max input size on state for I2SRandReplace bounds.
         state.set_max_size(max_input_len as usize);
 
-        // Initialize CmpLog: the guard enables recording and keeps it enabled
-        // via refcount until this Fuzzer (and its guard) is dropped.
-        let cmplog_guard = crate::cmplog::CmpLogGuard::new();
         state.metadata_map_mut().insert(CmpValuesMetadata::new());
 
         // Initialize power scheduling metadata with FAST strategy.
@@ -351,6 +344,11 @@ impl Fuzzer {
             })?;
             state.add_metadata(tokens);
         }
+
+        // Enable CmpLog recording after all fallible operations so an early
+        // return doesn't leave CmpLog enabled without a Fuzzer to shut it down.
+        // Disabled by shutdown(), not Drop, so non-deterministic GC cannot interfere.
+        crate::cmplog::enable();
 
         // Insert detector tokens into the mutation dictionary after user tokens.
         // Mark each as pre-promoted so CmpLog won't re-discover them.
@@ -428,7 +426,6 @@ impl Fuzzer {
             unicode_mutator,
             unevaluated_seeds: VecDeque::new(),
             has_user_seeds: false,
-            _cmplog_guard: cmplog_guard,
             watchdog_shared,
             watchdog_thread_handle,
             shmem_view,
@@ -684,13 +681,16 @@ impl Fuzzer {
         }
     }
 
-    /// Shut down the owned watchdog thread.
+    /// Disable CmpLog recording and shut down the owned watchdog thread.
     ///
-    /// Signals the background thread to exit, wakes it via condvar, and joins
-    /// it. No-op if no Watchdog was provided at construction or if already
-    /// shut down. Called from the fuzz loop's finally block.
+    /// Disables CmpLog recording so non-deterministic GC of this Fuzzer
+    /// cannot interfere with a future Fuzzer's CmpLog state. Signals the
+    /// background watchdog thread to exit, wakes it via condvar, and joins
+    /// it. No-op for the watchdog if none was provided at construction or
+    /// if already shut down. Called from the fuzz loop's finally block.
     #[napi]
     pub fn shutdown(&mut self) {
+        crate::cmplog::disable();
         if let Some(ref shared) = self.watchdog_shared {
             shutdown_watchdog_shared(shared, &mut self.watchdog_thread_handle);
         }
@@ -1176,5 +1176,6 @@ impl Fuzzer {
     }
 }
 
-// No manual Drop impl needed - `_cmplog_guard: CmpLogGuard` handles
-// CmpLog disable via its own Drop, and other fields use default drop.
+// No manual Drop impl needed - CmpLog disable is handled by shutdown()
+// (called from the fuzz loop's finally block), not Drop. This makes GC
+// timing irrelevant. Other fields use default drop.

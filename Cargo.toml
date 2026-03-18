@@ -30,3 +30,9 @@ all = "deny"
 [profile.release]
 lto = true
 strip = "symbols"
+
+[profile.profiling]
+inherits = "release"
+debug = 1        # DWARF line tables for symbol resolution
+strip = "none"   # Keep symbols (current release strips them)
+lto = "thin"     # Faster builds than full LTO, still optimized

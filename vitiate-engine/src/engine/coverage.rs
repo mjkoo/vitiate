@@ -91,13 +91,6 @@ impl Fuzzer {
             }
         }
 
-        // Compute novel indices BEFORE constructing the observer. The observer
-        // holds `&mut [u8]` to the coverage map, while compute_novel_indices()
-        // creates a `&[u8]` to the same memory. Having both alive simultaneously
-        // is UB under Rust's aliasing model. Must also precede is_interesting()
-        // which updates the feedback's internal history.
-        let novel_indices = self.compute_novel_indices();
-
         let result = {
             // Reconstruct observer from the stashed pointer.
             // SAFETY: `self.map_ptr` is valid for `self.map_len` bytes. The backing
@@ -162,6 +155,29 @@ impl Fuzzer {
                 if is_interesting {
                     let exec_time = Duration::from_nanos(exec_time_ns as u64);
 
+                    // Compute novel indices BEFORE append_metadata updates the
+                    // feedback's history map. is_interesting (SIMD path) only
+                    // reads the history - it does not update it. So novel_indices
+                    // still reflects map[i] > history[i] at this point.
+                    // We defer this to the interesting-only path (~0.4% of iterations)
+                    // to avoid a full 64KB scalar scan on every iteration.
+                    //
+                    // Drop observers first to avoid aliasing: the observer holds
+                    // &mut [u8] to the coverage map, while compute_novel_indices
+                    // creates &[u8] to the same memory.
+                    drop(observers);
+                    let novel_indices = self.compute_novel_indices();
+
+                    // Re-create observer for append_metadata (needs &mut map access).
+                    let observer = unsafe {
+                        StdMapObserver::from_mut_ptr(
+                            EDGES_OBSERVER_NAME,
+                            self.map_ptr,
+                            self.map_len,
+                        )
+                    };
+                    let observers = tuple_list!(observer);
+
                     let mut testcase = Testcase::new(bytes_input);
                     self.feedback
                         .append_metadata(&mut self.state, &mut mgr, &observers, &mut testcase)
@@ -174,7 +190,7 @@ impl Fuzzer {
                     drop(observers);
 
                     // Collect all nonzero coverage map indices for MapIndexesMetadata
-                    // and count them for bitmap_size. Piggy-backs on a single map pass.
+                    // and count them for bitmap_size. Single fused pass over the map.
                     // SAFETY: map_ptr is valid for map_len bytes, backed by _coverage_map
                     // Buffer. The observer has been dropped, so no aliasing.
                     let map_slice =

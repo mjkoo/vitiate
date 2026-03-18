@@ -24,7 +24,8 @@ unsafe fn seed_coverage(fuzzer: &mut crate::engine::Fuzzer) {
 
 #[test]
 fn test_report_result_populates_tokens_from_cmplog() {
-    cmplog::force_disable();
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    cmplog::disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
@@ -64,13 +65,12 @@ fn test_report_result_populates_tokens_from_cmplog() {
         token_list.contains(&b"javascript".as_slice()),
         "should contain 'javascript'"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_tokens_accumulate_across_report_result_calls() {
-    cmplog::force_disable();
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    cmplog::disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
@@ -105,13 +105,12 @@ fn test_tokens_accumulate_across_report_result_calls() {
     assert!(token_list.contains(&b"ftp".as_slice()));
     assert!(token_list.contains(&b"ssh".as_slice()));
     assert_eq!(token_list.len(), 4);
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_token_candidates_capped_at_max() {
-    cmplog::force_disable();
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    cmplog::disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
@@ -142,13 +141,12 @@ fn test_token_candidates_capped_at_max() {
         "token_candidates should be capped at {MAX_TOKEN_CANDIDATES}, got {}",
         fuzzer.token_tracker.candidates.len(),
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn test_promoted_tokens_not_reinserted_into_candidates() {
-    cmplog::force_disable();
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    cmplog::disable();
     cmplog::drain();
 
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
@@ -238,13 +236,12 @@ fn test_promoted_tokens_not_reinserted_into_candidates() {
         dict_len_before, dict_len_after,
         "dictionary should not grow from re-observed promoted tokens"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn user_provided_tokens_present_in_state_with_cmplog_promotion() {
-    cmplog::force_disable();
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    cmplog::disable();
     cmplog::drain();
 
     // Create a fuzzer with a user-provided dictionary.
@@ -295,13 +292,12 @@ fn user_provided_tokens_present_in_state_with_cmplog_promotion() {
     assert!(token_list.contains(&b"user_token_a".as_slice()));
     assert!(token_list.contains(&b"user_token_b".as_slice()));
     assert!(token_list.contains(&b"cmplog_tok".as_slice()));
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn user_tokens_do_not_count_toward_cmplog_cap() {
-    cmplog::force_disable();
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    cmplog::disable();
     cmplog::drain();
 
     // Create a dictionary with MAX_DICTIONARY_SIZE + 100 user tokens.
@@ -356,13 +352,12 @@ fn user_tokens_do_not_count_toward_cmplog_cap() {
         token_list.contains(&b"cmplog_new".as_slice()),
         "CmpLog token should be promoted even when user tokens exceed MAX_DICTIONARY_SIZE"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn detector_tokens_inserted_and_exempt_from_cap() {
-    cmplog::force_disable();
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    cmplog::disable();
     cmplog::drain();
 
     let coverage_map: Buffer = vec![0u8; 256].into();
@@ -429,13 +424,12 @@ fn detector_tokens_inserted_and_exempt_from_cap() {
         token_list.contains(&b"cmplog_val".as_slice()),
         "CmpLog token should be promoted despite detector tokens in promoted set"
     );
-
-    cmplog::force_disable();
 }
 
 #[test]
 fn duplicate_detector_tokens_do_not_cause_underflow() {
-    cmplog::force_disable();
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    cmplog::disable();
     cmplog::drain();
 
     // Pass duplicate detector tokens - HashSet deduplicates but pre_seeded_count
@@ -483,6 +477,4 @@ fn duplicate_detector_tokens_do_not_cause_underflow() {
         token_list.contains(&b"after_dup".as_slice()),
         "CmpLog promotion should work even with duplicate detector tokens"
     );
-
-    cmplog::force_disable();
 }

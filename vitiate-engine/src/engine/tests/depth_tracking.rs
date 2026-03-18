@@ -1,4 +1,5 @@
 use super::helpers::{TestFuzzerBuilder, make_coverage_map, make_fuzzer, make_seed_testcase};
+use crate::cmplog;
 use crate::engine::EDGES_OBSERVER_NAME;
 use crate::types::{ExitKind, IterationResult};
 use libafl::HasMetadata;
@@ -128,6 +129,7 @@ fn test_depth_increments_from_parent() {
 
 #[test]
 fn test_depth_parent_without_metadata_defaults_to_one() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // Exercises the fallback in coverage.rs where a parent testcase exists
     // but has no SchedulerTestcaseMetadata - parent depth defaults to 1,
     // so the child's depth should be 2 (parent_depth + 1).
@@ -170,6 +172,7 @@ fn test_depth_parent_without_metadata_defaults_to_one() {
 
 #[test]
 fn test_depth_chain_across_three_levels() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let mut fuzzer = TestFuzzerBuilder::new(1024).build();
 
     // Add a seed at depth 1 (root, LibAFL convention).
