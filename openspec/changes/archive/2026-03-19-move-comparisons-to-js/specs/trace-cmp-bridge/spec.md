@@ -1,4 +1,4 @@
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Export traceCmp napi function
 
@@ -70,6 +70,8 @@ The `traceCmpRecord` function SHALL record comparison operands in the thread-loc
 - **WHEN** a Fuzzer instance is active
 - **AND** `traceCmpRecord("hello", "world", 42, 0)` is called
 - **THEN** the comparison operands are recorded in the CmpLog accumulator as `CmpValues::Bytes` with the UTF-8 representations of `"hello"` and `"world"`
+
+## ADDED Requirements
 
 ### Requirement: Record function must not throw
 

@@ -22,7 +22,7 @@ const {
   Fuzzer,
   ExitKind,
   IterationResult,
-  traceCmp,
+  traceCmpRecord,
 } = require("@vitiate/engine");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -67,7 +67,7 @@ const result = transformSync(TARGET_SOURCE, {
             coverageMapSize: 65536,
             traceCmp: true,
             coverageGlobalName: "__vitiate_cov",
-            traceCmpGlobalName: "__vitiate_trace_cmp",
+            traceCmpGlobalName: "__vitiate_trace_cmp_record",
           },
         ],
       ],
@@ -88,12 +88,12 @@ console.log("--- End instrumented code ---\n");
 const MAP_SIZE = 65536;
 const covMap = createCoverageMap(MAP_SIZE);
 
-// Expose the coverage map and traceCmp to the instrumented code via globals
+// Expose the coverage map and traceCmpRecord to the instrumented code via globals
 globalThis.__vitiate_cov = covMap;
-globalThis.__vitiate_trace_cmp = traceCmp;
+globalThis.__vitiate_trace_cmp_record = traceCmpRecord;
 
 // Compile the instrumented code in the current global context so it can
-// access __vitiate_cov and __vitiate_trace_cmp
+// access __vitiate_cov and __vitiate_trace_cmp_record
 vm.runInThisContext(instrumentedCode, { filename: "fuzzme.js" });
 
 // `fuzzme` is now defined in the global scope by the vm.runInThisContext call

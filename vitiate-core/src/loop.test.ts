@@ -30,7 +30,7 @@ describe("fuzz loop", () => {
   const originalCliIpc = process.env["VITIATE_CLI_IPC"];
   const originalResultsFile = process.env["VITIATE_RESULTS_FILE"];
   const originalCov = globalThis.__vitiate_cov;
-  const originalTrace = globalThis.__vitiate_trace_cmp;
+  const originalTrace = globalThis.__vitiate_trace_cmp_record;
 
   afterEach(() => {
     if (originalFuzz === undefined) {
@@ -51,7 +51,7 @@ describe("fuzz loop", () => {
       process.env["VITIATE_RESULTS_FILE"] = originalResultsFile;
     }
     globalThis.__vitiate_cov = originalCov;
-    globalThis.__vitiate_trace_cmp = originalTrace;
+    globalThis.__vitiate_trace_cmp_record = originalTrace;
     if (tmpDir) {
       rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -370,11 +370,11 @@ describe("fuzz loop", () => {
         covMap[data[0]!] = 1;
       }
       if (data.length >= 2) {
-        globalThis.__vitiate_trace_cmp(
+        globalThis.__vitiate_trace_cmp_record(
           data.subarray(0, 2).toString(),
           "\xDE\xAD",
           0,
-          "===",
+          0,
         );
       }
       for (let i = 0; i < data.length - 1; i++) {
@@ -564,11 +564,11 @@ describe("fuzz loop", () => {
         if (data.length > 0) {
           covMap[data[0]!] = 1;
         }
-        globalThis.__vitiate_trace_cmp(
+        globalThis.__vitiate_trace_cmp_record(
           data.toString(),
           "target_value",
           0,
-          "===",
+          0,
         );
       };
 
@@ -623,11 +623,11 @@ describe("fuzz loop", () => {
         }
         // Record comparison; I2S mutator will try to splice "DEAD" into inputs.
         if (data.length >= 4) {
-          globalThis.__vitiate_trace_cmp(
+          globalThis.__vitiate_trace_cmp_record(
             data.subarray(0, 4).toString(),
             "DEAD",
             0,
-            "===",
+            0,
           );
         }
         // Crash when I2S produces the exact bytes "DEAD" at the start.
@@ -666,7 +666,12 @@ describe("fuzz loop", () => {
         if (data.length > 0) {
           covMap[data[0]!] = 1;
         }
-        globalThis.__vitiate_trace_cmp(data.toString(), "async_val", 0, "===");
+        globalThis.__vitiate_trace_cmp_record(
+          data.toString(),
+          "async_val",
+          0,
+          0,
+        );
       };
 
       const result = await runFuzzLoop(target, "stage-async", "test.fuzz.ts", {
@@ -691,11 +696,11 @@ describe("fuzz loop", () => {
           covMap[data[0]!] = 1;
         }
         if (data.length >= 4) {
-          globalThis.__vitiate_trace_cmp(
+          globalThis.__vitiate_trace_cmp_record(
             data.subarray(0, 4).toString(),
             "HANG",
             0,
-            "===",
+            0,
           );
         }
         // Infinite loop when I2S produces "HANG" at the start.
@@ -737,11 +742,11 @@ describe("fuzz loop", () => {
           covMap[data[0]!] = 1;
         }
         if (data.length >= 4) {
-          globalThis.__vitiate_trace_cmp(
+          globalThis.__vitiate_trace_cmp_record(
             data.subarray(0, 4).toString(),
             "DEAD",
             0,
-            "===",
+            0,
           );
         }
         if (data.length >= 4 && data.subarray(0, 4).toString() === "DEAD") {
@@ -774,7 +779,7 @@ describe("fuzz loop", () => {
       // Step 1: Execute first input with new coverage + CmpLog data
       fuzzer.getNextInput();
       covMap[10] = 1;
-      globalThis.__vitiate_trace_cmp("hello", "world", 0, "===");
+      globalThis.__vitiate_trace_cmp_record("hello", "world", 0, 0);
       // ExitKind.Ok = 0, IterationResult.Interesting = 1
       const iterResult = fuzzer.reportResult(0, 1000);
       expect(iterResult).toBe(1);
@@ -837,7 +842,7 @@ describe("fuzz loop", () => {
         if (data.length > 0) {
           covMap[data[0]!] = 1;
         }
-        globalThis.__vitiate_trace_cmp(data.toString(), "no_wd", 0, "===");
+        globalThis.__vitiate_trace_cmp_record(data.toString(), "no_wd", 0, 0);
       };
 
       const result = await runFuzzLoop(target, "stage-no-wd", "test.fuzz.ts", {
@@ -867,11 +872,11 @@ describe("fuzz loop", () => {
         if (data.length > 0) {
           covMap[data[0]!] = 1;
         }
-        globalThis.__vitiate_trace_cmp(
+        globalThis.__vitiate_trace_cmp_record(
           data.toString(),
           "calib_crash",
           0,
-          "===",
+          0,
         );
 
         const byte = data.length > 0 ? data[0]! : -1;
@@ -1095,11 +1100,11 @@ describe("fuzz loop", () => {
           covMap[data[0]!] = 1;
         }
         if (data.length >= 4) {
-          globalThis.__vitiate_trace_cmp(
+          globalThis.__vitiate_trace_cmp_record(
             data.subarray(0, 4).toString(),
             "DEAD",
             0,
-            "===",
+            0,
           );
         }
         if (data.length >= 4 && data.subarray(0, 4).toString() === "DEAD") {
@@ -1688,7 +1693,7 @@ describe("async target detection", () => {
   let tmpDir: string;
   const originalFuzz = process.env["VITIATE_FUZZ"];
   const originalCov = globalThis.__vitiate_cov;
-  const originalTrace = globalThis.__vitiate_trace_cmp;
+  const originalTrace = globalThis.__vitiate_trace_cmp_record;
 
   async function setupFuzzingModeLocal(): Promise<void> {
     process.env["VITIATE_FUZZ"] = "1";
@@ -1711,7 +1716,7 @@ describe("async target detection", () => {
     resetDataDir();
     resetProjectRoot();
     globalThis.__vitiate_cov = originalCov;
-    globalThis.__vitiate_trace_cmp = originalTrace;
+    globalThis.__vitiate_trace_cmp_record = originalTrace;
     if (tmpDir) {
       rmSync(tmpDir, { recursive: true, force: true });
     }

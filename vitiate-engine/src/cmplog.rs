@@ -20,8 +20,8 @@ const MAX_ENTRIES: usize = 4096;
 /// Largest integer JavaScript can represent exactly (`2^53 - 1`).
 const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 
-/// Comparison operator type derived from the `op` string parameter in
-/// `__vitiate_trace_cmp()`. Used to populate `AflppCmpLogHeader` attributes.
+/// Comparison operator type derived from the numeric operator ID parameter in
+/// `__vitiate_trace_cmp_record()`. Used to populate `AflppCmpLogHeader` attributes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CmpLogOperator {
     Equal,
@@ -31,19 +31,25 @@ pub enum CmpLogOperator {
 }
 
 impl CmpLogOperator {
-    /// Parse a JavaScript comparison operator string into a `CmpLogOperator`.
+    /// Map a numeric operator ID to a `CmpLogOperator`.
     ///
-    /// Returns `None` for unknown operators. The SWC plugin only emits known
-    /// operators, but `trace_cmp` is a public NAPI function that can be called
-    /// with arbitrary strings from JS - returning `None` lets callers skip
-    /// CmpLog recording gracefully while the operator match in `trace_cmp`
-    /// returns the appropriate JS error.
-    pub fn from_op(op: &str) -> Option<Self> {
-        match op {
-            "===" | "==" => Some(Self::Equal),
-            "!==" | "!=" => Some(Self::NotEqual),
-            "<" | "<=" => Some(Self::Less),
-            ">" | ">=" => Some(Self::Greater),
+    /// The SWC plugin emits integer operator IDs at compile time (0-7).
+    /// IDs 6 (`<=`) and 7 (`>=`) intentionally map to `Less` and `Greater`
+    /// respectively - the "or equal" distinction is not needed for I2S
+    /// mutations.
+    ///
+    /// The IDs must stay in sync with `comparison_op_id()` in
+    /// `vitiate-swc-plugin/src/lib.rs`. If you change this mapping, update
+    /// both locations.
+    ///
+    /// Returns `None` for unknown IDs, letting callers skip CmpLog recording
+    /// gracefully.
+    pub fn from_id(id: u32) -> Option<Self> {
+        match id {
+            0 | 2 => Some(Self::Equal),    // === | ==
+            1 | 3 => Some(Self::NotEqual), // !== | !=
+            4 | 6 => Some(Self::Less),     // < | <=
+            5 | 7 => Some(Self::Greater),  // > | >=
             _ => None,
         }
     }
@@ -559,55 +565,49 @@ mod tests {
     // === CmpLogOperator tests ===
 
     #[test]
-    fn test_operator_from_strict_equal() {
-        assert_eq!(CmpLogOperator::from_op("==="), Some(CmpLogOperator::Equal));
+    fn test_operator_from_id_strict_equal() {
+        assert_eq!(CmpLogOperator::from_id(0), Some(CmpLogOperator::Equal));
     }
 
     #[test]
-    fn test_operator_from_loose_equal() {
-        assert_eq!(CmpLogOperator::from_op("=="), Some(CmpLogOperator::Equal));
+    fn test_operator_from_id_loose_equal() {
+        assert_eq!(CmpLogOperator::from_id(2), Some(CmpLogOperator::Equal));
     }
 
     #[test]
-    fn test_operator_from_strict_not_equal() {
-        assert_eq!(
-            CmpLogOperator::from_op("!=="),
-            Some(CmpLogOperator::NotEqual)
-        );
+    fn test_operator_from_id_strict_not_equal() {
+        assert_eq!(CmpLogOperator::from_id(1), Some(CmpLogOperator::NotEqual));
     }
 
     #[test]
-    fn test_operator_from_loose_not_equal() {
-        assert_eq!(
-            CmpLogOperator::from_op("!="),
-            Some(CmpLogOperator::NotEqual)
-        );
+    fn test_operator_from_id_loose_not_equal() {
+        assert_eq!(CmpLogOperator::from_id(3), Some(CmpLogOperator::NotEqual));
     }
 
     #[test]
-    fn test_operator_from_less_than() {
-        assert_eq!(CmpLogOperator::from_op("<"), Some(CmpLogOperator::Less));
+    fn test_operator_from_id_less_than() {
+        assert_eq!(CmpLogOperator::from_id(4), Some(CmpLogOperator::Less));
     }
 
     #[test]
-    fn test_operator_from_less_than_or_equal() {
-        assert_eq!(CmpLogOperator::from_op("<="), Some(CmpLogOperator::Less));
+    fn test_operator_from_id_less_than_or_equal() {
+        assert_eq!(CmpLogOperator::from_id(6), Some(CmpLogOperator::Less));
     }
 
     #[test]
-    fn test_operator_from_greater_than() {
-        assert_eq!(CmpLogOperator::from_op(">"), Some(CmpLogOperator::Greater));
+    fn test_operator_from_id_greater_than() {
+        assert_eq!(CmpLogOperator::from_id(5), Some(CmpLogOperator::Greater));
     }
 
     #[test]
-    fn test_operator_from_greater_than_or_equal() {
-        assert_eq!(CmpLogOperator::from_op(">="), Some(CmpLogOperator::Greater));
+    fn test_operator_from_id_greater_than_or_equal() {
+        assert_eq!(CmpLogOperator::from_id(7), Some(CmpLogOperator::Greater));
     }
 
     #[test]
-    fn test_operator_from_unknown_returns_none() {
-        assert_eq!(CmpLogOperator::from_op("??"), None);
-        assert_eq!(CmpLogOperator::from_op("???"), None);
-        assert_eq!(CmpLogOperator::from_op(""), None);
+    fn test_operator_from_id_unknown_returns_none() {
+        assert_eq!(CmpLogOperator::from_id(8), None);
+        assert_eq!(CmpLogOperator::from_id(99), None);
+        assert_eq!(CmpLogOperator::from_id(u32::MAX), None);
     }
 }

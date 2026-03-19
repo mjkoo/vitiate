@@ -22,7 +22,7 @@ impl Default for PluginConfig {
             coverage_map_size: 65536,
             trace_cmp: true,
             coverage_global_name: "__vitiate_cov".to_string(),
-            trace_cmp_global_name: "__vitiate_trace_cmp".to_string(),
+            trace_cmp_global_name: "__vitiate_trace_cmp_record".to_string(),
         }
     }
 }
@@ -160,10 +160,58 @@ impl TransformVisitor {
         })))
     }
 
-    // Build trace_cmp call: `__vitiate_trace_cmp(left, right, cmpId, "op")`
-    fn make_trace_cmp_call(&self, left: Box<Expr>, right: Box<Expr>, span: Span, op: &str) -> Expr {
+    /// Build an IIFE-wrapped comparison with CmpLog recording:
+    /// `((l, r) => (__vitiate_trace_cmp_record(l, r, cmpId, opId), l OP r))(left, right)`
+    fn make_trace_cmp_call(
+        &self,
+        left: Box<Expr>,
+        right: Box<Expr>,
+        span: Span,
+        op: BinaryOp,
+    ) -> Expr {
         let cmp_id = self.edge_id(span);
-        Expr::Call(CallExpr {
+        let op_id = Self::comparison_op_id(op);
+
+        // Parameters: (l, r)
+        let param_l = Pat::Ident(BindingIdent {
+            id: Ident {
+                span: DUMMY_SP,
+                ctxt: SyntaxContext::empty(),
+                sym: "l".into(),
+                optional: false,
+            },
+            type_ann: None,
+        });
+        let param_r = Pat::Ident(BindingIdent {
+            id: Ident {
+                span: DUMMY_SP,
+                ctxt: SyntaxContext::empty(),
+                sym: "r".into(),
+                optional: false,
+            },
+            type_ann: None,
+        });
+
+        // Ident references for l and r inside the IIFE body
+        let ident_l = || {
+            Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                ctxt: SyntaxContext::empty(),
+                sym: "l".into(),
+                optional: false,
+            }))
+        };
+        let ident_r = || {
+            Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                ctxt: SyntaxContext::empty(),
+                sym: "r".into(),
+                optional: false,
+            }))
+        };
+
+        // __vitiate_trace_cmp_record(l, r, cmpId, opId)
+        let record_call = Box::new(Expr::Call(CallExpr {
             span: DUMMY_SP,
             ctxt: SyntaxContext::empty(),
             callee: Callee::Expr(Box::new(Expr::Ident(Ident {
@@ -175,11 +223,11 @@ impl TransformVisitor {
             args: vec![
                 ExprOrSpread {
                     spread: None,
-                    expr: left,
+                    expr: ident_l(),
                 },
                 ExprOrSpread {
                     spread: None,
-                    expr: right,
+                    expr: ident_r(),
                 },
                 ExprOrSpread {
                     spread: None,
@@ -191,11 +239,58 @@ impl TransformVisitor {
                 },
                 ExprOrSpread {
                     spread: None,
-                    expr: Box::new(Expr::Lit(Lit::Str(Str {
+                    expr: Box::new(Expr::Lit(Lit::Num(Number {
                         span: DUMMY_SP,
-                        value: op.into(),
+                        value: op_id as f64,
                         raw: None,
                     }))),
+                },
+            ],
+            type_args: None,
+        }));
+
+        // l OP r (preserves original span for source map fidelity)
+        let comparison = Box::new(Expr::Bin(BinExpr {
+            span,
+            op,
+            left: ident_l(),
+            right: ident_r(),
+        }));
+
+        // (record(...), l OP r) - comma expression
+        let body_expr = Box::new(Expr::Seq(SeqExpr {
+            span: DUMMY_SP,
+            exprs: vec![record_call, comparison],
+        }));
+
+        // (l, r) => (record(...), l OP r)
+        let arrow = Expr::Arrow(ArrowExpr {
+            span: DUMMY_SP,
+            ctxt: SyntaxContext::empty(),
+            params: vec![param_l, param_r],
+            body: Box::new(BlockStmtOrExpr::Expr(body_expr)),
+            is_async: false,
+            is_generator: false,
+            type_params: None,
+            return_type: None,
+        });
+
+        // ((l, r) => ...)(left, right)
+        Expr::Call(CallExpr {
+            span: DUMMY_SP,
+            ctxt: SyntaxContext::empty(),
+            callee: Callee::Expr(Box::new(Expr::Paren(ParenExpr {
+                span: DUMMY_SP,
+                expr: Box::new(arrow),
+            }))),
+            args: vec![
+                ExprOrSpread {
+                    spread: None,
+                    expr: left,
+                },
+                ExprOrSpread {
+                    spread: None,
+                    expr: right,
                 },
             ],
             type_args: None,
@@ -217,16 +312,21 @@ impl TransformVisitor {
         )
     }
 
-    fn comparison_op_str(op: BinaryOp) -> &'static str {
+    /// Map a comparison operator to its numeric ID for the CmpLog record function.
+    ///
+    /// The IDs must stay in sync with `CmpLogOperator::from_id()` in
+    /// `vitiate-engine/src/cmplog.rs`. If you change this mapping, update
+    /// both locations.
+    fn comparison_op_id(op: BinaryOp) -> u8 {
         match op {
-            BinaryOp::EqEqEq => "===",
-            BinaryOp::NotEqEq => "!==",
-            BinaryOp::EqEq => "==",
-            BinaryOp::NotEq => "!=",
-            BinaryOp::Lt => "<",
-            BinaryOp::Gt => ">",
-            BinaryOp::LtEq => "<=",
-            BinaryOp::GtEq => ">=",
+            BinaryOp::EqEqEq => 0,
+            BinaryOp::NotEqEq => 1,
+            BinaryOp::EqEq => 2,
+            BinaryOp::NotEq => 3,
+            BinaryOp::Lt => 4,
+            BinaryOp::Gt => 5,
+            BinaryOp::LtEq => 6,
+            BinaryOp::GtEq => 7,
             // PANIC: only reachable via is_comparison_op() guard, which covers all arms above
             _ => unreachable!(),
         }
@@ -296,7 +396,7 @@ impl VisitMut for TransformVisitor {
         // Comparison operators are handled in visit_mut_expr
     }
 
-    // Task 6.1: Comparison tracing - replace comparison BinExpr with trace_cmp call
+    // Comparison tracing - wrap comparison BinExpr in IIFE with record call
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
 
@@ -306,7 +406,7 @@ impl VisitMut for TransformVisitor {
         if let Expr::Bin(bin) = expr
             && Self::is_comparison_op(bin.op)
         {
-            let op_str = Self::comparison_op_str(bin.op);
+            let op = bin.op;
             let span = bin.span;
             let left = std::mem::replace(
                 &mut bin.left,
@@ -316,7 +416,7 @@ impl VisitMut for TransformVisitor {
                 &mut bin.right,
                 Box::new(Expr::Invalid(Invalid { span: DUMMY_SP })),
             );
-            *expr = self.make_trace_cmp_call(left, right, span, op_str);
+            *expr = self.make_trace_cmp_call(left, right, span, op);
         }
     }
 
@@ -574,7 +674,7 @@ mod tests {
         preamble_before_existing,
         r#"console.log("hello");"#,
         r#"var __vitiate_cov = globalThis.__vitiate_cov;
-var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;
+var __vitiate_trace_cmp_record = globalThis.__vitiate_trace_cmp_record;
 console.log("hello");"#
     );
 
@@ -585,7 +685,7 @@ console.log("hello");"#
         preamble_empty_module,
         r#""#,
         r#"var __vitiate_cov = globalThis.__vitiate_cov;
-var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;"#
+var __vitiate_trace_cmp_record = globalThis.__vitiate_trace_cmp_record;"#
     );
 
     // ===== 3. Edge Coverage - Statements =====
@@ -783,38 +883,45 @@ var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;"#
 
     // ===== 6. Comparison Tracing =====
 
-    // Task 6.3: strict equality wrapped with trace_cmp
+    // Strict equality emits IIFE with numeric operator ID 0
     #[test]
     fn trace_cmp_strict_eq() {
         let out = transform_default(r#"var x = a === b;"#);
         assert!(
-            out.contains("__vitiate_trace_cmp("),
-            "missing trace_cmp: {out}"
+            out.contains("__vitiate_trace_cmp_record("),
+            "missing trace_cmp record call: {out}"
         );
+        // IIFE should preserve the original === comparison in the body
         assert!(
-            out.contains(r#""===""#),
-            "missing === operator string: {out}"
+            out.contains("l === r"),
+            "missing l === r in IIFE body: {out}"
+        );
+        // Numeric operator ID (0 for ===), not a string
+        assert!(
+            !out.contains(r#""===""#),
+            "should not contain string operator: {out}"
         );
     }
 
-    // Task 6.4: less-than wrapped with trace_cmp
+    // Less-than emits IIFE with numeric operator ID 4
     #[test]
     fn trace_cmp_less_than() {
         let out = transform_default(r#"var x = a < b;"#);
         assert!(
-            out.contains("__vitiate_trace_cmp("),
-            "missing trace_cmp: {out}"
+            out.contains("__vitiate_trace_cmp_record("),
+            "missing trace_cmp record call: {out}"
         );
-        assert!(out.contains(r#""<""#), "missing < operator string: {out}");
+        // IIFE should preserve the original < comparison in the body
+        assert!(out.contains("l < r"), "missing l < r in IIFE body: {out}");
     }
 
-    // Task 6.5: comparison inside logical - no double-instrumentation
+    // Comparison inside logical - no double-instrumentation
     #[test]
     fn comparison_inside_logical() {
         let out = transform_default(r#"var x = a === b && c > d;"#);
-        // Exactly 2 trace_cmp calls (one per comparison, no double-wrapping)
+        // Exactly 2 trace_cmp record calls (one per comparison, no double-wrapping)
         assert_eq!(
-            out.matches("__vitiate_trace_cmp(").count(),
+            out.matches("__vitiate_trace_cmp_record(").count(),
             2,
             "expected exactly 2 trace_cmp: {out}"
         );
@@ -824,8 +931,9 @@ var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;"#
             1,
             "expected exactly 1 edge counter: {out}"
         );
-        // No raw === or > operators should remain (they're replaced by trace_cmp)
-        assert!(!out.contains(" === "), "raw === should not remain: {out}");
+        // The comparisons are preserved in the IIFE bodies
+        assert!(out.contains("l === r"), "missing l === r in IIFE: {out}");
+        assert!(out.contains("l > r"), "missing l > r in IIFE: {out}");
     }
 
     // Task 6.6: arithmetic operators NOT wrapped
@@ -833,7 +941,7 @@ var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;"#
     fn arithmetic_not_wrapped() {
         let out = transform_default(r#"var x = a + b;"#);
         assert!(
-            !out.contains("__vitiate_trace_cmp("),
+            !out.contains("__vitiate_trace_cmp_record("),
             "arithmetic should not be wrapped: {out}"
         );
     }
@@ -843,7 +951,7 @@ var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;"#
     fn trace_cmp_disabled() {
         let out = transform_no_trace_cmp(r#"var x = a === b;"#);
         assert!(
-            !out.contains("__vitiate_trace_cmp("),
+            !out.contains("__vitiate_trace_cmp_record("),
             "trace_cmp should be disabled: {out}"
         );
         assert!(out.contains("==="), "comparison should remain: {out}");
@@ -865,7 +973,7 @@ var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;"#
         );
     }
 
-    // Task 7.2: full example - function with if/else, comparison tracing, and preamble
+    // Full example - function with if/else, comparison tracing IIFE, and preamble
     #[test]
     fn full_example() {
         let out = transform_default(
@@ -877,15 +985,18 @@ var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;"#
             "missing cov preamble: {out}"
         );
         assert!(
-            out.contains("var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp"),
+            out.contains("var __vitiate_trace_cmp_record = globalThis.__vitiate_trace_cmp_record"),
             "missing trace preamble: {out}"
         );
-        // Comparison tracing
+        // Comparison tracing IIFE
         assert!(
-            out.contains("__vitiate_trace_cmp("),
-            "missing trace_cmp: {out}"
+            out.contains("__vitiate_trace_cmp_record("),
+            "missing trace_cmp record call: {out}"
         );
-        assert!(out.contains(r#""===""#), "missing === op string: {out}");
+        assert!(
+            out.contains("l === r"),
+            "missing l === r in IIFE body: {out}"
+        );
         // Edge counters (function + if + else = at least 3)
         let counter_count = out.matches("__vitiate_cov[").count();
         assert!(
@@ -920,7 +1031,7 @@ var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;"#
             "missing cov preamble: {out}"
         );
         assert!(
-            !out.contains("__vitiate_trace_cmp"),
+            !out.contains("__vitiate_trace_cmp_record"),
             "trace_cmp preamble should be omitted: {out}"
         );
     }
@@ -1146,7 +1257,7 @@ var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;"#
         let out = transform_default(r#"var x = a === b && c < d || e !== f;"#);
         // 3 comparisons should generate 3 trace_cmp calls
         assert_eq!(
-            out.matches("__vitiate_trace_cmp(").count(),
+            out.matches("__vitiate_trace_cmp_record(").count(),
             3,
             "expected 3 trace_cmp for 3 comparisons: {out}"
         );
@@ -1158,18 +1269,65 @@ var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;"#
         );
     }
 
-    // Arrow expression body with comparison gets trace_cmp
+    // Custom traceCmpGlobalName is used in preamble and IIFE bodies
+    #[test]
+    fn custom_trace_cmp_global_name() {
+        let config = PluginConfig {
+            trace_cmp_global_name: "__my_record".to_string(),
+            ..PluginConfig::default()
+        };
+        let mut visitor = TransformVisitor::new(config, "test.js".to_string());
+        let out = transform(r#"var x = a === b;"#, &mut visitor);
+        assert!(
+            out.contains("var __my_record = globalThis.__my_record"),
+            "preamble should use custom name: {out}"
+        );
+        assert!(
+            out.contains("__my_record("),
+            "IIFE record call should use custom name: {out}"
+        );
+        assert!(
+            !out.contains("__vitiate_trace_cmp_record"),
+            "default name should not appear: {out}"
+        );
+    }
+
+    // Nested comparison where one comparison's result is an operand of another
+    #[test]
+    fn nested_comparison_as_operand() {
+        let out = transform_default(r#"var x = (a < b) === (c > d);"#);
+        // 3 comparisons: a < b, c > d, and the outer ===
+        assert_eq!(
+            out.matches("__vitiate_trace_cmp_record(").count(),
+            3,
+            "expected 3 trace_cmp for 3 comparisons: {out}"
+        );
+        // Each comparison preserved in its own IIFE body
+        assert!(out.contains("l < r"), "missing l < r in IIFE body: {out}");
+        assert!(out.contains("l > r"), "missing l > r in IIFE body: {out}");
+        assert!(
+            out.contains("l === r"),
+            "missing l === r in IIFE body: {out}"
+        );
+    }
+
+    // Arrow expression body with comparison gets IIFE-wrapped trace_cmp
     #[test]
     fn arrow_expr_body_with_comparison() {
         let out = transform_default(r#"const f = () => a === b;"#);
         assert!(
-            out.contains("__vitiate_trace_cmp("),
+            out.contains("__vitiate_trace_cmp_record("),
             "missing trace_cmp in arrow expr: {out}"
         );
-        // The raw `a === b` should be replaced; only "===" inside the string arg should remain
+        // The original `a === b` is replaced by an IIFE; `a` and `b` become
+        // IIFE arguments, and `l === r` appears in the IIFE body.
         assert!(
             !out.contains("a === b"),
             "raw comparison should be replaced: {out}"
+        );
+        assert!(
+            out.contains("l === r"),
+            "missing l === r in IIFE body: {out}"
         );
     }
 }

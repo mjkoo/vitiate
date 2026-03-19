@@ -61,7 +61,7 @@ describe("fuzzing mode discovers planted bug", () => {
   let tmpDir: string;
   const originalFuzz = process.env["VITIATE_FUZZ"];
   const originalCov = globalThis.__vitiate_cov;
-  const originalTrace = globalThis.__vitiate_trace_cmp;
+  const originalTrace = globalThis.__vitiate_trace_cmp_record;
 
   afterEach(() => {
     if (originalFuzz === undefined) {
@@ -71,7 +71,7 @@ describe("fuzzing mode discovers planted bug", () => {
     }
     resetDataDir();
     globalThis.__vitiate_cov = originalCov;
-    globalThis.__vitiate_trace_cmp = originalTrace;
+    globalThis.__vitiate_trace_cmp_record = originalTrace;
     if (tmpDir) {
       rmSync(tmpDir, { recursive: true, force: true });
     }

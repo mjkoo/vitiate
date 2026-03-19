@@ -681,7 +681,7 @@ function add(a, b) {
 
       expect(result).not.toBeNull();
       expect(result!.code).toContain("__vitiate_cov[");
-      expect(result!.code).toContain("__vitiate_trace_cmp(");
+      expect(result!.code).toContain("__vitiate_trace_cmp_record(");
 
       expect(result!.map).toBeDefined();
       const map = JSON.parse(result!.map as string) as Record<string, unknown>;

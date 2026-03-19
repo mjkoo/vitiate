@@ -1,4 +1,4 @@
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Comparison operator wrapping
 
@@ -130,6 +130,8 @@ and `in` / `instanceof` operators SHALL NOT be wrapped with comparison tracing.
 
 - **WHEN** `a + b` is transformed
 - **THEN** the expression is NOT wrapped with the comparison tracing IIFE
+
+## ADDED Requirements
 
 ### Requirement: Module preamble includes record function variable
 

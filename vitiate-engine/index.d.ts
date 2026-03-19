@@ -324,13 +324,17 @@ export declare const enum IterationResult {
 }
 
 /**
- * Perform a JS comparison and return the boolean result.
+ * Record comparison operands for the I2S replacement mutator.
  *
  * When a Fuzzer is active (CmpLog enabled), the comparison operands are
  * recorded for use by the I2S replacement mutator. When no Fuzzer is active,
- * this is a pure passthrough with no side effects beyond the comparison.
+ * this is a no-op. The function never throws - internal errors are silently
+ * ignored because the record call precedes the comparison in the IIFE body,
+ * and a throw would skip the comparison, changing program control flow.
+ *
+ * @param operatorId - Numeric operator ID (0=`===`, 1=`!==`, 2=`==`, 3=`!=`, 4=`<`, 5=`>`, 6=`<=`, 7=`>=`)
  */
-export declare function traceCmp(left: unknown, right: unknown, cmpId: number, op: string): boolean
+export declare function traceCmpRecord(left: unknown, right: unknown, cmpId: number, operatorId: number): void
 
 /**
  * Returns `true` if the V8 C++ shim resolved all required symbols at runtime.
