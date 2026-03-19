@@ -195,16 +195,19 @@ describe("engine batch", () => {
       const fuzzer = createFuzzerWithCorpus(cov, {}, watchdog);
 
       try {
+        // Busy loop is the canonical test pattern for V8's TerminateExecution.
+        // The loop is pure JS with no I/O or microtask yields, so V8's interrupt
+        // mechanism fires deterministically. The timeout is generous (500ms) to
+        // avoid CI flakiness while still testing the watchdog path.
         const result = fuzzer.runBatch(
           (_buf: Buffer, _len: number) => {
             cov[0] = 1;
-            // Tight busy loop - V8 TerminateExecution will interrupt this
             for (;;) {
               /* intentionally empty */
             }
           },
           32,
-          100, // 100ms timeout
+          500, // 500ms timeout - generous for CI headroom
         );
 
         expect(result.exitReason).toBe("solution");

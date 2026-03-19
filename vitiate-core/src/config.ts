@@ -526,6 +526,14 @@ export function getCliOptions(): FuzzOptions {
   return options;
 }
 
+/**
+ * Default coverage map size (number of edge counter slots).
+ *
+ * Independent of `maxInputLen` (default 4096): the coverage map tracks
+ * instrumented edges in the program, not bytes in the fuzz input. There
+ * is no automatic coupling between the two - they are sized independently
+ * based on program complexity and input protocol, respectively.
+ */
 export const COVERAGE_MAP_SIZE = 65536;
 
 const MIN_COVERAGE_MAP_SIZE = 256;

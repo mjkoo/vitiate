@@ -222,6 +222,34 @@ describe("SsrfDetector", () => {
     });
   });
 
+  describe("URL-encoded private IPs", () => {
+    it("blocks percent-encoded loopback via http.request", () => {
+      detector = new SsrfDetector();
+      detector.setup();
+      setDetectorActive(true);
+
+      const http = require("http") as typeof import("http");
+      // 127.0.0.%31 decodes to 127.0.0.1 - Node's URL parser normalizes the
+      // percent-encoding before the SSRF hook extracts the hostname, so this
+      // test confirms the bypass doesn't work (rather than testing the hook's
+      // own decoding logic).
+      expect(() => http.request("http://127.0.0.%31/admin")).toThrow(
+        VulnerabilityError,
+      );
+    });
+
+    it("blocks loopback with custom port", () => {
+      detector = new SsrfDetector();
+      detector.setup();
+      setDetectorActive(true);
+
+      const http = require("http") as typeof import("http");
+      expect(() => http.request("http://127.0.0.1:9090/admin")).toThrow(
+        VulnerabilityError,
+      );
+    });
+  });
+
   describe("allowedHosts override", () => {
     it("allows request to blocked IP when in allowedHosts", () => {
       detector = new SsrfDetector([], ["10.0.0.5"]);

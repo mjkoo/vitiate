@@ -26,8 +26,9 @@ const DEFAULT_TIER1_COUNT = IS_WINDOWS ? 2 : 3;
 describe("DetectorManager", () => {
   it("enables all Tier 1 detectors by default (undefined config)", () => {
     const manager = new DetectorManager(undefined);
-    expect(manager.activeDetectorNames).toContain("prototype-pollution");
+    expect(manager.activeDetectorNames).not.toContain("prototype-pollution");
     expect(manager.activeDetectorNames).toContain("command-injection");
+    expect(manager.activeDetectorNames).toContain("unsafe-eval");
     if (IS_WINDOWS) {
       expect(manager.activeDetectorNames).not.toContain("path-traversal");
     } else {
@@ -38,8 +39,9 @@ describe("DetectorManager", () => {
   it("enables all Tier 1 detectors with empty config (no Tier 2)", () => {
     const manager = new DetectorManager({});
     expect(manager.activeDetectorNames).toHaveLength(DEFAULT_TIER1_COUNT);
-    expect(manager.activeDetectorNames).toContain("prototype-pollution");
+    expect(manager.activeDetectorNames).not.toContain("prototype-pollution");
     expect(manager.activeDetectorNames).toContain("command-injection");
+    expect(manager.activeDetectorNames).toContain("unsafe-eval");
     if (IS_WINDOWS) {
       expect(manager.activeDetectorNames).not.toContain("path-traversal");
     } else {
@@ -141,10 +143,11 @@ describe("DetectorManager", () => {
     const manager = new DetectorManager({});
     const tokens = manager.getTokens();
     expect(tokens.length).toBeGreaterThan(0);
-    // Should contain tokens from all three detectors
+    // Should contain tokens from all active Tier 1 detectors
     const tokenStrings = tokens.map((t) => t.toString("utf8"));
-    expect(tokenStrings).toContain("__proto__"); // from prototype pollution
+    expect(tokenStrings).not.toContain("__proto__"); // prototype pollution is Tier 2 (off by default)
     expect(tokenStrings).toContain("vitiate_cmd_inject"); // from command injection
+    expect(tokenStrings).toContain("vitiate_eval_inject"); // from unsafe eval
     // Path traversal is tier 2 on Windows (not enabled by default config)
     if (process.platform !== "win32") {
       expect(tokenStrings).toContain("../"); // from path traversal
@@ -299,6 +302,7 @@ describe("prototype pollution restored without afterIteration", () => {
 
   it("resetIteration restores prototypes even when afterIteration is skipped (the bug fix)", () => {
     const manager = new DetectorManager({
+      prototypePollution: true,
       commandInjection: false,
       pathTraversal: false,
     });
@@ -593,16 +597,16 @@ describe("DetectorManager.teardown stash drain", () => {
 describe("DetectorManager Tier 2 integration", () => {
   it("Tier 2 detectors are disabled by default", () => {
     const manager = new DetectorManager(undefined);
+    expect(manager.activeDetectorNames).not.toContain("prototype-pollution");
     expect(manager.activeDetectorNames).not.toContain("redos");
     expect(manager.activeDetectorNames).not.toContain("ssrf");
-    expect(manager.activeDetectorNames).not.toContain("unsafe-eval");
   });
 
   it("Tier 2 detectors disabled with empty config", () => {
     const manager = new DetectorManager({});
+    expect(manager.activeDetectorNames).not.toContain("prototype-pollution");
     expect(manager.activeDetectorNames).not.toContain("redos");
     expect(manager.activeDetectorNames).not.toContain("ssrf");
-    expect(manager.activeDetectorNames).not.toContain("unsafe-eval");
   });
 
   it("enables Tier 2 detector with boolean true", () => {
@@ -611,7 +615,7 @@ describe("DetectorManager Tier 2 integration", () => {
     try {
       expect(manager.activeDetectorNames).toContain("ssrf");
       // Tier 1 should still be active
-      expect(manager.activeDetectorNames).toContain("prototype-pollution");
+      expect(manager.activeDetectorNames).toContain("command-injection");
     } finally {
       manager.teardown();
     }
@@ -645,11 +649,9 @@ describe("DetectorManager Tier 2 integration", () => {
     const manager = new DetectorManager({
       ssrf: false,
       redos: false,
-      unsafeEval: false,
     });
     expect(manager.activeDetectorNames).not.toContain("ssrf");
     expect(manager.activeDetectorNames).not.toContain("redos");
-    expect(manager.activeDetectorNames).not.toContain("unsafe-eval");
   });
 });
 
@@ -666,12 +668,13 @@ describe("installDetectorModuleHooks", () => {
     const manager = getDetectorManager();
     expect(manager).toBeInstanceOf(DetectorManager);
     expect(manager!.activeDetectorNames).toContain("command-injection");
+    expect(manager!.activeDetectorNames).toContain("unsafe-eval");
     if (IS_WINDOWS) {
       expect(manager!.activeDetectorNames).not.toContain("path-traversal");
     } else {
       expect(manager!.activeDetectorNames).toContain("path-traversal");
     }
-    expect(manager!.activeDetectorNames).toContain("prototype-pollution");
+    expect(manager!.activeDetectorNames).not.toContain("prototype-pollution");
   });
 
   it("is idempotent when called with the same config", () => {

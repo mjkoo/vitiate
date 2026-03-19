@@ -91,11 +91,13 @@ get didWatchdogFire(): boolean
  */
 disarmWatchdog(): void
 /**
- * Shut down the owned watchdog thread.
+ * Disable CmpLog recording and shut down the owned watchdog thread.
  *
- * Signals the background thread to exit, wakes it via condvar, and joins
- * it. No-op if no Watchdog was provided at construction or if already
- * shut down. Called from the fuzz loop's finally block.
+ * Disables CmpLog recording so non-deterministic GC of this Fuzzer
+ * cannot interfere with a future Fuzzer's CmpLog state. Signals the
+ * background watchdog thread to exit, wakes it via condvar, and joins
+ * it. No-op for the watchdog if none was provided at construction or
+ * if already shut down. Called from the fuzz loop's finally block.
  */
 shutdown(): void
 /**

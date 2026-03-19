@@ -130,6 +130,13 @@ function translateSupervisorResult(
     throw new Error(
       `Crash found (signal ${result.signal}), check ${artifactDir}`,
     );
+  } else if (result.newCrashArtifacts === false) {
+    throw new Error(
+      `Child process failed (exit code ${result.exitCode}) ` +
+        `but no crash artifact was written. This usually indicates ` +
+        `a vitest infrastructure error (e.g., worker timeout, module ` +
+        `resolution failure). Check the output above for details.`,
+    );
   } else {
     throw new Error(
       `Crash found (exit code ${result.exitCode}), check ${artifactDir}`,

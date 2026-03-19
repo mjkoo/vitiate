@@ -6,6 +6,7 @@ export default defineConfig({
     vitiatePlugin({
       fuzz: {
         detectors: {
+          prototypePollution: true,
           redos: true,
           ssrf: true,
           unsafeEval: true,

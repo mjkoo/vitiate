@@ -30,7 +30,7 @@ const DETECTOR_REGISTRY: DetectorRegistration[] = [
   {
     key: "prototypePollution",
     create: () => new PrototypePollutionDetector(),
-    tier: 1,
+    tier: 2,
   },
   {
     key: "commandInjection",
@@ -82,7 +82,7 @@ const DETECTOR_REGISTRY: DetectorRegistration[] = [
   {
     key: "unsafeEval",
     create: () => new UnsafeEvalDetector(),
-    tier: 2,
+    tier: 1,
   },
 ];
 
@@ -245,12 +245,19 @@ let _installedConfig: DetectorConfig | undefined;
 /**
  * Create the DetectorManager and install module hooks.
  *
- * Called from setup.ts (early, before ESM imports) and from
- * runFuzzLoop()/fuzz() (safety net). If already installed with the same
- * config, this is a no-op. If called with a different config, the old
- * manager is torn down and replaced - this allows per-test detector
- * configuration in regression mode (where setup.ts installs with default
- * config, then fuzz() overrides with user-specified config).
+ * Idempotent: safe to call multiple times. If already installed with the
+ * same config, this is a no-op. If called with a different config, the old
+ * manager is torn down and replaced.
+ *
+ * Three call sites, each with a distinct intent:
+ *
+ * - **setup.ts** (Vitest setup file): early install before ESM imports so
+ *   user code captures the patched module wrappers via live bindings.
+ * - **loop.ts** (runFuzzLoop): idempotent safety net re-call - no-op if
+ *   setup.ts already installed with the same config.
+ * - **fuzz.ts** (regression mode): per-test reconfiguration - tears down
+ *   and replaces the manager when the user's fuzz() call specifies a
+ *   different detector config than the default from setup.ts.
  */
 export function installDetectorModuleHooks(config: DetectorConfig): void {
   if (_installed && isDeepStrictEqual(config, _installedConfig)) return;

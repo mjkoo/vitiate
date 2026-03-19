@@ -142,36 +142,31 @@ describe("minimize", () => {
     });
 
     it("stops when wall-clock time limit is reached and returns best so far", async () => {
-      // Mock Date.now to advance 10ms per call for deterministic testing
       let mockTime = 1000;
-      const originalDateNow = Date.now;
-      Date.now = () => {
+      const clock = (): number => {
         mockTime += 10;
         return mockTime;
       };
 
-      try {
-        const input = Buffer.alloc(100);
-        input[0] = 0xaa;
-        let execCount = 0;
-        const testCandidate = async (candidate: Buffer): Promise<boolean> => {
-          execCount++;
-          return candidate.includes(0xaa);
-        };
+      const input = Buffer.alloc(100);
+      input[0] = 0xaa;
+      let execCount = 0;
+      const testCandidate = async (candidate: Buffer): Promise<boolean> => {
+        execCount++;
+        return candidate.includes(0xaa);
+      };
 
-        const opts: MinimizeOptions = {
-          maxIterations: 100_000,
-          timeLimitMs: 25, // 25ms limit / 10ms per Date.now call = ~2-3 execs before budget
-        };
-        const result = await minimize(input, testCandidate, opts);
+      const opts: MinimizeOptions = {
+        maxIterations: 100_000,
+        timeLimitMs: 25, // 25ms limit / 10ms per clock call = ~2-3 execs before budget
+        clock,
+      };
+      const result = await minimize(input, testCandidate, opts);
 
-        // Should have stopped after a few executions (each Date.now call advances 10ms)
-        expect(execCount).toBeLessThanOrEqual(5);
-        // Result should still be valid (at least contains the crash byte)
-        expect(result.includes(0xaa)).toBe(true);
-      } finally {
-        Date.now = originalDateNow;
-      }
+      // Should have stopped after a few executions (each clock call advances 10ms)
+      expect(execCount).toBeLessThanOrEqual(5);
+      // Result should still be valid (at least contains the crash byte)
+      expect(result.includes(0xaa)).toBe(true);
     });
 
     it("completes within both limits for small inputs", async () => {
@@ -309,6 +304,43 @@ describe("minimize", () => {
       const result = await minimize(input, testCandidate);
 
       expect(result.length).toBe(0);
+    });
+  });
+
+  describe("error propagation", () => {
+    it("propagates testCandidate errors during truncation pass", async () => {
+      const input = Buffer.alloc(100);
+      input[0] = 0xaa;
+      const testCandidate = async (_candidate: Buffer): Promise<boolean> => {
+        throw new Error("target infrastructure failure");
+      };
+
+      await expect(minimize(input, testCandidate)).rejects.toThrow(
+        "target infrastructure failure",
+      );
+    });
+
+    it("propagates testCandidate errors during byte deletion pass", async () => {
+      // Use a larger input so truncation pass completes but byte deletion
+      // pass has work to do. Crash requires the exact original content,
+      // so truncation won't shrink it.
+      const input = Buffer.from([0x01, 0x02, 0x03, 0x04, 0x05]);
+      let inByteDeletion = false;
+      const testCandidate = async (candidate: Buffer): Promise<boolean> => {
+        // Truncation pass produces shorter candidates; byte deletion
+        // produces same-length-minus-one candidates.
+        if (candidate.length === input.length - 1) {
+          inByteDeletion = true;
+        }
+        if (inByteDeletion) {
+          throw new Error("late failure");
+        }
+        return candidate.equals(input);
+      };
+
+      await expect(minimize(input, testCandidate)).rejects.toThrow(
+        "late failure",
+      );
     });
   });
 });

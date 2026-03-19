@@ -13,19 +13,19 @@ Detectors are organized into two tiers:
 
 | Detector | What It Finds |
 |----------|---------------|
-| `prototypePollution` | Modifications to `Object.prototype`, `Array.prototype`, and other built-in prototypes |
 | `commandInjection` | Attacker-controlled strings reaching `child_process.exec()` and friends |
 | `pathTraversal` | File system access outside allowed directories via `../` sequences (Tier 2 on Windows) |
+| `unsafeEval` | Attacker-controlled strings reaching `eval()` or `Function()` |
 
 **Tier 2 (disabled by default):**
 
 | Detector | What It Finds |
 |----------|---------------|
+| `prototypePollution` | Modifications to `Object.prototype`, `Array.prototype`, and other built-in prototypes |
 | `redos` | Regular expressions that take excessive time on crafted input |
 | `ssrf` | HTTP requests to internal/private network addresses |
-| `unsafeEval` | Attacker-controlled strings reaching `eval()` or `Function()` |
 
-Tier 2 detectors are off by default because they hook sensitive APIs and may produce false positives in code that legitimately makes HTTP requests or uses `eval()`.
+Tier 2 detectors are off by default because they may produce false positives or impose per-iteration overhead that is significant for performance-sensitive targets (e.g., prototype pollution snapshots all built-in prototypes every iteration).
 
 ## How Detectors Work
 
@@ -88,7 +88,7 @@ npx vitiate libfuzzer test.fuzz.ts -detectors prototypePollution,ssrf
 
 ### Prototype Pollution
 
-Snapshots all built-in prototypes (Object, Array, String, Number, Function, etc.) before each iteration and diffs after. Any added, modified, or deleted properties are flagged.
+Snapshots all built-in prototypes (Object, Array, String, Number, Function, etc.) before each iteration and diffs after. Any added, modified, or deleted properties are flagged. This is a Tier 2 detector (opt-in) because the per-iteration snapshot overhead is significant for performance-sensitive targets.
 
 Common finding: libraries that recursively merge objects without checking for `__proto__` or `constructor` keys.
 

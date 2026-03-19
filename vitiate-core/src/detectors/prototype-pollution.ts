@@ -88,7 +88,7 @@ function formatKey(key: string | symbol): string {
 
 export class PrototypePollutionDetector implements Detector {
   readonly name = "prototype-pollution";
-  readonly tier = 1 as const;
+  readonly tier = 2 as const;
 
   private snapshots: PrototypeSnapshot[] = [];
   private dirty = true;

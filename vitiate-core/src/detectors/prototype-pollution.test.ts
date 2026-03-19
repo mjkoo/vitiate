@@ -162,6 +162,19 @@ describe("PrototypePollutionDetector", () => {
     expect(() => detector.afterIteration()).toThrow(VulnerabilityError);
   });
 
+  it("detects pollution on Array.prototype", () => {
+    detector.setup();
+    detector.beforeIteration();
+    (Array.prototype as unknown as Record<string, unknown>)["polluted"] = true;
+    try {
+      expect(() => detector.afterIteration()).toThrow(VulnerabilityError);
+    } finally {
+      delete (Array.prototype as unknown as Record<string, unknown>)[
+        "polluted"
+      ];
+    }
+  });
+
   it("returns expected tokens", () => {
     const tokens = detector.getTokens();
     const tokenStrings = tokens.map((t) => new TextDecoder().decode(t));

@@ -419,6 +419,17 @@ impl VisitMut for TransformVisitor {
         self.prepend_counter_to_block(&mut n.body, n.span);
     }
 
+    // Finally block: insert an entry counter at the top of the finalizer block.
+    // visit_mut_children_with fires the existing visit_mut_catch_clause for catch
+    // blocks; only the finalizer needs explicit handling here.
+    fn visit_mut_try_stmt(&mut self, n: &mut TryStmt) {
+        n.visit_mut_children_with(self);
+        if let Some(ref mut finalizer) = n.finalizer {
+            let span = finalizer.span;
+            self.prepend_counter_to_block(finalizer, span);
+        }
+    }
+
     // Short-circuit assignment operators (&&=, ||=, ??=) - the RHS is
     // conditionally evaluated (like logical binary ops), but these are
     // AssignExpr nodes, not BinExpr. Wrap the RHS in a comma expression
@@ -1034,6 +1045,116 @@ var __vitiate_trace_cmp = globalThis.__vitiate_trace_cmp;"#
         assert!(
             out.contains("__vitiate_cov["),
             "missing counter in empty static block: {out}"
+        );
+    }
+
+    // ===== Finally block instrumentation =====
+
+    // try/finally without catch - finally gets counter
+    #[test]
+    fn try_finally_no_catch() {
+        let out = transform_no_trace_cmp(r#"try { a(); } finally { b(); }"#);
+        assert!(
+            out.contains("__vitiate_cov["),
+            "missing counter in finally: {out}"
+        );
+    }
+
+    // try/catch/finally - both catch and finally get counters
+    #[test]
+    fn try_catch_finally() {
+        let out = transform_no_trace_cmp(r#"try { a(); } catch (e) { b(); } finally { c(); }"#);
+        let counter_count = out.matches("__vitiate_cov[").count();
+        assert!(
+            counter_count >= 2,
+            "expected >=2 counters (catch + finally), got {counter_count}: {out}"
+        );
+    }
+
+    // Empty finally block still gets counter
+    #[test]
+    fn empty_finally_block() {
+        let out = transform_no_trace_cmp(r#"try { a(); } finally { }"#);
+        assert!(
+            out.contains("__vitiate_cov["),
+            "missing counter in empty finally: {out}"
+        );
+    }
+
+    // ===== Directive prologue handling =====
+
+    // "use strict" directive: preamble should be inserted after directives.
+    // SWC may strip "use strict" for modules (ESM is strict by default), but
+    // it should be preserved in script mode. Since Vitiate runs via Vite's ESM
+    // transform, this is primarily a correctness check.
+    #[test]
+    fn directive_prologue_module() {
+        let out = transform_no_trace_cmp(r#""use strict"; console.log("hello");"#);
+        // Preamble should be present
+        assert!(
+            out.contains("var __vitiate_cov = globalThis.__vitiate_cov"),
+            "missing cov preamble: {out}"
+        );
+        // The preamble is inserted by visit_mut_module after children are visited.
+        // SWC may strip the directive for modules; we just verify preamble is present
+        // and code is intact.
+        assert!(
+            out.contains("console.log"),
+            "original code should be preserved: {out}"
+        );
+    }
+
+    // No directive: preamble at position 0
+    #[test]
+    fn no_directive_preamble_first() {
+        let out = transform_no_trace_cmp(r#"console.log("hello");"#);
+        let preamble_pos = out.find("var __vitiate_cov");
+        let code_pos = out.find("console.log");
+        assert!(preamble_pos.is_some(), "missing preamble: {out}");
+        assert!(code_pos.is_some(), "missing code: {out}");
+        assert!(
+            preamble_pos.unwrap() < code_pos.unwrap(),
+            "preamble should come before code: {out}"
+        );
+    }
+
+    // ===== Additional test coverage =====
+
+    // Generator function body gets counter
+    #[test]
+    fn generator_function_counter() {
+        let out = transform_no_trace_cmp(r#"function* gen() { yield 1; }"#);
+        assert!(
+            out.contains("__vitiate_cov["),
+            "missing counter in generator function: {out}"
+        );
+    }
+
+    // Async generator function body gets counter
+    #[test]
+    fn async_generator_function_counter() {
+        let out = transform_no_trace_cmp(r#"async function* gen() { yield 1; }"#);
+        assert!(
+            out.contains("__vitiate_cov["),
+            "missing counter in async generator function: {out}"
+        );
+    }
+
+    // Complex nested comparisons
+    #[test]
+    fn complex_nested_comparisons() {
+        let out = transform_default(r#"var x = a === b && c < d || e !== f;"#);
+        // 3 comparisons should generate 3 trace_cmp calls
+        assert_eq!(
+            out.matches("__vitiate_trace_cmp(").count(),
+            3,
+            "expected 3 trace_cmp for 3 comparisons: {out}"
+        );
+        // 2 logical operators (&&, ||) should generate 2 edge counters
+        assert_eq!(
+            out.matches("__vitiate_cov[").count(),
+            2,
+            "expected 2 edge counters for logical ops: {out}"
         );
     }
 

@@ -7,6 +7,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  chmodSync,
 } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
@@ -150,6 +151,36 @@ describe("corpus", () => {
 
       expect(path1).toBe(path2);
     });
+
+    // chmod 0o444 does not enforce write protection on Windows (ACL-based),
+    // and root on Linux bypasses POSIX permission checks.
+    it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+      "throws on write to read-only directory",
+      () => {
+        const readOnlyDir = path.join(tmpDir, "readonly-corpus");
+        mkdirSync(readOnlyDir, { recursive: true });
+        // Point data dir at a path where the corpus subdir is read-only.
+        // writeCorpusEntry creates <dataDir>/corpus/<hash>/<file>, so we need
+        // the corpus/<hash> directory to exist and be read-only.
+        setDataDir(readOnlyDir);
+        // Write once to create the nested directory structure
+        const data = Buffer.from("first write");
+        writeCorpusEntry("test.fuzz.ts", "rotest", data);
+        // Make the corpus hash directory read-only
+        const corpusDir = path.dirname(
+          writeCorpusEntry("test.fuzz.ts", "rotest", data),
+        );
+        chmodSync(corpusDir, 0o444);
+        try {
+          expect(() =>
+            writeCorpusEntry("test.fuzz.ts", "rotest", Buffer.from("new data")),
+          ).toThrow(/EACCES/);
+        } finally {
+          // Restore permissions so cleanup can remove the directory
+          chmodSync(corpusDir, 0o755);
+        }
+      },
+    );
 
     it("round-trips: write then load returns same data", () => {
       const data = Buffer.from("round trip test");

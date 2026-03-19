@@ -12,7 +12,7 @@ The prototype pollution detector SHALL monitor built-in JavaScript prototypes fo
 2. In `afterIteration()`, compare the current state against the snapshot.
 3. If any non-function own-property was added, modified, or deleted on a monitored prototype, throw a `VulnerabilityError`.
 
-The detector SHALL have `name: "prototype-pollution"` and `tier: 1`.
+The detector SHALL have `name: "prototype-pollution"` and `tier: 2`.
 
 #### Scenario: Detect property addition to Object.prototype
 

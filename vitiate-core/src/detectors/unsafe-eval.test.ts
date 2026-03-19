@@ -15,10 +15,10 @@ describe("UnsafeEvalDetector", () => {
     drainStashedVulnerabilityError();
   });
 
-  it("has name 'unsafe-eval' and tier 2", () => {
+  it("has name 'unsafe-eval' and tier 1", () => {
     detector = new UnsafeEvalDetector();
     expect(detector.name).toBe("unsafe-eval");
-    expect(detector.tier).toBe(2);
+    expect(detector.tier).toBe(1);
   });
 
   it("returns goal string and metacharacter tokens", () => {

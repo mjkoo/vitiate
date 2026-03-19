@@ -20,16 +20,6 @@ Set to `true` to enable with defaults, `false` to disable, or an options object 
 
 ## Tier 1 (Enabled by Default)
 
-### prototypePollution
-
-Detects modifications to built-in JavaScript prototypes.
-
-**How it works:** Snapshots all built-in prototypes (Object, Array, String, Number, Boolean, Function, RegExp, Date, Map, Set, WeakMap, WeakSet, Promise, Error, ArrayBuffer, Int8Array, Uint8Array, Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array, BigInt64Array, BigUint64Array, and subtypes) before each fuzzing iteration. After execution, diffs property descriptors to detect additions, modifications, or deletions.
-
-**Tokens contributed:** `__proto__`, `constructor`, `prototype`, `__defineGetter__`, `__defineSetter__`, `__lookupGetter__`, `__lookupSetter__`
-
-**Options:** None
-
 ### commandInjection
 
 Detects attacker-controlled strings reaching shell execution functions.
@@ -61,7 +51,27 @@ Evaluation order: denied paths are checked first, then allowed paths, then defau
 
 **Platform note:** Tier 2 (disabled by default) on Windows. Case-insensitive filesystem matching and cross-drive path resolution (e.g., `D:\` vs `\\?\`) make the default deny policy prone to false positives.
 
+### unsafeEval
+
+Detects attacker-controlled strings evaluated as code.
+
+**How it works:** Hooks `eval()`, `Function` constructor, `setTimeout` and `setInterval` with string arguments. Checks if the goal string `vitiate_eval_inject` appears in the evaluated code.
+
+**Tokens contributed:** `vitiate_eval_inject`, `require(`, `process.exit(`, `import(`
+
+**Options:** None
+
 ## Tier 2 (Disabled by Default)
+
+### prototypePollution
+
+Detects modifications to built-in JavaScript prototypes.
+
+**How it works:** Snapshots all built-in prototypes (Object, Array, String, Number, Boolean, Function, RegExp, Date, Map, Set, WeakMap, WeakSet, Promise, Error, ArrayBuffer, Int8Array, Uint8Array, Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array, BigInt64Array, BigUint64Array, and subtypes) before each fuzzing iteration. After execution, diffs property descriptors to detect additions, modifications, or deletions.
+
+**Tokens contributed:** `__proto__`, `constructor`, `prototype`, `__defineGetter__`, `__defineSetter__`, `__lookupGetter__`, `__lookupSetter__`
+
+**Options:** None
 
 ### redos
 
@@ -98,16 +108,6 @@ interface SsrfOptions {
   allowedHosts?: string[];  // Hosts to allow (overrides blocklist)
 }
 ```
-
-### unsafeEval
-
-Detects attacker-controlled strings evaluated as code.
-
-**How it works:** Hooks `eval()`, `Function` constructor, `setTimeout` and `setInterval` with string arguments. Checks if the goal string `vitiate_eval_inject` appears in the evaluated code.
-
-**Tokens contributed:** `vitiate_eval_inject`, `require(`, `process.exit(`, `import(`
-
-**Options:** None
 
 ## CLI Detector Syntax
 

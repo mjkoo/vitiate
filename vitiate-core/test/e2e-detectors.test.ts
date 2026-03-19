@@ -15,14 +15,14 @@
  * `stopOnCrash: true`, the fuzzer exits after the first crash artifact.
  *
  * Seed files (Tier 1):
- * - seed-proto: "proto __proto__" → prototype pollution detector (snapshot diff)
  * - seed-exec: "exec vitiate_cmd_inject" → command injection detector (module hook)
  * - seed-read: "read /etc/passwd" → path traversal detector (module hook)
+ * - seed-eval: "eval vitiate_eval_inject" → unsafe eval detector (goal string)
  *
  * Seed files (Tier 2):
+ * - seed-proto: "proto __proto__" → prototype pollution detector (snapshot diff)
  * - seed-redos: "regex aaaa...!" → ReDoS detector (timing measurement)
  * - seed-ssrf: "fetch http://169.254.169.254" → SSRF detector (host blocklist)
- * - seed-eval: "eval vitiate_eval_inject" → unsafe eval detector (goal string)
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { spawn } from "node:child_process";

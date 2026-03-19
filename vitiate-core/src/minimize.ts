@@ -10,6 +10,8 @@ export interface MinimizeOptions {
   maxIterations?: number;
   /** Maximum wall-clock time in ms for the entire minimization phase. Default: 5,000. 0 means unlimited. */
   timeLimitMs?: number;
+  /** Clock function for wall-clock budget checks. Useful for deterministic testing. Default: Date.now. */
+  clock?: () => number;
 }
 
 const DEFAULT_MAX_ITERATIONS = 10_000;
@@ -35,7 +37,8 @@ export async function minimize(
 ): Promise<Buffer> {
   const maxIterations = options?.maxIterations ?? DEFAULT_MAX_ITERATIONS;
   const timeLimitMs = options?.timeLimitMs ?? DEFAULT_TIME_LIMIT_MS;
-  const startTime = Date.now();
+  const clock = options?.clock ?? Date.now;
+  const startTime = clock();
   let execCount = 0;
   let best: Buffer = Buffer.from(input);
 
@@ -45,7 +48,7 @@ export async function minimize(
 
   function budgetExhausted(): boolean {
     if (maxIterations > 0 && execCount >= maxIterations) return true;
-    if (timeLimitMs > 0 && Date.now() - startTime >= timeLimitMs) return true;
+    if (timeLimitMs > 0 && clock() - startTime >= timeLimitMs) return true;
     return false;
   }
 

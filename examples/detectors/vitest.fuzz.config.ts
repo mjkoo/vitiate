@@ -8,6 +8,7 @@ export default defineConfig({
         fuzzTimeMs: 10_000,
         stopOnCrash: true,
         detectors: {
+          prototypePollution: true,
           redos: true,
           ssrf: true,
           unsafeEval: true,

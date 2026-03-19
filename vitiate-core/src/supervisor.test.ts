@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { spawn } from "node:child_process";
 import {
   mkdirSync,
@@ -6,6 +6,7 @@ import {
   readdirSync,
   existsSync,
   readFileSync,
+  writeFileSync,
 } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
@@ -45,6 +46,7 @@ describe("runSupervisor", () => {
   let tmpDir: string;
 
   afterEach(() => {
+    vi.restoreAllMocks();
     resetDataDir();
     if (tmpDir) {
       rmSync(tmpDir, { recursive: true, force: true });
@@ -96,11 +98,73 @@ describe("runSupervisor", () => {
 
     expect(result.crashed).toBe(true);
     expect(result.exitCode).toBe(1);
+    expect(result.newCrashArtifacts).toBe(false);
   });
 
-  it("returns crashed=false on unknown exit code", async () => {
+  it("exit code 1 with new crash artifact sets newCrashArtifacts true", async () => {
+    const dir = makeTmpDir();
+    const shmem = createMockShmem();
+    const testName = "test-new-artifact";
+
+    // The child will write a crash artifact into the crashes dir then exit 1.
+    const hashDir = hashTestPath(TEST_RELATIVE_PATH, testName);
+    const crashesDir = path.join(dir, "testdata", hashDir, "crashes");
+
+    const result = await runSupervisor({
+      shmem,
+      relativeTestFilePath: TEST_RELATIVE_PATH,
+      testName,
+      spawnChild: () =>
+        spawn(
+          process.execPath,
+          [
+            "-e",
+            `require("fs").mkdirSync(${JSON.stringify(crashesDir)}, { recursive: true }); ` +
+              `require("fs").writeFileSync(require("path").join(${JSON.stringify(crashesDir)}, "crash-abc123"), "data"); ` +
+              `process.exit(1)`,
+          ],
+          { stdio: "ignore" },
+        ),
+    });
+
+    expect(result.crashed).toBe(true);
+    expect(result.exitCode).toBe(1);
+    expect(result.newCrashArtifacts).toBe(true);
+  });
+
+  it("exit code 1 without new crash artifact sets newCrashArtifacts false", async () => {
+    const dir = makeTmpDir();
+    const shmem = createMockShmem();
+    const testName = "test-no-new-artifact";
+
+    // Pre-populate the crashes dir with an existing artifact
+    const hashDir = hashTestPath(TEST_RELATIVE_PATH, testName);
+    const crashesDir = path.join(dir, "testdata", hashDir, "crashes");
+    mkdirSync(crashesDir, { recursive: true });
+    writeFileSync(path.join(crashesDir, "crash-existing"), "old-data");
+
+    const result = await runSupervisor({
+      shmem,
+      relativeTestFilePath: TEST_RELATIVE_PATH,
+      testName,
+      spawnChild: () =>
+        // Child exits 1 without writing any new artifacts
+        spawn(process.execPath, ["-e", "process.exit(1)"], {
+          stdio: "ignore",
+        }),
+    });
+
+    expect(result.crashed).toBe(true);
+    expect(result.exitCode).toBe(1);
+    expect(result.newCrashArtifacts).toBe(false);
+  });
+
+  it("returns crashed=true on unknown exit code and warns to stderr", async () => {
     const shmem = createMockShmem();
     makeTmpDir();
+
+    const spy = vi.spyOn(process.stderr, "write");
+
     const result = await runSupervisor({
       shmem,
       relativeTestFilePath: TEST_RELATIVE_PATH,
@@ -111,8 +175,11 @@ describe("runSupervisor", () => {
         }),
     });
 
-    expect(result.crashed).toBe(false);
+    expect(result.crashed).toBe(true);
     expect(result.exitCode).toBe(42);
+    expect(spy).toHaveBeenCalledWith(
+      expect.stringContaining("child exited with unexpected exit code 42"),
+    );
   });
 
   it("respawns on watchdog timeout exit (code 77) and eventually hits respawn limit", async () => {

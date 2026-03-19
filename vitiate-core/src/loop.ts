@@ -51,10 +51,13 @@ import {
 } from "./reporter.js";
 import { minimize } from "./minimize.js";
 
-const YIELD_INTERVAL = 1000;
-
+/** Seconds between periodic status line updates printed to stderr. */
 const REPORT_INTERVAL_SECONDS = 3;
+
+/** Minimum batch size passed to `runBatch()`. Avoids per-batch overhead dominating. */
 const MIN_BATCH_SIZE = 16;
+
+/** Maximum batch size passed to `runBatch()`. Caps latency before yielding to the event loop. */
 const MAX_BATCH_SIZE = 1024;
 
 /**
@@ -196,6 +199,19 @@ async function executeTarget(
   }
 
   return { exitKind: ExitKind.Ok };
+}
+
+/**
+ * Wrap `fuzzer.getNextInput()` to catch engine errors and re-throw with
+ * a `vitiate:` prefix for cleaner user-facing diagnostics.
+ */
+function getNextInputOrThrow(fuzzer: Fuzzer): Buffer {
+  try {
+    return fuzzer.getNextInput();
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`vitiate: ${message}`, { cause: error });
+  }
 }
 
 function yieldToEventLoop(): Promise<void> {
@@ -434,7 +450,7 @@ export async function runFuzzLoop(
   const detectorManager = getDetectorManager();
   if (!detectorManager) {
     throw new Error(
-      "unreachable: installDetectorModuleHooks did not create a manager",
+      "unreachable: installDetectorModuleHooks must create a DetectorManager - hooks should have been installed before reaching the fuzz loop",
     );
   }
 
@@ -794,7 +810,7 @@ export async function runFuzzLoop(
       iteration < maxRuns &&
       Date.now() - startTime < maxTime
     ) {
-      const rawInput = fuzzer.getNextInput();
+      const rawInput = getNextInputOrThrow(fuzzer);
       const input = Buffer.from(rawInput);
       fuzzer.stashInput(input);
 
@@ -856,7 +872,7 @@ export async function runFuzzLoop(
         if (iteration >= maxRuns) break;
         if (Date.now() - startTime >= maxTime) break;
 
-        const rawInput = fuzzer.getNextInput();
+        const rawInput = getNextInputOrThrow(fuzzer);
         const input = Buffer.from(rawInput);
         fuzzer.stashInput(input);
 
@@ -911,10 +927,12 @@ export async function runFuzzLoop(
             break;
         }
 
-        // Yield to event loop every YIELD_INTERVAL iterations.
-        if (iteration > 0 && iteration % YIELD_INTERVAL === 0) {
-          await yieldToEventLoop();
-        }
+        // Yield to the macrotask queue every iteration for async targets.
+        // The target's `await Promise.resolve()` resolves as a microtask,
+        // which never yields to the macrotask queue where vitest's birpc
+        // IPC lives. Without this, fast iterations starve IPC and vitest
+        // kills the fork worker as "exited unexpectedly."
+        await yieldToEventLoop();
       }
     } else {
       // Batched path for synchronous targets.
@@ -948,7 +966,7 @@ export async function runFuzzLoop(
           // Batch errors typically mean generate_input() failed (e.g., empty
           // corpus with no seeds producing coverage). Re-attempt via
           // getNextInput() to surface the actual error with its message.
-          fuzzer.getNextInput();
+          getNextInputOrThrow(fuzzer);
         }
 
         // Check termination conditions between batches.

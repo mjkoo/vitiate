@@ -5,9 +5,12 @@
  * crash-resilient fuzzing with shmem input stashing and child respawn.
  */
 import type { ChildProcess } from "node:child_process";
+import { existsSync, readdirSync } from "node:fs";
+import path from "node:path";
 import type { ShmemHandle } from "@vitiate/engine";
 import { watchdogExitCode } from "@vitiate/engine";
 import {
+  getTestDataDir,
   writeArtifact,
   writeArtifactWithPrefix,
   type ArtifactKind,
@@ -54,6 +57,8 @@ export interface SupervisorResult {
   crashArtifactPath?: string;
   signal?: string;
   exitCode?: number;
+  /** True when exit code 1 and the child wrote new crash artifacts this run. */
+  newCrashArtifacts?: boolean;
 }
 
 /**
@@ -114,6 +119,26 @@ export async function runSupervisor(
   };
   process.on("SIGINT", sigintHandler);
   process.on("SIGTERM", sigtermHandler);
+
+  // Snapshot existing crash artifacts so we can detect new ones written by
+  // the child (exit code 1). Without this, pre-existing regression tests in
+  // the crashes dir would cause false positives.
+  //
+  // When artifactPrefix is set (CLI mode), the child writes crash artifacts
+  // to <artifactPrefix>crash-<hash> (flat in the prefix directory). Otherwise
+  // the child writes to testdata/<hash>/crashes/crash-<hash>.
+  const crashesDir =
+    artifactPrefix !== undefined
+      ? path.dirname(artifactPrefix + "crash-x")
+      : path.join(getTestDataDir(relativeTestFilePath, testName), "crashes");
+
+  /** List crash artifact filenames in the given directory. */
+  function listCrashArtifacts(): string[] {
+    if (!existsSync(crashesDir)) return [];
+    return readdirSync(crashesDir).filter((f) => f.startsWith("crash-"));
+  }
+
+  const preExistingCrashes = new Set(listCrashArtifacts());
 
   let respawnCount = 0;
 
@@ -197,8 +222,17 @@ export async function runSupervisor(
       }
 
       if (code === 1) {
-        // JS crash found - artifact was written by the child
-        return { crashed: true, exitCode: 1 };
+        // Check whether the child actually wrote new crash artifacts.
+        // Exit code 1 without new artifacts typically means a vitest
+        // infrastructure failure (worker timeout, module resolution, etc.).
+        const hasNewArtifacts = listCrashArtifacts().some(
+          (f) => !preExistingCrashes.has(f),
+        );
+        return {
+          crashed: true,
+          exitCode: 1,
+          newCrashArtifacts: hasNewArtifacts,
+        };
       }
 
       if (code === WATCHDOG_EXIT_CODE) {
@@ -251,8 +285,11 @@ export async function runSupervisor(
         continue;
       }
 
-      // Unknown exit code - forward as-is
-      return { crashed: false, exitCode: code ?? 1 };
+      // Unknown exit code - treat as crash to avoid silently passing
+      process.stderr.write(
+        `vitiate: child exited with unexpected exit code ${code}\n`,
+      );
+      return { crashed: true, exitCode: code ?? 1 };
     }
   } finally {
     process.removeListener("SIGINT", sigintHandler);

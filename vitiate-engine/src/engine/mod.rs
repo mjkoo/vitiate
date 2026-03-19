@@ -1074,12 +1074,10 @@ impl Fuzzer {
                 && self.solution_count == 0
             {
                 return Err(Error::from_reason(
-                    "All seeds evaluated but none produced coverage. \
-                     This usually means instrumentation is not active - \
-                     check that the vitiate plugin is loaded and \
-                     globalThis.__vitiate_cov is initialized. If instrumentation \
-                     is active, ensure at least one seed exercises a code path \
-                     that contains instrumented edges.",
+                    "All seeds evaluated but none produced coverage. Possible causes:\n\
+                     - the fuzz target does not execute any instrumented code paths\n\
+                     - instrumentation is not active (check that the vitiate plugin is loaded \
+                       and globalThis.__vitiate_cov is initialized)",
                 ));
             }
             if self.features.auto_seed_count == 0 {

@@ -292,15 +292,15 @@ The system SHALL define per-detector configuration using Valibot schemas within 
 
 The following detector fields SHALL be defined for Tier 1 detectors:
 
-- `prototypePollution?: boolean`
 - `commandInjection?: boolean`
 - `pathTraversal?: boolean | { allowedPaths?: string[]; deniedPaths?: string[] }` - Tier 1 on Unix/macOS, Tier 2 on Windows (the default allowed-path policy cannot reliably cover cross-drive access, UNC paths, or junctions on Windows, making false positives likely without explicit user configuration).
+- `unsafeEval?: boolean`
 
 The following detector fields SHALL be defined for Tier 2 detectors:
 
+- `prototypePollution?: boolean`
 - `redos?: boolean | { thresholdMs?: number }`
 - `ssrf?: boolean | { blockedHosts?: string[]; allowedHosts?: string[] }`
-- `unsafeEval?: boolean`
 
 The `unsafeEval` field SHALL accept only `boolean` values. If an options object is provided for `unsafeEval`, the schema SHALL reject it with a validation error (unlike `redos` and `ssrf` which accept options objects).
 

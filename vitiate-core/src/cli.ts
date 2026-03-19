@@ -451,6 +451,8 @@ function toCliArgs(parsed: InferValue<typeof libfuzzerParser>): CliArgs {
     dictPath,
     merge: parsed.merge !== undefined && parsed.merge !== 0,
     forkExplicit: parsed.fork !== undefined ? true : undefined,
+    // CLI flags use seconds (matching libFuzzer convention).
+    // Internal FuzzOptions use milliseconds. All conversions happen here.
     fuzzOptions: {
       maxLen,
       timeoutMs: timeout != null ? timeout * 1000 : undefined,

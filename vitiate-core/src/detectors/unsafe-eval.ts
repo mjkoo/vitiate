@@ -13,7 +13,7 @@ const TOKENS = [GOAL_STRING, 'require("', "process.exit", "import("];
 
 export class UnsafeEvalDetector implements Detector {
   readonly name = "unsafe-eval";
-  readonly tier = 2 as const;
+  readonly tier = 1 as const;
 
   private originalEval: typeof globalThis.eval | undefined;
   private originalFunction: typeof globalThis.Function | undefined;

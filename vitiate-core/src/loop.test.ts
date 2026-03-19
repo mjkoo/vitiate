@@ -302,7 +302,27 @@ describe("fuzz loop", () => {
       runFuzzLoop(target, "no-cov-seeds", "test.fuzz.ts", {
         fuzzExecs: 100,
       }),
-    ).rejects.toThrow(/none produced coverage/);
+    ).rejects.toThrow(/vitiate:.*none produced coverage/);
+  });
+
+  it("throws a clear error when harness has no instrumented code", async () => {
+    await setupFuzzingMode();
+    // Target runs code but none of it is instrumented - same symptom as
+    // broken instrumentation but a different root cause.
+    const target = (_data: Buffer): void => {
+      // Exercise some code that is not instrumented
+      const sum = Array.from({ length: 10 }, (_, i) => i).reduce(
+        (a, b) => a + b,
+        0,
+      );
+      void sum;
+    };
+
+    await expect(
+      runFuzzLoop(target, "empty-harness", "test.fuzz.ts", {
+        fuzzExecs: 100,
+      }),
+    ).rejects.toThrow(/does not execute any instrumented code paths/);
   });
 
   it("loads extra corpus dirs as seeds", async () => {
@@ -1472,7 +1492,7 @@ describe("fuzz loop", () => {
         unicode: false,
         redqueen: false,
         quiet: true,
-        // Detectors enabled by default (Tier 1)
+        detectors: { prototypePollution: true },
       },
     );
 
