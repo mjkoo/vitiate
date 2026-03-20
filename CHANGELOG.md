@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.2.0](https://github.com/mjkoo/vitiate/compare/v0.1.2...v0.2.0) (2026-03-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* promote unsafeEval to tier 1, demote prototypePolution to tier 2
+
+### Features
+
+* batched executions ([ff23df4](https://github.com/mjkoo/vitiate/commit/ff23df4e192704570680ea8defd65879356c0336))
+
+
+### Bug Fixes
+
+* change macos shmem provider to make tests consistent ([f2e28ee](https://github.com/mjkoo/vitiate/commit/f2e28ee8d642d1072bbb46cdec7bf4c9ca2fceb2))
+* fix cmplog test isolation issues ([f5c1239](https://github.com/mjkoo/vitiate/commit/f5c1239242741ded064c68a29531dc177d753159))
+* fix imports on windows ([ca80833](https://github.com/mjkoo/vitiate/commit/ca80833f24f7115d35e1ee13240fbf2f0948ee31))
+* fix stack frame dedupe and flaky minimization test ([9cc8836](https://github.com/mjkoo/vitiate/commit/9cc88368d3efa733afe36a08b11130acf4020b8a))
+* fix stat reporting issues ([5f3cc9d](https://github.com/mjkoo/vitiate/commit/5f3cc9d1688f4074420cafa21ec29b69b85e57e2))
+* misc fixes from code review ([f7ebc92](https://github.com/mjkoo/vitiate/commit/f7ebc92307014a53cd1a7332439939a892d3268d))
+* promote unsafeEval to tier 1, demote prototypePolution to tier 2 ([f7ebc92](https://github.com/mjkoo/vitiate/commit/f7ebc92307014a53cd1a7332439939a892d3268d))
+
+
+### Performance Improvements
+
+* cap cmplog entries per-site ([26b452a](https://github.com/mjkoo/vitiate/commit/26b452a54db6843db4ff09577de12c5184a69e7f))
+* cmplog buffer to optimize FFI overhead ([46e5971](https://github.com/mjkoo/vitiate/commit/46e597131dd8cd4a52129de132d9ac3eb21d3c6f))
+* move comparisons to js ([40353b1](https://github.com/mjkoo/vitiate/commit/40353b1ce1f68cf6209b2da53ed70a8571190ccd))
+
 ## [0.1.2](https://github.com/mjkoo/vitiate/compare/v0.1.1...v0.1.2) (2026-03-13)
 
 

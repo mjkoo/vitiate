@@ -1,6 +1,6 @@
 {
   "name": "@vitiate/swc-plugin",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "A modern fuzzer for the JavaScript ecosystem - SWC coverage instrumentation plugin",
   "license": "MIT",
   "repository": {
