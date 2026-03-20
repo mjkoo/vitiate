@@ -79,7 +79,7 @@ jobs:
         if: matrix.use_zig
         uses: taiki-e/install-action@cargo-zigbuild
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v5
 
       - uses: actions/setup-node@v6
         with:
@@ -118,7 +118,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v5
 
       - uses: actions/setup-node@v6
         with:
@@ -162,7 +162,7 @@ jobs:
         with:
           ref: ${{ needs.release-please.outputs.tag_name || github.sha }}
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v5
 
       - uses: actions/setup-node@v6
         with:
