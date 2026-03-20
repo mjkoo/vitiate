@@ -32,7 +32,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use libafl_bolts::shmem::{ShMem, ShMemProvider};
 
-// On macOS, `PlatformShMemProvider` wraps a `ServedShMemProvider` that requires a
+// On macOS, `StdShMemProvider` wraps a `ServedShMemProvider` that requires a
 // background `ShMemService` thread communicating over a Unix domain socket at a
 // hardcoded process-relative path.  This breaks when multiple fuzz tests run in
 // parallel (shared env var / socket collisions) and adds unnecessary complexity
@@ -41,12 +41,14 @@ use libafl_bolts::shmem::{ShMem, ShMemProvider};
 // `UnixShMemProvider` (= `CommonUnixShMemProvider`) uses System V IPC
 // (`shmget`/`shmat`/`shmctl`) which works on macOS without a server, supports
 // cross-process sharing via IPC key, and has kernel-managed reference counting.
-// On Linux this is already what `PlatformShMemProvider` resolves to, so no behavior
+// On Linux this is already what `StdShMemProvider` resolves to, so no behavior
 // change there.
-#[cfg(windows)]
-use libafl_bolts::shmem::{PlatformShMem, PlatformShMemProvider};
 #[cfg(unix)]
 use libafl_bolts::shmem::{UnixShMem as PlatformShMem, UnixShMemProvider as PlatformShMemProvider};
+#[cfg(windows)]
+use libafl_bolts::shmem::{
+    Win32ShMem as PlatformShMem, Win32ShMemProvider as PlatformShMemProvider,
+};
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
