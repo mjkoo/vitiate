@@ -21,6 +21,21 @@ const IS_WINDOWS = process.platform === "win32";
 // path-traversal is Tier 2 on Windows (default-off), Tier 1 elsewhere.
 const DEFAULT_TIER1_COUNT = IS_WINDOWS ? 2 : 3;
 
+function noopDetector(overrides?: Partial<Detector>): Detector {
+  return {
+    name: "noop",
+    tier: 1,
+    getTokens: () => [],
+    getSeeds: () => [],
+    setup: () => {},
+    beforeIteration: () => {},
+    afterIteration: () => {},
+    resetIteration: () => {},
+    teardown: () => {},
+    ...overrides,
+  };
+}
+
 // ── DetectorManager ─────────────────────────────────────────────────────
 
 describe("DetectorManager", () => {
@@ -90,6 +105,7 @@ describe("DetectorManager", () => {
       name,
       tier: 1,
       getTokens: () => [],
+      getSeeds: () => [],
       setup: () => calls.push(`${name}.setup`),
       beforeIteration: () => calls.push(`${name}.before`),
       afterIteration: () => calls.push(`${name}.after`),
@@ -139,6 +155,43 @@ describe("DetectorManager", () => {
     manager.teardown();
   });
 
+  it("returns no seeds when only Tier 1 detectors are active", () => {
+    const manager = new DetectorManager({});
+    const seeds = manager.getSeeds();
+    expect(seeds).toEqual([]);
+  });
+
+  it("collects seeds from prototype pollution when enabled", () => {
+    const manager = new DetectorManager({ prototypePollution: true });
+    const seeds = manager.getSeeds();
+    expect(seeds).toHaveLength(4);
+    const seedStrings = seeds.map((s) => s.toString("utf8"));
+    expect(seedStrings).toContain('{"__proto__":1}');
+    expect(seedStrings).toContain('{"constructor":{"prototype":{}}}');
+  });
+
+  it("aggregates seeds from multiple detectors", () => {
+    const manager = new DetectorManager({
+      prototypePollution: false,
+      commandInjection: false,
+      pathTraversal: false,
+    });
+    const detectorA = noopDetector({
+      name: "seed-a",
+      getSeeds: () => [new Uint8Array([0x41]), new Uint8Array([0x42])],
+    });
+    const detectorB = noopDetector({
+      name: "seed-b",
+      getSeeds: () => [new Uint8Array([0x43])],
+    });
+    Object.defineProperty(manager, "detectors", {
+      value: [detectorA, detectorB],
+    });
+    const seeds = manager.getSeeds();
+    expect(seeds).toHaveLength(3);
+    expect(seeds.map((s) => s.toString("utf8"))).toEqual(["A", "B", "C"]);
+  });
+
   it("collects tokens from all active detectors", () => {
     const manager = new DetectorManager({});
     const tokens = manager.getTokens();
@@ -167,6 +220,7 @@ describe("DetectorManager.endIteration", () => {
       name,
       tier: 1,
       getTokens: () => [],
+      getSeeds: () => [],
       setup: () => {},
       beforeIteration: () => calls.push(`${name}.before`),
       afterIteration: () => calls.push(`${name}.after`),
@@ -195,6 +249,7 @@ describe("DetectorManager.endIteration", () => {
       name: "thrower",
       tier: 1,
       getTokens: () => [],
+      getSeeds: () => [],
       setup: () => {},
       beforeIteration: () => {},
       afterIteration: () => {
@@ -246,6 +301,7 @@ describe("DetectorManager.endIteration", () => {
       name: "buggy",
       tier: 1,
       getTokens: () => [],
+      getSeeds: () => [],
       setup: () => {},
       beforeIteration: () => {},
       afterIteration: () => {
@@ -274,6 +330,7 @@ describe("DetectorManager.endIteration", () => {
       name: "test",
       tier: 1,
       getTokens: () => [],
+      getSeeds: () => [],
       setup: () => {},
       beforeIteration: () => {},
       afterIteration: () => {
@@ -337,20 +394,6 @@ describe("DetectorManager.endIteration stash integration", () => {
     expect(manager).toHaveProperty("detectors");
     Object.defineProperty(manager, "detectors", { value: [detector] });
     return manager;
-  }
-
-  function noopDetector(overrides?: Partial<Detector>): Detector {
-    return {
-      name: "noop",
-      tier: 1,
-      getTokens: () => [],
-      setup: () => {},
-      beforeIteration: () => {},
-      afterIteration: () => {},
-      resetIteration: () => {},
-      teardown: () => {},
-      ...overrides,
-    };
   }
 
   afterEach(() => {
@@ -572,6 +615,7 @@ describe("DetectorManager.teardown stash drain", () => {
       name: "test",
       tier: 1,
       getTokens: () => [],
+      getSeeds: () => [],
       setup: () => {},
       beforeIteration: () => {},
       afterIteration: () => {},
@@ -746,6 +790,7 @@ describe("DetectorManager.endIteration return value forwarding", () => {
       name: "capture",
       tier: 1,
       getTokens: () => [],
+      getSeeds: () => [],
       setup: () => {},
       beforeIteration: () => {},
       afterIteration: (targetReturnValue?: unknown) => {

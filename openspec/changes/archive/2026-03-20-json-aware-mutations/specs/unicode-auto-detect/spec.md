@@ -1,38 +1,4 @@
-## Purpose
-
-Unicode auto-detection determines whether to enable unicode mutations based on corpus content analysis. It supports explicit override via configuration, shares the UTF-8 scanning infrastructure with Grimoire auto-detection, and uses the same deferred detection mechanism for empty corpora.
-
-## Requirements
-
-### Requirement: Unicode configuration option
-
-The system SHALL accept a `unicode` configuration option in `FuzzOptions` and `FuzzerConfig` with the following tri-state behavior:
-
-- `true`: Force-enable unicode mutations regardless of corpus content.
-- `false`: Force-disable unicode mutations regardless of corpus content.
-- absent (undefined): Auto-detect based on corpus UTF-8 content.
-
-This follows the same pattern as the existing `grimoire` configuration option.
-
-#### Scenario: Unicode explicitly enabled
-
-- **WHEN** `FuzzOptions.unicode` is set to `true`
-- **THEN** the unicode stage SHALL be enabled regardless of corpus content
-
-#### Scenario: Unicode explicitly disabled
-
-- **WHEN** `FuzzOptions.unicode` is set to `false`
-- **THEN** the unicode stage SHALL be disabled regardless of corpus content
-
-#### Scenario: Unicode auto-detected from corpus
-
-- **WHEN** `FuzzOptions.unicode` is absent (undefined)
-- **THEN** the system SHALL auto-detect based on corpus UTF-8 content
-
-#### Scenario: Invalid unicode option rejected
-
-- **WHEN** `FuzzOptions.unicode` is set to a non-boolean value
-- **THEN** the system SHALL reject the configuration with a validation error
+## MODIFIED Requirements
 
 ### Requirement: Unicode auto-detection shares Grimoire UTF-8 scanning
 

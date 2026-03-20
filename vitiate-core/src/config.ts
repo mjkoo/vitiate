@@ -114,6 +114,18 @@ const FuzzOptionsSchema = v.object({
    */
   redqueen: v.optional(v.boolean()),
   /**
+   * JSON-aware mutation stage control.
+   * `true` = force enable, `false` = force disable, absent = auto-detect from corpus JSON content.
+   */
+  jsonMutations: v.optional(v.boolean()),
+  /**
+   * Automatic seeding control.
+   * When `false`, suppresses both detector-contributed seeds and built-in
+   * default seeds. The fuzzer starts from a single empty seed if no user
+   * corpus is present. Default: `true`.
+   */
+  autoSeed: v.optional(v.boolean()),
+  /**
    * Startup banner control.
    * `true` = force show, `false` = force hide, absent = auto (show).
    * Controls the one-line startup banner only. Suppressed when `quiet` is `true`.

@@ -88,9 +88,12 @@ impl Fuzzer {
 
         let next_iteration = iteration + 1;
         if next_iteration >= max_iterations {
-            // Grimoire complete - try unicode.
+            // Grimoire complete - try unicode, then JSON.
             // stage_state is already StageState::None (reset before evaluate_coverage above).
             if let Some(buf) = self.begin_unicode(corpus_id)? {
+                return Ok(Some(buf));
+            }
+            if let Some(buf) = self.begin_json(corpus_id)? {
                 return Ok(Some(buf));
             }
             return Ok(None);

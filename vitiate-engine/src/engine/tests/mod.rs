@@ -14,6 +14,7 @@ mod features;
 mod generalization;
 mod grimoire;
 mod input_handling;
+mod json_stage;
 mod metadata_population;
 mod minimizer;
 mod mutator;

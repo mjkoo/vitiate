@@ -50,6 +50,10 @@ export class CommandInjectionDetector implements Detector {
     return TOKENS.map((t) => ENCODER.encode(t));
   }
 
+  getSeeds(): Uint8Array[] {
+    return [];
+  }
+
   setup(): void {
     for (const fn of COMMAND_STRING_FUNCTIONS) {
       this.hooks.push(

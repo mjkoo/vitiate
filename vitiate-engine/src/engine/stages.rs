@@ -83,6 +83,12 @@ pub(crate) enum StageState {
         /// Cached metadata identifying UTF-8 ranges, computed once at stage start.
         metadata: UnicodeIdentificationMetadata,
     },
+    /// JSON mutational stage: structure-preserving JSON-aware mutations.
+    Json {
+        corpus_id: CorpusId,
+        iteration: usize,
+        max_iterations: usize,
+    },
 }
 
 impl Fuzzer {
@@ -180,7 +186,7 @@ impl Fuzzer {
         Ok(Some(Buffer::from(bytes)))
     }
 
-    /// Attempt to begin the post-I2S stages: generalization → Grimoire → unicode.
+    /// Attempt to begin the post-I2S stages: generalization → Grimoire → unicode → JSON.
     pub(super) fn begin_post_i2s_stages(&mut self, corpus_id: CorpusId) -> Result<Option<Buffer>> {
         if self.features.grimoire_enabled {
             if let Some(buf) = self.begin_generalization(corpus_id)? {
@@ -191,6 +197,9 @@ impl Fuzzer {
             }
         }
         if let Some(buf) = self.begin_unicode(corpus_id)? {
+            return Ok(Some(buf));
+        }
+        if let Some(buf) = self.begin_json(corpus_id)? {
             return Ok(Some(buf));
         }
         Ok(None)
@@ -216,6 +225,9 @@ impl Fuzzer {
             }
             StageState::Unicode { .. } => {
                 return self.advance_unicode(exec_time_ns);
+            }
+            StageState::Json { .. } => {
+                return self.advance_json(exec_time_ns);
             }
             StageState::I2S { .. } => {}
             StageState::Colorization { .. } => {

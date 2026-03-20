@@ -3,6 +3,11 @@ import { fuzz } from "@vitiate/core";
 // Bypasses the workspace-level pnpm override that forces flatted >= 3.4.2
 import { parse } from "flatted-vulnerable";
 
+// Detector config (prototypePollution: true) is set in the plugin-level
+// vitest config - no per-test override needed. autoSeed is disabled so
+// the E2E test proves the mutation engine finds the vulnerability without
+// hand-crafted seeds - detector tokens (__proto__ etc.) in the dictionary
+// are sufficient.
 fuzz(
   "flatted-parse-prototype-pollution",
   (data: Buffer) => {
@@ -14,9 +19,5 @@ fuzz(
       // we only care about inputs that parse successfully but pollute prototypes
     }
   },
-  {
-    detectors: {
-      prototypePollution: true,
-    },
-  },
+  { autoSeed: false },
 );

@@ -500,6 +500,12 @@ export async function runFuzzLoop(
   if (options.redqueen !== undefined) {
     fuzzerConfig.redqueen = options.redqueen;
   }
+  if (options.jsonMutations !== undefined) {
+    fuzzerConfig.jsonMutations = options.jsonMutations;
+  }
+  if (options.autoSeed !== undefined) {
+    fuzzerConfig.autoSeed = options.autoSeed;
+  }
   if (dictionaryPath !== undefined) {
     fuzzerConfig.dictionaryPath = dictionaryPath;
   }
@@ -508,6 +514,14 @@ export async function runFuzzLoop(
   const detectorTokens = detectorManager.getTokens();
   if (detectorTokens.length > 0) {
     fuzzerConfig.detectorTokens = detectorTokens;
+  }
+
+  // Collect detector seeds for corpus pre-seeding.
+  // detectorManager.getSeeds() already returns Buffer[], no re-wrapping needed.
+  const detectorSeeds =
+    options.autoSeed !== false ? detectorManager.getSeeds() : [];
+  if (detectorSeeds.length > 0) {
+    fuzzerConfig.detectorSeeds = detectorSeeds;
   }
 
   const debug = isDebugMode();

@@ -66,6 +66,7 @@ interface SubprocessResult {
 }
 
 function runVitest(
+  cwd: string,
   config: string,
   env: Record<string, string>,
   timeoutMs: number,
@@ -73,7 +74,7 @@ function runVitest(
   return new Promise<SubprocessResult>((resolve, reject) => {
     const chunks: Buffer[] = [];
     const child = spawn("pnpm", ["exec", "vitest", "run", "--config", config], {
-      cwd: EXAMPLE_DIR,
+      cwd,
       timeout: timeoutMs,
       stdio: ["ignore", "pipe", "pipe"],
       shell: true,
@@ -117,12 +118,86 @@ describe("detector pipeline: regression mode (deterministic)", () => {
   // The seed files contain exact trigger inputs, so detectors fire
   // deterministically on every replay - no fuzzer discovery needed.
   beforeAll(async () => {
-    result = await runVitest("vitest.config.ts", {}, 60_000);
+    result = await runVitest(EXAMPLE_DIR, "vitest.config.ts", {}, 60_000);
   }, 60_000);
 
   it("regression replay catches detector-flagged inputs", () => {
     if (result.exitCode !== 1) dumpOutput("regression", result.output);
     expect(result.exitCode).toBe(1);
+  });
+});
+
+const FLATTED_EXAMPLE_DIR = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../examples/flatted-vuln",
+);
+
+const FLATTED_DATA_DIR = path.join(FLATTED_EXAMPLE_DIR, ".vitiate");
+
+const FLATTED_HASH_DIR = hashTestPath(
+  "test/flatted.fuzz.ts",
+  "flatted-parse-prototype-pollution",
+);
+
+const FLATTED_TESTDATA_DIR = path.join(
+  FLATTED_DATA_DIR,
+  "testdata",
+  FLATTED_HASH_DIR,
+);
+
+function cleanFlattedArtifacts(): void {
+  for (const artifact of findArtifacts(FLATTED_TESTDATA_DIR)) {
+    rmSync(artifact, { force: true });
+  }
+  rmSync(path.join(FLATTED_DATA_DIR, "corpus"), {
+    recursive: true,
+    force: true,
+  });
+}
+
+describe("flatted prototype pollution: discovered via JSON mutations", () => {
+  let result: SubprocessResult;
+
+  // Fuzz flatted 3.4.1 without detector seeds - the fuzzer discovers the
+  // vulnerability through JSON mutations alone. The prototype pollution
+  // detector contributes __proto__ / constructor / prototype as dictionary
+  // tokens, and JSON auto-detection + JSON key replacement mutations combine
+  // to produce the pollution payload. autoSeed is disabled so the fuzzer
+  // starts from an empty seed, proving the mutation engine works without
+  // hand-crafted seeds.
+  //
+  // Budget: 60s fuzz time with 120s subprocess timeout. Starting from an
+  // empty seed requires the havoc mutator to assemble valid JSON structure
+  // before JSON-aware mutations can refine it, so this needs more headroom
+  // than seed-assisted tests.
+  beforeAll(async () => {
+    cleanFlattedArtifacts();
+
+    result = await runVitest(
+      FLATTED_EXAMPLE_DIR,
+      "vitest.fuzz.config.ts",
+      {
+        VITIATE_FUZZ: "1",
+        VITIATE_FUZZ_TIME: "60",
+      },
+      120_000,
+    );
+  }, 120_000);
+
+  afterAll(() => {
+    cleanFlattedArtifacts();
+  });
+
+  it("finds the prototype pollution vulnerability", () => {
+    if (result.exitCode !== 1) dumpOutput("flatted", result.output);
+    expect(result.exitCode).toBe(1);
+  });
+
+  it("produces a crash artifact", () => {
+    if (findArtifacts(FLATTED_TESTDATA_DIR).length < 1)
+      dumpOutput("flatted", result.output);
+    const artifacts = findArtifacts(FLATTED_TESTDATA_DIR);
+    expect(artifacts.length).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -136,6 +211,7 @@ describe("detector pipeline: fuzz mode", () => {
     cleanGeneratedArtifacts();
 
     result = await runVitest(
+      EXAMPLE_DIR,
       "vitest.fuzz.config.ts",
       { VITIATE_FUZZ: "1" },
       60_000,

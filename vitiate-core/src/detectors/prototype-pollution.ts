@@ -163,6 +163,15 @@ export class PrototypePollutionDetector implements Detector {
     return TOKENS.map((t) => ENCODER.encode(t));
   }
 
+  getSeeds(): Uint8Array[] {
+    return [
+      ENCODER.encode('{"__proto__":1}'),
+      ENCODER.encode('[{"__proto__":1}]'),
+      ENCODER.encode('{"constructor":{"prototype":{}}}'),
+      ENCODER.encode('["__proto__"]'),
+    ];
+  }
+
   setup(): void {
     // No-op: snapshot-based detector, no hooks to install.
   }

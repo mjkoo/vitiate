@@ -14,8 +14,11 @@ fn make_config_with_dict(dict_path: &str) -> FuzzerConfig {
         grimoire: None,
         unicode: None,
         redqueen: None,
+        json_mutations: None,
+        auto_seed: None,
         dictionary_path: Some(dict_path.to_string()),
         detector_tokens: None,
+        detector_seeds: None,
     }
 }
 
@@ -119,8 +122,11 @@ fn no_dictionary_path_does_not_add_tokens_metadata() {
         grimoire: None,
         unicode: None,
         redqueen: None,
+        json_mutations: None,
+        auto_seed: None,
         dictionary_path: None,
         detector_tokens: None,
+        detector_seeds: None,
     };
     let fuzzer = Fuzzer::new(coverage_map, Some(config), None, None).unwrap();
 

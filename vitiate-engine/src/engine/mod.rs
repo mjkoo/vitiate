@@ -55,6 +55,7 @@ mod coverage;
 mod feature_detection;
 mod generalization;
 mod grimoire;
+mod json;
 mod mutator;
 mod stages;
 #[cfg(test)]
@@ -72,7 +73,7 @@ use token_tracker::TokenTracker;
 pub(crate) const EDGES_OBSERVER_NAME: &str = "edges";
 const DEFAULT_MAX_INPUT_LEN: u32 = 4096;
 
-// Default seeds for auto-seeding when corpus is empty.
+// Default seeds for auto-seeding when no user seeds are provided.
 const DEFAULT_SEEDS: &[&[u8]] = &[
     b"",                 // empty
     b"\n",               // minimal valid ASCII
@@ -80,6 +81,10 @@ const DEFAULT_SEEDS: &[&[u8]] = &[
     b"\x00\x00\x00\x00", // binary/null-byte handling
     b"{}",               // empty JSON object
     b"test",             // short printable ASCII
+    b"[]",               // empty JSON array
+    b"null",             // JSON null
+    b"[{}]",             // array containing object
+    b"{\"a\":\"b\"}",    // object with string value
 ];
 
 /// Maximum power-of-two stacked mutations per Grimoire iteration (2^3 = 8 max).
@@ -88,6 +93,10 @@ const GRIMOIRE_MAX_STACK_POW: usize = 3;
 /// Maximum power-of-two stacked mutations per unicode iteration (2^7 = 128 max).
 /// Character-level mutations are small individually, so deeper stacking is appropriate.
 const UNICODE_MAX_STACK_POW: usize = 7;
+
+/// Maximum power-of-two stacked mutations per JSON iteration (2^3 = 8 max).
+/// Allows combining mutations (e.g., replace a key AND a value in one iteration).
+const JSON_MAX_STACK_POW: usize = 3;
 
 /// Maximum random iteration count for I2S and Grimoire stages (selected uniformly from 1..=N).
 const STAGE_MAX_ITERATIONS: usize = 128;
@@ -138,6 +147,12 @@ type UnicodeMutationsType = tuple_list_type!(
     UnicodeSubcategoryTokenReplaceMutator,
 );
 type UnicodeMutator = HavocScheduledMutator<UnicodeMutationsType>;
+type JsonMutationsType = tuple_list_type!(
+    json::JsonTokenReplaceString,
+    json::JsonTokenReplaceKey,
+    json::JsonReplaceValue,
+);
+type JsonMutator = HavocScheduledMutator<JsonMutationsType>;
 type FuzzerState =
     StdState<InMemoryCorpus<BytesInput>, BytesInput, StdRand, InMemoryCorpus<BytesInput>>;
 
@@ -184,13 +199,21 @@ pub struct Fuzzer {
     redqueen_ran_for_entry: bool,
     /// Unicode scheduled mutator operating on `(BytesInput, UnicodeIdentificationMetadata)`.
     unicode_mutator: UnicodeMutator,
-    /// Feature auto-detection state for Grimoire, unicode, and REDQUEEN.
+    /// JSON scheduled mutator wrapping JSON-aware mutators.
+    json_mutator: JsonMutator,
+    /// Feature auto-detection state for Grimoire, unicode, REDQUEEN, and JSON.
     features: FeatureDetection,
     /// Seeds awaiting initial verbatim evaluation (no mutation).
     /// Populated by `queue_seed()`, drained by `get_next_input()`.
     unevaluated_seeds: VecDeque<BytesInput>,
     /// Whether `add_seed()` was called at least once (user-provided seeds).
     has_user_seeds: bool,
+    /// Whether automatic seeding (detector seeds + default auto-seeds) is enabled.
+    auto_seed_enabled: bool,
+    /// Detector-contributed seed inputs, queued during seed composition.
+    detector_seeds: Vec<Vec<u8>>,
+    /// Whether seed composition has been performed (prevents re-running).
+    seeds_composed: bool,
     /// Owned watchdog shared state for arm/disarm/run_target during batch iterations.
     /// `None` when no watchdog was provided at construction.
     watchdog_shared: Option<Arc<WatchdogShared>>,
@@ -238,11 +261,18 @@ impl Fuzzer {
         let grimoire_override = config.as_ref().and_then(|c| c.grimoire);
         let unicode_override = config.as_ref().and_then(|c| c.unicode);
         let redqueen_override = config.as_ref().and_then(|c| c.redqueen);
+        let json_mutations_override = config.as_ref().and_then(|c| c.json_mutations);
+        let auto_seed_enabled = config.as_ref().and_then(|c| c.auto_seed).unwrap_or(true);
         let dictionary_path = config.as_ref().and_then(|c| c.dictionary_path.clone());
         let detector_tokens: Option<Vec<Vec<u8>>> = config
             .as_ref()
             .and_then(|c| c.detector_tokens.as_ref())
             .map(|tokens| tokens.iter().map(|b| b.to_vec()).collect());
+        let detector_seeds: Vec<Vec<u8>> = config
+            .as_ref()
+            .and_then(|c| c.detector_seeds.as_ref())
+            .map(|seeds| seeds.iter().map(|b| b.to_vec()).collect())
+            .unwrap_or_default();
 
         let map_ptr = coverage_map.as_mut_ptr();
         let map_len = coverage_map.len();
@@ -318,6 +348,14 @@ impl Fuzzer {
                 UnicodeSubcategoryTokenReplaceMutator,
             ),
             UNICODE_MAX_STACK_POW,
+        );
+        let json_mutator = HavocScheduledMutator::with_max_stack_pow(
+            tuple_list!(
+                json::JsonTokenReplaceString,
+                json::JsonTokenReplaceKey,
+                json::JsonReplaceValue,
+            ),
+            JSON_MAX_STACK_POW,
         );
 
         // Drop the tracking observer - feedback only holds a name-based Handle.
@@ -395,6 +433,7 @@ impl Fuzzer {
                 grimoire_override,
                 unicode_override,
                 redqueen_override,
+                json_mutations_override,
                 state.corpus().count(),
             ),
             state,
@@ -424,8 +463,12 @@ impl Fuzzer {
             redqueen_mutator,
             redqueen_ran_for_entry: false,
             unicode_mutator,
+            json_mutator,
             unevaluated_seeds: VecDeque::new(),
             has_user_seeds: false,
+            auto_seed_enabled,
+            detector_seeds,
+            seeds_composed: false,
             watchdog_shared,
             watchdog_thread_handle,
             shmem_view,
@@ -1062,42 +1105,66 @@ impl Fuzzer {
         self.unevaluated_seeds.push_back(input);
     }
 
+    /// Build an error for an empty corpus after all seeds have been evaluated.
+    /// Tailors the message based on whether any seeds crashed (solution_count > 0)
+    /// vs none produced coverage at all.
+    fn empty_corpus_error(solution_count: u32) -> Error {
+        if solution_count > 0 {
+            Error::from_reason(
+                "No seed produced coverage and the corpus is empty - the fuzzer \
+                 cannot continue without at least one non-crashing seed that \
+                 exercises instrumented code.",
+            )
+        } else {
+            Error::from_reason(
+                "All seeds evaluated but none produced coverage. Possible causes:\n\
+                 - the fuzz target does not execute any instrumented code paths\n\
+                 - instrumentation is not active (check that the vitiate plugin is loaded \
+                   and globalThis.__vitiate_cov is initialized)",
+            )
+        }
+    }
+
     /// Core input generation logic shared by `get_next_input` (allocates Buffer)
     /// and `run_batch` (writes into pre-allocated buffer).
     ///
     /// Handles auto-seeding, seed drain, corpus selection, and mutation.
     /// Returns the input bytes and parent corpus ID.
     fn generate_input(&mut self) -> Result<GeneratedInput> {
-        // Auto-seed if corpus is empty and no seeds are queued.
+        // Seed composition: queue detector seeds, then default auto-seeds
+        // (if no user seeds and auto_seed enabled), then empty fallback.
         if self.state.corpus().count() == 0 && self.unevaluated_seeds.is_empty() {
-            if (self.has_user_seeds || self.features.auto_seed_count > 0)
-                && self.solution_count == 0
-            {
-                return Err(Error::from_reason(
-                    "All seeds evaluated but none produced coverage. Possible causes:\n\
-                     - the fuzz target does not execute any instrumented code paths\n\
-                     - instrumentation is not active (check that the vitiate plugin is loaded \
-                       and globalThis.__vitiate_cov is initialized)",
-                ));
+            if self.has_user_seeds || self.seeds_composed {
+                // All seeds (user or auto) exhausted with empty corpus.
+                return Err(Self::empty_corpus_error(self.solution_count));
             }
-            if self.features.auto_seed_count == 0 {
+
+            self.seeds_composed = true;
+
+            let mut auto_seed_count: usize = 0;
+
+            // Queue detector seeds if auto-seeding is enabled.
+            if self.auto_seed_enabled {
+                for seed_bytes in std::mem::take(&mut self.detector_seeds) {
+                    self.queue_seed(BytesInput::new(seed_bytes));
+                    auto_seed_count += 1;
+                }
+            }
+
+            // Queue default auto-seeds if no user seeds and auto_seed enabled.
+            if !self.has_user_seeds && self.auto_seed_enabled {
                 for seed in DEFAULT_SEEDS {
                     self.queue_seed(BytesInput::new(seed.to_vec()));
+                    auto_seed_count += 1;
                 }
-                self.features.set_auto_seed_count(DEFAULT_SEEDS.len());
             }
-        }
 
-        // All seeds crashed but none produced coverage.
-        if self.state.corpus().count() == 0
-            && self.unevaluated_seeds.is_empty()
-            && self.solution_count > 0
-        {
-            return Err(Error::from_reason(
-                "No seed produced coverage and the corpus is empty - the fuzzer \
-                 cannot continue without at least one non-crashing seed that \
-                 exercises instrumented code.",
-            ));
+            self.features.set_auto_seed_count(auto_seed_count);
+
+            // Empty fallback: if queue is still empty, add a single empty seed.
+            if self.unevaluated_seeds.is_empty() {
+                self.queue_seed(BytesInput::new(Vec::new()));
+            }
         }
 
         // Drain unevaluated seeds first: return verbatim (no mutation).

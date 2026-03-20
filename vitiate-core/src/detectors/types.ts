@@ -34,6 +34,8 @@ export interface Detector {
   readonly tier: 1 | 2;
   /** Return dictionary tokens to pre-seed in the mutation dictionary. */
   getTokens(): Uint8Array[];
+  /** Return seed inputs to pre-seed in the fuzzer corpus. */
+  getSeeds(): Uint8Array[];
   /** Called once before fuzzing begins. Install hooks or initialize state. */
   setup(): void;
   /** Called before each target execution. Capture baseline state. */

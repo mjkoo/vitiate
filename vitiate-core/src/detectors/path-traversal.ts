@@ -129,6 +129,10 @@ export class PathTraversalDetector implements Detector {
     return tokens;
   }
 
+  getSeeds(): Uint8Array[] {
+    return [];
+  }
+
   setup(): void {
     this.installModuleHooks("fs");
     this.installModuleHooks("fs/promises");

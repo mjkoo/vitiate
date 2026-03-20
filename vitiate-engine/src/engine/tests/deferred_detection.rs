@@ -9,8 +9,8 @@ use crate::engine::feature_detection::DEFERRED_DETECTION_THRESHOLD;
 use crate::engine::feature_detection::FeatureDetection;
 use crate::types::{ExitKind, IterationResult};
 use libafl::HasMetadata;
-use libafl::corpus::{Corpus, Testcase};
-use libafl::corpus::{CorpusId, SchedulerTestcaseMetadata};
+use libafl::corpus::CorpusId;
+use libafl::corpus::{Corpus, SchedulerTestcaseMetadata, Testcase};
 use libafl::feedbacks::MapIndexesMetadata;
 use libafl::inputs::BytesInput;
 use libafl::observers::cmp::CmpValues;
@@ -33,7 +33,7 @@ fn test_grimoire_majority_utf8_enables() {
         state.corpus_mut().add(tc).unwrap();
     }
 
-    assert!(FeatureDetection::scan_corpus_utf8(&state, 0));
+    assert!(FeatureDetection::scan_corpus(&state, 0).0);
 }
 
 #[test]
@@ -50,7 +50,7 @@ fn test_grimoire_majority_non_utf8_disables() {
         state.corpus_mut().add(tc).unwrap();
     }
 
-    assert!(!FeatureDetection::scan_corpus_utf8(&state, 0));
+    assert!(!FeatureDetection::scan_corpus(&state, 0).0);
 }
 
 #[test]
@@ -68,30 +68,8 @@ fn test_grimoire_equal_counts_disables() {
     }
 
     assert!(
-        !FeatureDetection::scan_corpus_utf8(&state, 0),
+        !FeatureDetection::scan_corpus(&state, 0).0,
         "equal counts should disable (strictly greater-than required)"
-    );
-}
-
-#[test]
-fn test_scan_corpus_utf8_skip_all_returns_false() {
-    let (map_ptr, _map) = make_coverage_map(256);
-    let (mut state, ..) = make_state_and_feedback(map_ptr, 256);
-    for _ in 0..3 {
-        state
-            .corpus_mut()
-            .add(Testcase::new(BytesInput::new(b"text".to_vec())))
-            .unwrap();
-    }
-    // skip_count == count → false
-    assert!(
-        !FeatureDetection::scan_corpus_utf8(&state, 3),
-        "skipping all entries should return false"
-    );
-    // skip_count > count → false
-    assert!(
-        !FeatureDetection::scan_corpus_utf8(&state, 100),
-        "skipping beyond corpus size should return false"
     );
 }
 
@@ -290,9 +268,31 @@ fn test_grimoire_deferred_ignores_stage_found_entries() {
 }
 
 #[test]
-fn test_grimoire_deferred_excludes_default_seeds() {
+fn test_scan_corpus_skip_all_returns_false() {
+    let (map_ptr, _map) = make_coverage_map(256);
+    let (mut state, ..) = make_state_and_feedback(map_ptr, 256);
+    for _ in 0..3 {
+        state
+            .corpus_mut()
+            .add(Testcase::new(BytesInput::new(b"text".to_vec())))
+            .unwrap();
+    }
+    // skip_count == count: no entries to scan.
+    assert!(
+        !FeatureDetection::scan_corpus(&state, 3).0,
+        "skipping all entries should return false"
+    );
+    // skip_count > count: still no entries to scan.
+    assert!(
+        !FeatureDetection::scan_corpus(&state, 100).0,
+        "skipping beyond corpus size should return false"
+    );
+}
+
+#[test]
+fn test_deferred_detection_excludes_auto_seeds() {
     let _cmplog_cleanup = cmplog::TestCleanupGuard;
-    // When deferred detection fires, scan_corpus_utf8 should skip the
+    // When deferred detection fires, scan_corpus should skip the
     // auto-seeds (all valid UTF-8) so only user-found inputs influence the vote.
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
     for seed in DEFAULT_SEEDS {
@@ -314,15 +314,15 @@ fn test_grimoire_deferred_excludes_default_seeds() {
         fuzzer.state.corpus_mut().add(tc).unwrap();
     }
 
-    // Without skipping: 6 UTF-8 seeds + 0 UTF-8 user vs 4 non-UTF-8 → enabled (wrong).
+    // Without skipping: UTF-8 seeds outnumber non-UTF-8 user inputs -> enabled (wrong).
     assert!(
-        FeatureDetection::scan_corpus_utf8(&fuzzer.state, 0),
+        FeatureDetection::scan_corpus(&fuzzer.state, 0).0,
         "without skipping, default seeds cause false positive"
     );
 
-    // With skipping: 0 UTF-8 user vs 4 non-UTF-8 → disabled (correct).
+    // With skipping: 0 UTF-8 user vs 4 non-UTF-8 -> disabled (correct).
     assert!(
-        !FeatureDetection::scan_corpus_utf8(&fuzzer.state, fuzzer.features.auto_seed_count),
+        !FeatureDetection::scan_corpus(&fuzzer.state, fuzzer.features.auto_seed_count).0,
         "with skipping, only user inputs are counted"
     );
 }

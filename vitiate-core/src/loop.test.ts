@@ -999,6 +999,11 @@ describe("fuzz loop", () => {
         "seeds",
       );
       mkdirSync(seedDir, { recursive: true });
+      // Include a non-crashing seed that produces coverage so the corpus
+      // is non-empty after seed evaluation. Without this, all-crashing user
+      // seeds leave the corpus empty and the fuzzer cannot continue (user
+      // seeds suppress default auto-seeds).
+      writeFileSync(path.join(seedDir, "seed-ok"), Buffer.from([0x00]));
       writeFileSync(path.join(seedDir, "seed-A"), Buffer.from([0x42]));
       writeFileSync(path.join(seedDir, "seed-B"), Buffer.from([0x43]));
 

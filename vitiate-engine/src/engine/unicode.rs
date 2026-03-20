@@ -85,7 +85,10 @@ impl Fuzzer {
 
         let next_iteration = iteration + 1;
         if next_iteration >= max_iterations {
-            // Unicode stage complete - pipeline done.
+            // Unicode stage complete - try JSON, then pipeline done.
+            if let Some(buf) = self.begin_json(corpus_id)? {
+                return Ok(Some(buf));
+            }
             return Ok(None);
         }
 

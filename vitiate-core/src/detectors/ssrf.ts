@@ -191,6 +191,10 @@ export class SsrfDetector implements Detector {
     return tokens.map((t) => ENCODER.encode(t));
   }
 
+  getSeeds(): Uint8Array[] {
+    return [];
+  }
+
   setup(): void {
     if (this.hooks.length > 0 || this.originalFetch !== undefined) {
       throw new Error("SsrfDetector.setup() called twice without teardown()");

@@ -45,6 +45,10 @@ export class RedosDetector implements Detector {
     return TOKENS.map((t) => ENCODER.encode(t));
   }
 
+  getSeeds(): Uint8Array[] {
+    return [];
+  }
+
   setup(): void {
     if (this.originals !== undefined) {
       throw new Error("RedosDetector.setup() called twice without teardown()");

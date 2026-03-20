@@ -163,7 +163,7 @@ pub(super) fn make_cmplog_bytes(data: &[u8]) -> CmplogBytes {
 /// Force the current stage to complete on the next `advance_stage()` call.
 ///
 /// # Panics
-/// Panics if no iterative stage (I2S, Grimoire, Unicode) is active.
+/// Panics if no iterative stage (I2S, Grimoire, Unicode, Json) is active.
 pub(super) fn force_single_iteration(fuzzer: &mut Fuzzer) {
     fuzzer.stage_state = match std::mem::replace(&mut fuzzer.stage_state, StageState::None) {
         StageState::I2S {
@@ -195,6 +195,15 @@ pub(super) fn force_single_iteration(fuzzer: &mut Fuzzer) {
             max_iterations: iteration + 1,
             metadata,
         },
+        StageState::Json {
+            corpus_id,
+            iteration,
+            ..
+        } => StageState::Json {
+            corpus_id,
+            iteration,
+            max_iterations: iteration + 1,
+        },
         _ => panic!("force_single_iteration: no iterative stage active"),
     };
 }
@@ -207,7 +216,10 @@ pub(super) struct TestFuzzerBuilder {
     grimoire: Option<bool>,
     unicode: Option<bool>,
     redqueen: Option<bool>,
+    json_mutations: Option<bool>,
     max_input_len: Option<u32>,
+    auto_seed: Option<bool>,
+    detector_seeds: Option<Vec<Buffer>>,
 }
 
 impl TestFuzzerBuilder {
@@ -217,7 +229,10 @@ impl TestFuzzerBuilder {
             grimoire: None,
             unicode: None,
             redqueen: None,
+            json_mutations: None,
             max_input_len: None,
+            auto_seed: None,
+            detector_seeds: None,
         }
     }
 
@@ -237,9 +252,24 @@ impl TestFuzzerBuilder {
         self
     }
 
+    pub(super) fn json_mutations(mut self, enabled: bool) -> Self {
+        self.json_mutations = Some(enabled);
+        self
+    }
+
     #[allow(dead_code)]
     pub(super) fn max_input_len(mut self, len: u32) -> Self {
         self.max_input_len = Some(len);
+        self
+    }
+
+    pub(super) fn auto_seed(mut self, enabled: bool) -> Self {
+        self.auto_seed = Some(enabled);
+        self
+    }
+
+    pub(super) fn detector_seeds(mut self, seeds: Vec<Buffer>) -> Self {
+        self.detector_seeds = Some(seeds);
         self
     }
 
@@ -251,8 +281,11 @@ impl TestFuzzerBuilder {
             grimoire: self.grimoire,
             unicode: self.unicode,
             redqueen: self.redqueen,
+            json_mutations: self.json_mutations,
+            auto_seed: self.auto_seed,
             dictionary_path: None,
             detector_tokens: None,
+            detector_seeds: self.detector_seeds,
         };
         let coverage_map: Buffer = vec![0u8; self.map_size].into();
         Fuzzer::new(coverage_map, Some(config), None, None).unwrap()
@@ -319,8 +352,10 @@ impl TestFuzzerBuilder {
     ) -> (Fuzzer, CorpusId) {
         cmplog::disable();
         cmplog::drain();
-        let has_feature_override =
-            self.grimoire.is_some() || self.unicode.is_some() || self.redqueen.is_some();
+        let has_feature_override = self.grimoire.is_some()
+            || self.unicode.is_some()
+            || self.redqueen.is_some()
+            || self.json_mutations.is_some();
         // Fuzzer::new (called by build) re-enables cmplog.
         let mut fuzzer = self.build();
         if has_feature_override {
@@ -379,8 +414,10 @@ impl TestFuzzerBuilder {
     pub(super) fn build_with_grimoire_entry(self, input: &[u8]) -> (Fuzzer, CorpusId) {
         cmplog::disable();
         cmplog::drain();
-        let has_feature_override =
-            self.grimoire.is_some() || self.unicode.is_some() || self.redqueen.is_some();
+        let has_feature_override = self.grimoire.is_some()
+            || self.unicode.is_some()
+            || self.redqueen.is_some()
+            || self.json_mutations.is_some();
         // Fuzzer::new (called by build) re-enables cmplog.
         let mut fuzzer = self.build();
         if has_feature_override {

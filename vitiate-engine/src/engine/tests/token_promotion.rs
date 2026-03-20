@@ -256,8 +256,11 @@ fn user_provided_tokens_present_in_state_with_cmplog_promotion() {
         grimoire: None,
         unicode: None,
         redqueen: None,
+        json_mutations: None,
+        auto_seed: None,
         dictionary_path: Some(dict_path.to_str().unwrap().to_string()),
         detector_tokens: None,
+        detector_seeds: None,
     };
     let mut fuzzer = crate::engine::Fuzzer::new(coverage_map, Some(config), None, None).unwrap();
     fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
@@ -316,8 +319,11 @@ fn user_tokens_do_not_count_toward_cmplog_cap() {
         grimoire: None,
         unicode: None,
         redqueen: None,
+        json_mutations: None,
+        auto_seed: None,
         dictionary_path: Some(dict_path.to_str().unwrap().to_string()),
         detector_tokens: None,
+        detector_seeds: None,
     };
     let mut fuzzer = crate::engine::Fuzzer::new(coverage_map, Some(config), None, None).unwrap();
     fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
@@ -367,12 +373,15 @@ fn detector_tokens_inserted_and_exempt_from_cap() {
         grimoire: None,
         unicode: None,
         redqueen: None,
+        json_mutations: None,
+        auto_seed: None,
         dictionary_path: None,
         detector_tokens: Some(vec![
             Buffer::from(b"__proto__".to_vec()),
             Buffer::from(b"constructor".to_vec()),
             Buffer::from(b"../".to_vec()),
         ]),
+        detector_seeds: None,
     };
     let mut fuzzer = crate::engine::Fuzzer::new(coverage_map, Some(config), None, None).unwrap();
     fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
@@ -442,12 +451,15 @@ fn duplicate_detector_tokens_do_not_cause_underflow() {
         grimoire: None,
         unicode: None,
         redqueen: None,
+        json_mutations: None,
+        auto_seed: None,
         dictionary_path: None,
         detector_tokens: Some(vec![
             Buffer::from(b"../".to_vec()),
             Buffer::from(b"../".to_vec()),
             Buffer::from(b"../".to_vec()),
         ]),
+        detector_seeds: None,
     };
     let mut fuzzer = crate::engine::Fuzzer::new(coverage_map, Some(config), None, None).unwrap();
     fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();

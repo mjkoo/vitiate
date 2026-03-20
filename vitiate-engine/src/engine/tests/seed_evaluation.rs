@@ -157,13 +157,7 @@ fn all_seeds_crash_without_coverage_returns_clear_error() {
         assert_eq!(result, IterationResult::Solution);
     }
 
-    // User seeds crashed → auto-seeds are queued. Drain them with Crash too.
-    for _ in 0..DEFAULT_SEEDS.len() {
-        let _input = fuzzer.get_next_input().unwrap();
-        let result = fuzzer.report_result(ExitKind::Crash, 1_000.0).unwrap();
-        assert_eq!(result, IterationResult::Solution);
-    }
-
+    // User seeds crashed, user seeds suppress default auto-seeds.
     // Next call should error - all seeds crashed, corpus empty.
     let result = fuzzer.get_next_input();
     assert!(

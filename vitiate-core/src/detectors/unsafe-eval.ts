@@ -25,6 +25,10 @@ export class UnsafeEvalDetector implements Detector {
     return TOKENS.map((t) => ENCODER.encode(t));
   }
 
+  getSeeds(): Uint8Array[] {
+    return [];
+  }
+
   setup(): void {
     if (
       this.originalEval !== undefined ||

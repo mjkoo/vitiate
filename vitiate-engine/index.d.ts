@@ -287,6 +287,16 @@ export interface FuzzerConfig {
    */
   redqueen?: boolean
   /**
+   * JSON mutation stage control.
+   * `true` = force enable, `false` = force disable, absent = auto-detect from corpus content.
+   */
+  jsonMutations?: boolean
+  /**
+   * Automatic seeding control. Default `true` when absent.
+   * When `false`, both detector seeds and default auto-seeds are suppressed.
+   */
+  autoSeed?: boolean
+  /**
    * Absolute path to an AFL/libfuzzer-format dictionary file.
    * If provided, tokens are parsed via `Tokens::from_file()` and seeded
    * into state metadata before any fuzz iterations execute.
@@ -299,6 +309,8 @@ export interface FuzzerConfig {
    * prevent CmpLog from re-discovering them.
    */
   detectorTokens?: Array<Buffer>
+  /** Detector-contributed seed inputs queued during seed composition. */
+  detectorSeeds?: Array<Buffer>
 }
 
 export interface FuzzerStats {

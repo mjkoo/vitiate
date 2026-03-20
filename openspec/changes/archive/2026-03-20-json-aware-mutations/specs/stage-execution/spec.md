@@ -1,8 +1,4 @@
-## Purpose
-
-Stage execution manages the multi-stage pipeline (Colorization, REDQUEEN, I2S, Generalization, Grimoire, Unicode, Json) that runs after calibration for interesting inputs. This capability defines the protocol for beginning, advancing, and aborting stages, the state machine lifecycle, mutation semantics, and execution counting.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Begin stage after calibration
 
@@ -78,45 +74,6 @@ It SHALL be valid to call `beginStage()` only after `calibrateFinish()` has comp
 - **WHEN** no stages can be entered (all conditions fail including JSON)
 - **THEN** `beginStage()` SHALL return `null`
 - **AND** `StageState` SHALL remain `None`
-
-#### Scenario: Generalization begins when I2S skipped and Grimoire enabled
-
-- **WHEN** `reportResult()` returned `Interesting` and calibration has completed
-- **AND** colorization was not started (REDQUEEN disabled or input too large)
-- **AND** `CmpValuesMetadata` is empty
-- **AND** Grimoire is enabled
-- **AND** the corpus entry qualifies for generalization (≤8192 bytes, has `MapNoveltiesMetadata`, not already generalized)
-- **THEN** `beginStage()` SHALL return a non-null `Buffer` containing the original corpus entry (for verification)
-- **AND** `StageState` SHALL transition to `Generalization`
-
-#### Scenario: beginStage called without pending calibration
-
-- **WHEN** `beginStage()` is called without a preceding `Interesting` result and completed calibration
-- **THEN** `beginStage()` SHALL return `null`
-
-#### Scenario: beginStage called during active stage
-
-- **WHEN** `beginStage()` is called while `StageState` is not `None` (any stage in progress)
-- **THEN** `beginStage()` SHALL return `null`
-- **AND** the active stage SHALL NOT be disrupted
-
-#### Scenario: Mutated input respects max input length
-
-- **WHEN** `beginStage()` generates an I2S-mutated input
-- **AND** the mutated result exceeds `maxInputLen`
-- **THEN** the returned buffer SHALL be truncated to `maxInputLen` bytes
-
-#### Scenario: Iteration count is between 1 and 128
-
-- **WHEN** `beginStage()` selects a random iteration count for I2S
-- **THEN** `max_iterations` SHALL be between 1 and 128 inclusive
-
-#### Scenario: I2SSpliceReplace mutation is a no-op
-
-- **WHEN** `beginStage()` applies `I2SSpliceReplace` to the cloned corpus entry
-- **AND** the mutation does not modify the input (e.g., no CmpLog operands match any bytes in the input)
-- **THEN** `beginStage()` SHALL still return the (unmodified) input as a `Buffer`
-- **AND** the stage SHALL proceed normally
 
 ### Requirement: Advance stage after each execution
 
@@ -269,43 +226,84 @@ The `exitKind` parameter SHALL only be `ExitKind.Ok` - crashes and timeouts are 
 - **AND** the iteration counter SHALL increment by 1
 - **AND** `total_execs` and `state.executions` SHALL each increment by 1
 
-#### Scenario: New coverage during stage adds to corpus without calibration
+### Requirement: StageState lifecycle
 
-- **WHEN** `advanceStage()` evaluates coverage and the input triggers new coverage
-- **THEN** the internally-stashed input SHALL be added to the corpus with `SchedulerTestcaseMetadata`
-- **AND** `scheduler.on_add()` SHALL be called for the new entry
-- **AND** calibration state SHALL NOT be prepared (no `calibration_corpus_id` set)
-- **AND** the stage SHALL continue with the next iteration (not interrupted)
+The `StageState` enum SHALL represent the current position in the stage pipeline. Valid transitions (listed as from → to):
 
-#### Scenario: CmpLog accumulator drained and discarded during non-dual-trace stages
+- `None` → `Colorization`: Via `beginStage()` when REDQUEEN enabled and input size permits.
+- `None` → `I2S`: Via `beginStage()` when REDQUEEN disabled/skipped and CmpLog data exists.
+- `None` → `Generalization`: Via `beginStage()` when I2S skipped and Grimoire enabled and input qualifies.
+- `None` → `Grimoire`: Via `beginStage()` when I2S skipped and Grimoire enabled and pre-existing metadata.
+- `None` → `Unicode`: Via `beginStage()` when prior stages skipped and unicode enabled.
+- `None` → `Json`: Via `beginStage()` when prior stages skipped and JSON mutations enabled and corpus entry passes `looks_like_json()`.
+- `Colorization` → `Colorization`: Via `advanceStage()` during binary search phases.
+- `Colorization` → `Redqueen`: Via `advanceStage()` when dual trace completes and candidates exist.
+- `Colorization` → `Generalization` / `Grimoire` / `Unicode` / `Json` / `None`: Via `advanceStage()` after dual trace, when REDQUEEN produces no candidates and subsequent stages apply. I2S is always skipped after colorization (`redqueen_ran_for_entry` is `true`).
+- `Redqueen` → `Redqueen`: Via `advanceStage()` when candidates remain.
+- `Redqueen` → `Generalization`: Via `advanceStage()` when candidates exhausted and Grimoire enabled and input qualifies.
+- `Redqueen` → `Grimoire`: Via `advanceStage()` when candidates exhausted and Grimoire enabled and pre-existing metadata.
+- `Redqueen` → `Unicode`: Via `advanceStage()` when candidates exhausted and Grimoire not applicable and unicode enabled.
+- `Redqueen` → `Json`: Via `advanceStage()` when candidates exhausted and prior post-REDQUEEN stages not applicable and JSON enabled and corpus entry passes `looks_like_json()`.
+- `Redqueen` → `None`: Via `advanceStage()` when candidates exhausted and no subsequent stages apply.
+- `I2S` → `I2S`: Via `advanceStage()` when iterations remain.
+- `I2S` → `Generalization`: Via `advanceStage()` when I2S completes and Grimoire enabled and input qualifies.
+- `I2S` → `Grimoire`: Via `advanceStage()` when I2S completes and Grimoire enabled and pre-existing metadata.
+- `I2S` → `Unicode`: Via `advanceStage()` when I2S completes and Grimoire not applicable and unicode enabled.
+- `I2S` → `Json`: Via `advanceStage()` when I2S completes and Grimoire and unicode not applicable and JSON enabled and corpus entry passes `looks_like_json()`.
+- `I2S` → `None`: Via `advanceStage()` when I2S completes and no subsequent stages apply.
+- `Generalization` → `Generalization`: Via `advanceStage()` while gap-finding phases continue.
+- `Generalization` → `Grimoire`: Via `advanceStage()` when generalization completes successfully.
+- `Generalization` → `None`: Via `advanceStage()` when generalization fails.
+- `Grimoire` → `Grimoire`: Via `advanceStage()` when iterations remain.
+- `Grimoire` → `Unicode`: Via `advanceStage()` when iterations exhausted and unicode applicable.
+- `Grimoire` → `Json`: Via `advanceStage()` when iterations exhausted and unicode not applicable and JSON enabled and corpus entry passes `looks_like_json()`.
+- `Grimoire` → `None`: Via `advanceStage()` when iterations exhausted and unicode and JSON not applicable.
+- `Unicode` → `Unicode`: Via `advanceStage()` when iterations remain.
+- `Unicode` → `Json`: Via `advanceStage()` when iterations exhausted and JSON enabled and corpus entry passes `looks_like_json()`.
+- `Unicode` → `None`: Via `advanceStage()` when iterations exhausted and JSON not applicable.
+- `Json` → `Json`: Via `advanceStage()` when iterations remain.
+- `Json` → `None`: Via `advanceStage()` when iterations exhausted.
+- Any → `None`: Via `abortStage()`.
 
-- **WHEN** `advanceStage()` is called after a stage execution that is NOT the colorization dual trace
-- **THEN** the CmpLog accumulator SHALL be drained
-- **AND** the drained entries SHALL be discarded (not stored in `AflppCmpValuesMetadata`)
+#### Scenario: Initial state is None
 
-#### Scenario: CmpLog accumulator retained during dual trace
+- **WHEN** a `Fuzzer` is constructed
+- **THEN** `StageState` SHALL be `None`
 
-- **WHEN** `advanceStage()` is called after the colorization dual trace execution
-- **THEN** the CmpLog accumulator SHALL be drained
-- **AND** the drained entries SHALL be stored as `new_cmpvals` in `AflppCmpValuesMetadata`
+#### Scenario: Full eight-stage pipeline lifecycle
 
-#### Scenario: Coverage map zeroed between stage executions
+- **WHEN** `beginStage()` starts a colorization stage (REDQUEEN enabled)
+- **AND** colorization completes and dual trace executes
+- **AND** REDQUEEN candidates are generated and exhausted
+- **AND** I2S is skipped (REDQUEEN ran)
+- **AND** Grimoire is enabled and generalization succeeds
+- **AND** Grimoire completes and unicode is enabled
+- **AND** unicode completes and JSON mutations are enabled and corpus entry passes `looks_like_json()`
+- **AND** JSON completes
+- **THEN** `StageState` transitions `None` → `Colorization` → ... → `Redqueen` → ... → `Generalization` → ... → `Grimoire` → ... → `Unicode` → ... → `Json` → ... → `None`
 
-- **WHEN** `advanceStage()` processes a stage execution result
-- **THEN** the coverage map SHALL be zeroed after evaluation
-- **AND** the next stage execution SHALL start with a clean coverage map
+#### Scenario: I2S-to-JSON pipeline (REDQUEEN disabled, Grimoire and unicode not applicable)
 
-#### Scenario: advanceStage called with no active stage
+- **WHEN** `beginStage()` starts an I2S stage (REDQUEEN disabled)
+- **AND** I2S completes
+- **AND** Grimoire stages are not applicable
+- **AND** unicode is disabled
+- **AND** JSON mutations are enabled and corpus entry passes `looks_like_json()`
+- **THEN** `StageState` transitions `None` → `I2S` → ... → `Json` → ... → `None`
 
-- **WHEN** `advanceStage()` is called and `StageState` is `None`
-- **THEN** the method SHALL return `null`
-- **AND** no coverage evaluation SHALL occur
+#### Scenario: Full pipeline with all features explicitly enabled
 
-#### Scenario: advanceStage enforces max input length
+- **WHEN** REDQUEEN is explicitly enabled (`redqueen: true`)
+- **AND** Grimoire is explicitly enabled (`grimoire: true`)
+- **AND** unicode is enabled
+- **AND** JSON mutations are enabled
+- **THEN** the full pipeline SHALL run: Colorization → Redqueen → (skip I2S) → Generalization → Grimoire → Unicode → Json → None
 
-- **WHEN** `advanceStage()` generates the next mutated input (I2S, Grimoire, unicode, or JSON)
-- **AND** the mutated result exceeds `maxInputLen`
-- **THEN** the returned buffer SHALL be truncated to `maxInputLen` bytes
+#### Scenario: Aborted JSON lifecycle
+
+- **WHEN** the JSON stage is active
+- **AND** the target crashes during a JSON execution
+- **THEN** `StageState` transitions from `Json` to `None` (abort)
 
 ### Requirement: Abort stage on crash or timeout
 
@@ -356,6 +354,18 @@ After `abortStage()` returns, the crash/timeout input and error are available in
 - **AND** `abortStage(ExitKind.Timeout)` is called
 - **THEN** `StageState` SHALL transition from `Grimoire` to `None`
 
+#### Scenario: Stage aborted on crash (I2S)
+
+- **WHEN** the target throws during an I2S stage execution
+- **AND** `abortStage(ExitKind.Crash)` is called
+- **THEN** `StageState` SHALL transition to `None`
+- **AND** the CmpLog accumulator SHALL be drained and discarded
+- **AND** the coverage map SHALL be zeroed
+- **AND** `total_execs` and `state.executions` SHALL each increment by 1
+- **AND** no corpus entry SHALL be added for the crashed execution
+- **AND** the stage input SHALL be added to the solutions corpus
+- **AND** `solutionCount` SHALL be incremented by 1
+
 #### Scenario: Stage aborted during JSON
 
 - **WHEN** the target crashes during a JSON stage execution
@@ -368,155 +378,10 @@ After `abortStage()` returns, the crash/timeout input and error are available in
 - **AND** the stage input SHALL be added to the solutions corpus
 - **AND** `solutionCount` SHALL be incremented by 1
 
-#### Scenario: Stage aborted on crash (I2S - unchanged)
-
-- **WHEN** the target throws during an I2S stage execution
-- **AND** `abortStage(ExitKind.Crash)` is called
-- **THEN** `StageState` SHALL transition to `None`
-- **AND** the CmpLog accumulator SHALL be drained and discarded
-- **AND** the coverage map SHALL be zeroed
-- **AND** `total_execs` and `state.executions` SHALL each increment by 1
-- **AND** no corpus entry SHALL be added for the crashed execution
-- **AND** the stage input SHALL be added to the solutions corpus
-- **AND** `solutionCount` SHALL be incremented by 1
-
 #### Scenario: abortStage is safe to call with no active stage
 
 - **WHEN** `abortStage()` is called and `StageState` is already `None`
 - **THEN** the method SHALL be a no-op (no error, no counter increments)
-
-### Requirement: Stage state machine lifecycle
-
-The `Fuzzer` SHALL maintain a `StageState` enum with the following variants:
-
-- `None`: No stage is active.
-- `Colorization { corpus_id, original_hash, original_input, changed_input, pending_ranges, taint_ranges, executions, max_executions, awaiting_dual_trace }`: A colorization stage is in progress.
-- `Redqueen { corpus_id, candidates, index }`: A REDQUEEN mutation stage is in progress.
-- `I2S { corpus_id, iteration, max_iterations }`: An I2S mutational stage is in progress.
-- `Generalization { corpus_id, novelties, payload, phase, candidate_range }`: A generalization stage is in progress.
-- `Grimoire { corpus_id, iteration, max_iterations }`: A Grimoire mutational stage is in progress.
-- `Unicode { corpus_id, iteration, max_iterations }`: A unicode mutational stage is in progress.
-- `Json { corpus_id, iteration, max_iterations }`: A JSON mutational stage is in progress.
-
-State transitions:
-- `None` → `Colorization`: Via `beginStage()` when REDQUEEN is enabled and input ≤ `MAX_COLORIZATION_LEN`.
-- `None` → `I2S`: Via `beginStage()` when colorization is skipped and CmpLog data is available.
-- `None` → `Generalization`: Via `beginStage()` when I2S is skipped, Grimoire is enabled, and the input qualifies.
-- `None` → `Grimoire`: Via `beginStage()` when I2S is skipped, Grimoire is enabled, and the input has pre-existing `GeneralizedInputMetadata`.
-- `None` → `Unicode`: Via `beginStage()` when prior stages skipped and unicode enabled.
-- `None` → `Json`: Via `beginStage()` when prior stages skipped and JSON mutations enabled and corpus entry passes `looks_like_json()`.
-- `Colorization` → `Colorization`: Via `advanceStage()` during binary search iterations.
-- `Colorization` → `Redqueen`: Via `advanceStage()` after dual trace, when candidates exist.
-- `Colorization` → `Generalization` / `Grimoire` / `Unicode` / `Json` / `None`: Via `advanceStage()` after dual trace, when REDQUEEN produces no candidates and subsequent stages apply. I2S is always skipped after colorization (`redqueen_ran_for_entry` is `true`).
-- `Redqueen` → `Redqueen`: Via `advanceStage()` when candidates remain.
-- `Redqueen` → `Generalization`: Via `advanceStage()` when candidates exhausted, Grimoire enabled, input qualifies.
-- `Redqueen` → `Grimoire`: Via `advanceStage()` when candidates exhausted, Grimoire enabled, pre-existing metadata.
-- `Redqueen` → `Unicode`: Via `advanceStage()` when candidates exhausted, Grimoire not applicable, unicode enabled.
-- `Redqueen` → `Json`: Via `advanceStage()` when candidates exhausted and prior post-REDQUEEN stages not applicable and JSON enabled and corpus entry passes `looks_like_json()`.
-- `Redqueen` → `None`: Via `advanceStage()` when candidates exhausted and no subsequent stages apply.
-- `I2S` → `I2S`: Via `advanceStage()` when iterations remain.
-- `I2S` → `Generalization`: Via `advanceStage()` when I2S completes and Grimoire enabled and input qualifies.
-- `I2S` → `Grimoire`: Via `advanceStage()` when I2S completes and Grimoire enabled and pre-existing metadata.
-- `I2S` → `Unicode`: Via `advanceStage()` when I2S completes and Grimoire not applicable and unicode enabled.
-- `I2S` → `Json`: Via `advanceStage()` when I2S completes and Grimoire and unicode not applicable and JSON enabled and corpus entry passes `looks_like_json()`.
-- `I2S` → `None`: Via `advanceStage()` when I2S completes and no subsequent stages apply.
-- `Generalization` → `Generalization`: Via `advanceStage()` while gap-finding phases continue.
-- `Generalization` → `Grimoire`: Via `advanceStage()` when generalization completes successfully.
-- `Generalization` → `None`: Via `advanceStage()` when generalization fails.
-- `Grimoire` → `Grimoire`: Via `advanceStage()` when iterations remain.
-- `Grimoire` → `Unicode`: Via `advanceStage()` when iterations exhausted and unicode applicable.
-- `Grimoire` → `Json`: Via `advanceStage()` when iterations exhausted and unicode not applicable and JSON enabled and corpus entry passes `looks_like_json()`.
-- `Grimoire` → `None`: Via `advanceStage()` when iterations exhausted and unicode and JSON not applicable.
-- `Unicode` → `Unicode`: Via `advanceStage()` when iterations remain.
-- `Unicode` → `Json`: Via `advanceStage()` when iterations exhausted and JSON enabled and corpus entry passes `looks_like_json()`.
-- `Unicode` → `None`: Via `advanceStage()` when iterations exhausted and JSON not applicable.
-- `Json` → `Json`: Via `advanceStage()` when iterations remain.
-- `Json` → `None`: Via `advanceStage()` when iterations exhausted.
-- Any → `None`: Via `abortStage()`.
-
-#### Scenario: Initial state is None
-
-- **WHEN** a `Fuzzer` is constructed
-- **THEN** `StageState` SHALL be `None`
-
-#### Scenario: Full eight-stage pipeline lifecycle
-
-- **WHEN** `beginStage()` starts a colorization stage (REDQUEEN enabled)
-- **AND** colorization completes and dual trace executes
-- **AND** REDQUEEN candidates are generated and exhausted
-- **AND** I2S is skipped (REDQUEEN ran)
-- **AND** Grimoire is enabled and generalization succeeds
-- **AND** Grimoire completes and unicode is enabled
-- **AND** unicode completes and JSON mutations are enabled and corpus entry passes `looks_like_json()`
-- **AND** JSON completes
-- **THEN** `StageState` transitions `None` → `Colorization` → ... → `Redqueen` → ... → `Generalization` → ... → `Grimoire` → ... → `Unicode` → ... → `Json` → ... → `None`
-
-#### Scenario: I2S-to-JSON pipeline (REDQUEEN disabled, Grimoire and unicode not applicable)
-
-- **WHEN** `beginStage()` starts an I2S stage (REDQUEEN disabled)
-- **AND** I2S completes
-- **AND** Grimoire stages are not applicable
-- **AND** unicode is disabled
-- **AND** JSON mutations are enabled and corpus entry passes `looks_like_json()`
-- **THEN** `StageState` transitions `None` → `I2S` → ... → `Json` → ... → `None`
-
-#### Scenario: Colorization-to-REDQUEEN without I2S
-
-- **WHEN** `beginStage()` starts colorization
-- **AND** colorization + dual trace complete
-- **AND** REDQUEEN generates candidates
-- **AND** REDQUEEN completes
-- **AND** Grimoire is disabled and unicode is disabled
-- **THEN** `StageState` transitions `None` → `Colorization` → ... → `Redqueen` → ... → `None`
-- **AND** I2S is never entered
-
-#### Scenario: Full pipeline with all features explicitly enabled
-
-- **WHEN** REDQUEEN is explicitly enabled (`redqueen: true`)
-- **AND** Grimoire is explicitly enabled (`grimoire: true`)
-- **AND** unicode is enabled
-- **AND** JSON mutations are enabled
-- **THEN** the full pipeline SHALL run: Colorization → Redqueen → (skip I2S) → Generalization → Grimoire → Unicode → Json → None
-
-#### Scenario: Aborted JSON lifecycle
-
-- **WHEN** the JSON stage is active
-- **AND** the target crashes during a JSON execution
-- **THEN** `StageState` transitions from `Json` to `None` (abort)
-
-#### Scenario: Unicode stage skipped when no valid UTF-8 regions
-
-- **WHEN** the unicode stage is about to begin for a corpus entry
-- **AND** `UnicodeIdentificationMetadata` is computed and contains no valid UTF-8 regions (empty list)
-- **THEN** the unicode stage SHALL NOT be entered
-- **AND** `beginStage()` or `advanceStage()` SHALL return `null` (pipeline complete)
-- **AND** `StageState` SHALL transition to `None`
-
-#### Scenario: First unicode mutation returns Skipped
-
-- **WHEN** the unicode stage begins and the first `mutate()` call returns `Skipped` (all stacked mutations skipped)
-- **THEN** the stage SHALL return the unmodified clone of the corpus entry as the candidate input
-- **AND** the stage SHALL proceed normally with remaining iterations
-
-### Requirement: I2S stage mutations use the original corpus entry
-
-Each I2S stage iteration SHALL clone the original corpus entry (identified by `corpus_id` in `StageState::I2S`) and apply a fresh `I2SSpliceReplace` mutation. The mutations SHALL NOT be cumulative - each iteration starts from the unmodified corpus entry, not from the previous iteration's mutated output.
-
-The `I2SSpliceReplace` mutator reads `CmpValuesMetadata` from the fuzzer state. Since `reportResult()` stores both `AflppCmpValuesMetadata` and `CmpValuesMetadata` (flattened from `orig_cmpvals`), no runtime adapter is needed - I2S reads `CmpValuesMetadata` directly. Since `advanceStage()` does not update the metadata (it discards CmpLog entries for non-dual-trace executions), the mutations throughout the stage are driven by the CmpLog data from the original `reportResult()` call.
-
-#### Scenario: Each iteration mutates the original entry
-
-- **WHEN** an I2S stage runs for 5 iterations
-- **THEN** each iteration SHALL start with a fresh clone of the original corpus entry
-- **AND** each iteration SHALL independently apply `I2SSpliceReplace` mutation
-- **AND** mutations SHALL NOT accumulate across iterations
-
-#### Scenario: Mutations driven by original CmpLog data
-
-- **WHEN** `AflppCmpValuesMetadata.orig_cmpvals` contains entries from the triggering execution
-- **AND** the I2S stage runs multiple iterations
-- **THEN** each iteration's `I2SSpliceReplace` mutation SHALL use the flattened `orig_cmpvals` data
-- **AND** the metadata SHALL NOT be overwritten by CmpLog entries from stage executions
 
 ### Requirement: Stage execution increments total executions counter
 

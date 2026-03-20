@@ -142,6 +142,17 @@ export class DetectorManager {
     return tokens;
   }
 
+  /** Collect seed inputs from all active detectors. */
+  getSeeds(): Buffer[] {
+    const seeds: Buffer[] = [];
+    for (const detector of this.detectors) {
+      for (const seed of detector.getSeeds()) {
+        seeds.push(Buffer.from(seed));
+      }
+    }
+    return seeds;
+  }
+
   setup(): void {
     for (const detector of this.detectors) {
       detector.setup();

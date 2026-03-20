@@ -14,6 +14,12 @@ pub struct FuzzerConfig {
     /// REDQUEEN transform-aware mutation control.
     /// `true` = force enable, `false` = force disable, absent = auto-detect (inverted: enabled for binary corpus).
     pub redqueen: Option<bool>,
+    /// JSON mutation stage control.
+    /// `true` = force enable, `false` = force disable, absent = auto-detect from corpus content.
+    pub json_mutations: Option<bool>,
+    /// Automatic seeding control. Default `true` when absent.
+    /// When `false`, both detector seeds and default auto-seeds are suppressed.
+    pub auto_seed: Option<bool>,
     /// Absolute path to an AFL/libfuzzer-format dictionary file.
     /// If provided, tokens are parsed via `Tokens::from_file()` and seeded
     /// into state metadata before any fuzz iterations execute.
@@ -23,6 +29,8 @@ pub struct FuzzerConfig {
     /// Exempt from `MAX_DICTIONARY_SIZE` cap; marked as pre-promoted to
     /// prevent CmpLog from re-discovering them.
     pub detector_tokens: Option<Vec<Buffer>>,
+    /// Detector-contributed seed inputs queued during seed composition.
+    pub detector_seeds: Option<Vec<Buffer>>,
 }
 
 #[napi]
