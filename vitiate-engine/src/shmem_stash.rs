@@ -30,7 +30,23 @@
 
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-use libafl_bolts::shmem::{ShMem, ShMemProvider, StdShMem, StdShMemProvider};
+use libafl_bolts::shmem::{ShMem, ShMemProvider};
+
+// On macOS, `PlatformShMemProvider` wraps a `ServedShMemProvider` that requires a
+// background `ShMemService` thread communicating over a Unix domain socket at a
+// hardcoded process-relative path.  This breaks when multiple fuzz tests run in
+// parallel (shared env var / socket collisions) and adds unnecessary complexity
+// for our use-case where only two processes (supervisor + child) share memory.
+//
+// `UnixShMemProvider` (= `CommonUnixShMemProvider`) uses System V IPC
+// (`shmget`/`shmat`/`shmctl`) which works on macOS without a server, supports
+// cross-process sharing via IPC key, and has kernel-managed reference counting.
+// On Linux this is already what `PlatformShMemProvider` resolves to, so no behavior
+// change there.
+#[cfg(windows)]
+use libafl_bolts::shmem::{PlatformShMem, PlatformShMemProvider};
+#[cfg(unix)]
+use libafl_bolts::shmem::{UnixShMem as PlatformShMem, UnixShMemProvider as PlatformShMemProvider};
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
@@ -75,9 +91,9 @@ pub(crate) struct ShmemView {
 // SAFETY: Access to the shmem region is synchronized via atomic operations
 // on the generation counter (odd/even seqlock protocol). The underlying memory
 // is process-global shared memory allocated by the OS. The raw pointer remains
-// valid for the lifetime of the StdShMem handle that produced it.
+// valid for the lifetime of the PlatformShMem handle that produced it.
 //
-// Lifetime invariant: The `ShmemStash` (which owns the `StdShMem` mapping)
+// Lifetime invariant: The `ShmemStash` (which owns the `PlatformShMem` mapping)
 // must outlive all `ShmemView` instances. In practice, both are held within
 // `runFuzzLoop`'s scope - the `ShmemHandle` (NAPI wrapper around `ShmemStash`)
 // is created first and dropped last.
@@ -227,7 +243,7 @@ impl ShmemView {
 
 /// Owns the shared memory mapping and provides access via [`ShmemView`].
 pub(crate) struct ShmemStash {
-    _shmem: StdShMem,
+    _shmem: PlatformShMem,
     view: ShmemView,
 }
 
@@ -237,7 +253,7 @@ impl ShmemStash {
     /// Writes the magic field and exports the shmem ID to the
     /// `VITIATE_SHMEM` environment variable.
     pub fn allocate(max_input_len: usize) -> napi::Result<Self> {
-        let mut provider = StdShMemProvider::new().map_err(|e| {
+        let mut provider = PlatformShMemProvider::new().map_err(|e| {
             Error::new(
                 Status::GenericFailure,
                 format!("shmem provider init failed: {e}"),
@@ -298,7 +314,7 @@ impl ShmemStash {
     /// Reads the `VITIATE_SHMEM` environment variable, attaches to the
     /// region, and validates the magic field.
     pub fn attach() -> napi::Result<Self> {
-        let mut provider = StdShMemProvider::new().map_err(|e| {
+        let mut provider = PlatformShMemProvider::new().map_err(|e| {
             Error::new(
                 Status::GenericFailure,
                 format!("shmem provider init failed: {e}"),
