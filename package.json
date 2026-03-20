@@ -26,6 +26,13 @@
     "docs:build": "turbo run build --filter=@vitiate/docs",
     "prepare": "lefthook install"
   },
+  "pnpm": {
+    "auditConfig": {
+      "ignoreGhsas": [
+        "GHSA-rf6f-7fwh-wjgh"
+      ]
+    }
+  },
   "devDependencies": {
     "@commitlint/cli": "^20.5.0",
     "@commitlint/config-conventional": "^20.5.0",
