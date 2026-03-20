@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.3.0](https://github.com/mjkoo/vitiate/compare/v0.2.0...v0.3.0) (2026-03-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* make instrumenting dependencies more ergonomic
+
+### Features
+
+* json-aware mutations ([2cb5fc4](https://github.com/mjkoo/vitiate/commit/2cb5fc48b4c75cbfe5fec608ad0bd945705b65b9))
+* prototype leak detector ([47b90c3](https://github.com/mjkoo/vitiate/commit/47b90c3d4737639523570829c9412feadb17b438))
+
+
+### Bug Fixes
+
+* make instrumenting dependencies more ergonomic ([e214a04](https://github.com/mjkoo/vitiate/commit/e214a04569d1c9cef4f5936142ec1fdcc56c9873))
+
 ## [0.2.0](https://github.com/mjkoo/vitiate/compare/v0.1.2...v0.2.0) (2026-03-20)
 
 
