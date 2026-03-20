@@ -6,18 +6,18 @@ import { parseDetectorsFlag } from "../cli.js";
 // ── Config schema: Tier 2 validation ────────────────────────────────────
 
 describe("Config schema: Tier 2 detectors", () => {
-  const originalOpts = process.env["VITIATE_FUZZ_OPTIONS"];
+  const originalOpts = process.env["VITIATE_OPTIONS"];
 
   afterEach(() => {
     if (originalOpts === undefined) {
-      delete process.env["VITIATE_FUZZ_OPTIONS"];
+      delete process.env["VITIATE_OPTIONS"];
     } else {
-      process.env["VITIATE_FUZZ_OPTIONS"] = originalOpts;
+      process.env["VITIATE_OPTIONS"] = originalOpts;
     }
   });
 
   it("accepts ssrf: true", () => {
-    process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+    process.env["VITIATE_OPTIONS"] = JSON.stringify({
       detectors: { ssrf: true },
     });
     const opts = getCliOptions();
@@ -25,7 +25,7 @@ describe("Config schema: Tier 2 detectors", () => {
   });
 
   it("accepts ssrf with options", () => {
-    process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+    process.env["VITIATE_OPTIONS"] = JSON.stringify({
       detectors: {
         ssrf: { blockedHosts: ["meta.internal"], allowedHosts: ["10.0.0.5"] },
       },
@@ -40,7 +40,7 @@ describe("Config schema: Tier 2 detectors", () => {
   });
 
   it("accepts redos: true", () => {
-    process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+    process.env["VITIATE_OPTIONS"] = JSON.stringify({
       detectors: { redos: true },
     });
     const opts = getCliOptions();
@@ -48,7 +48,7 @@ describe("Config schema: Tier 2 detectors", () => {
   });
 
   it("accepts redos with thresholdMs", () => {
-    process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+    process.env["VITIATE_OPTIONS"] = JSON.stringify({
       detectors: { redos: { thresholdMs: 50 } },
     });
     const opts = getCliOptions();
@@ -60,7 +60,7 @@ describe("Config schema: Tier 2 detectors", () => {
   });
 
   it("accepts unsafeEval: true", () => {
-    process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+    process.env["VITIATE_OPTIONS"] = JSON.stringify({
       detectors: { unsafeEval: true },
     });
     const opts = getCliOptions();
@@ -68,7 +68,7 @@ describe("Config schema: Tier 2 detectors", () => {
   });
 
   it("accepts unsafeEval: false", () => {
-    process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+    process.env["VITIATE_OPTIONS"] = JSON.stringify({
       detectors: { unsafeEval: false },
     });
     const opts = getCliOptions();
@@ -76,7 +76,7 @@ describe("Config schema: Tier 2 detectors", () => {
   });
 
   it("rejects unsafeEval options object", () => {
-    process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+    process.env["VITIATE_OPTIONS"] = JSON.stringify({
       detectors: { unsafeEval: { someOption: true } },
     });
     // Should fall back to defaults since validation fails
@@ -92,7 +92,7 @@ describe("Config schema: Tier 2 detectors", () => {
 
   it("accepts path-delimited blockedHosts string", () => {
     const delimiter = path.delimiter; // ":" on POSIX, ";" on Windows
-    process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+    process.env["VITIATE_OPTIONS"] = JSON.stringify({
       detectors: {
         ssrf: {
           blockedHosts: `meta.internal${delimiter}10.200.0.0/24`,

@@ -15,6 +15,8 @@ import {
   getCoverageMapSize,
   setProjectRoot,
   setDataDir,
+  setConfigFile,
+  isFuzzingMode,
 } from "./config.js";
 
 const require = createRequire(import.meta.url);
@@ -279,6 +281,35 @@ function rewriteHookedImports(
   return { code: ms.toString(), map: ms.generateMap({ hires: true }) };
 }
 
+/** Vitiate's own packages - always excluded from instrumentation and hook rewriting. */
+const VITIATE_PACKAGES = new Set([
+  "@vitiate/core",
+  "@vitiate/engine",
+  "@vitiate/swc-plugin",
+]);
+
+/**
+ * Check if a module ID belongs to one of the listed packages.
+ * Matches `/node_modules/<packageName>/` as a substring of the resolved
+ * module ID. The match is on path segment boundaries to prevent partial
+ * name matches (e.g., `flat` does not match `flatted`).
+ *
+ * Handles standard, pnpm, and nested node_modules layouts:
+ * - Standard: `node_modules/flatted/src/index.js`
+ * - pnpm: `node_modules/.pnpm/flatted@3.4.1/node_modules/flatted/src/index.js`
+ * - Nested: `node_modules/foo/node_modules/flatted/src/index.js`
+ */
+export function isListedPackage(
+  moduleId: string,
+  packages: string[],
+): string | undefined {
+  for (const pkg of packages) {
+    if (VITIATE_PACKAGES.has(pkg)) continue;
+    if (moduleId.includes(`/node_modules/${pkg}/`)) return pkg;
+  }
+  return undefined;
+}
+
 function resolveSwcPlugin(): { wasmPath: string; packageDir: string } {
   const pkgPath = require.resolve("@vitiate/swc-plugin/package.json");
   const pkg = require(pkgPath) as { main?: string };
@@ -328,7 +359,9 @@ function resolveSetupPath(): string {
  * ```
  */
 export function vitiatePlugin(options?: VitiatePluginOptions): Plugin[] {
-  const { include, exclude } = resolveInstrumentOptions(options?.instrument);
+  const { include, exclude, packages } = resolveInstrumentOptions(
+    options?.instrument,
+  );
   const fuzz = options?.fuzz;
   const dataDir = options?.dataDir;
   const coverageMapSize = options?.coverageMapSize;
@@ -342,8 +375,14 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin[] {
     require.resolve("@vitiate/engine/package.json"),
   );
   const { wasmPath, packageDir: vitiateSWCDir } = resolveSwcPlugin();
+  // Always exclude node_modules from include/exclude filter regardless of
+  // user-provided exclude patterns. Dependency instrumentation is exclusively
+  // via the `packages` option. Vitiate's own packages are excluded here by
+  // directory path; VITIATE_PACKAGES above excludes them by name in
+  // isListedPackage() - both layers are needed for defense-in-depth.
   const resolvedExclude = [
     ...exclude,
+    "**/node_modules/**",
     `${vitiateDir}/**`,
     `${vitiateNapiDir}/**`,
     `${vitiateSWCDir}/**`,
@@ -355,15 +394,13 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin[] {
   // rewriting must work across all user code including test files, even when
   // instrumentation scope is narrowed via include.
   const hooksFilter = createFilter(undefined, resolvedExclude);
-  // Heuristic: if no user-provided exclude pattern mentions "node_modules",
-  // assume the user wants to instrument dependencies. We check the original
-  // exclude array (not resolvedExclude, which includes vitiate's own dirs).
-  const nodeModulesExcluded = exclude.some((pattern) =>
-    pattern.includes("node_modules"),
-  );
   const setupPath = resolveSetupPath();
 
   let swcModule: Promise<typeof import("@swc/core")> | undefined;
+
+  // Track which listed packages were actually seen during transforms
+  // so we can warn about typos or missing packages at the end.
+  const seenPackages = new Set<string>();
 
   // Rewrite named imports of hooked built-in modules so they read from
   // the CJS module object (where detector hooks are installed) instead of
@@ -381,8 +418,11 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin[] {
       // Skip virtual modules and non-JS/TS files unconditionally.
       if (id.startsWith("\0")) return null;
       if (!JS_TS_EXTENSIONS.test(id)) return null;
-      // Apply the exclude-only filter (respects user's exclude config).
-      if (!hooksFilter(id)) return null;
+      // Listed packages bypass the exclude filter so detector import
+      // rewriting works in instrumented dependencies.
+      const matchedPackage =
+        packages.length > 0 ? isListedPackage(id, packages) : undefined;
+      if (!matchedPackage && !hooksFilter(id)) return null;
       return rewriteHookedImports(code);
     },
   };
@@ -390,6 +430,10 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin[] {
   const instrumentPlugin: Plugin = {
     name: "vitiate:instrument",
     enforce: "post",
+
+    buildStart() {
+      seenPackages.clear();
+    },
 
     config(config) {
       // Resolve the Vite project root and store as module-scoped state
@@ -406,33 +450,111 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin[] {
         setCoverageMapSize(coverageMapSize);
       }
 
-      // Serialize FuzzOptions as VITIATE_FUZZ_OPTIONS
-      if (fuzz && !process.env["VITIATE_FUZZ_OPTIONS"]) {
+      // Serialize FuzzOptions as VITIATE_OPTIONS
+      if (fuzz && !process.env["VITIATE_OPTIONS"]) {
         const serialized = JSON.stringify(fuzz);
         if (serialized !== "{}") {
-          process.env["VITIATE_FUZZ_OPTIONS"] = serialized;
+          process.env["VITIATE_OPTIONS"] = serialized;
         }
       }
 
-      // When node_modules are not excluded, tell Vitest to inline all
-      // dependencies through the Vite transform pipeline so they reach
-      // our transform hooks for instrumentation and hook rewriting.
+      // Tell Vitest to inline listed packages through the Vite transform
+      // pipeline so they reach our transform hooks for instrumentation and
+      // hook rewriting. Each package gets a regex matching its node_modules
+      // path. Vite's mergeConfig concatenates arrays, so these are appended
+      // to user-provided entries.
       // The setting MUST be inside the `test` key - Vitest's test module
       // resolver reads from viteConfig.test.server.deps, not the top-level
       // viteConfig.server.deps. Cast required because `test.server.deps`
       // is a Vitest extension absent from Vite's UserConfig type.
+      const escapeRegex = (s: string) =>
+        s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const inlinePatterns: RegExp[] = packages
+        .filter((pkg) => !VITIATE_PACKAGES.has(pkg))
+        .map((pkg) => new RegExp(`/node_modules/${escapeRegex(pkg)}/`));
+
       return {
         test: {
           setupFiles: [setupPath],
-          ...(!nodeModulesExcluded
-            ? { server: { deps: { inline: true } } }
+          ...(inlinePatterns.length > 0
+            ? { server: { deps: { inline: inlinePatterns } } }
             : {}),
         },
       } as Record<string, unknown>;
     },
 
+    configResolved(resolvedConfig) {
+      // Capture the resolved config file path for forwarding to child
+      // processes via spawnChild. configFile is the absolute path to
+      // the config file, or false if no config file was used.
+      const configFile = (
+        resolvedConfig as unknown as { configFile: string | false }
+      ).configFile;
+      if (typeof configFile === "string") {
+        setConfigFile(configFile);
+      }
+
+      // Early coverage map initialization - Vite awaits configResolved
+      // (including async hooks) before module resolution, transforms,
+      // or evaluation. This guarantees globals are available before any
+      // instrumented code (including inlined dependency modules) can execute.
+      const resolvedMapSize = getCoverageMapSize();
+
+      if (isFuzzingMode()) {
+        // Fuzz mode: load @vitiate/engine napi addon and create
+        // Rust-backed buffer for zero-copy feedback to the fuzzing engine.
+        let createCoverageMap: (size: number) => Buffer;
+        try {
+          ({ createCoverageMap } = require("@vitiate/engine") as {
+            createCoverageMap: (size: number) => Buffer;
+          });
+        } catch (e) {
+          throw new Error(
+            `vitiate: failed to load @vitiate/engine native addon. ` +
+              `Are prebuilt binaries available for your platform?`,
+            { cause: e },
+          );
+        }
+        globalThis.__vitiate_cov = createCoverageMap(resolvedMapSize);
+      } else {
+        // Regression mode: plain Uint8Array that absorbs counter writes.
+        globalThis.__vitiate_cov = new Uint8Array(resolvedMapSize);
+      }
+
+      // Early trace function initialization - set up stable forwarding
+      // wrappers that delegate to replaceable implementation variables.
+      // The wrapper function references never change, preserving identity
+      // for modules that cache them at module scope during early evaluation.
+      globalThis.__vitiate_cmplog_write_impl = (
+        _l: unknown,
+        _r: unknown,
+        _c: number,
+        _o: number,
+      ) => {};
+      globalThis.__vitiate_cmplog_reset_counts_impl = () => {};
+
+      globalThis.__vitiate_cmplog_write = (
+        left: unknown,
+        right: unknown,
+        cmpId: number,
+        opId: number,
+      ) => {
+        globalThis.__vitiate_cmplog_write_impl(left, right, cmpId, opId);
+      };
+      globalThis.__vitiate_cmplog_reset_counts = () => {
+        globalThis.__vitiate_cmplog_reset_counts_impl();
+      };
+    },
+
     async transform(code, id) {
-      if (!instrumentFilter(id)) return null;
+      // Check packages list first - listed packages bypass include/exclude filter
+      const matchedPackage =
+        packages.length > 0 ? isListedPackage(id, packages) : undefined;
+      if (!matchedPackage && !instrumentFilter(id)) return null;
+
+      if (matchedPackage) {
+        seenPackages.add(matchedPackage);
+      }
 
       swcModule ??= import("@swc/core");
       const { transform } = await swcModule;
@@ -463,6 +585,17 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin[] {
         code: result.code,
         map: result.map ?? undefined,
       };
+    },
+
+    buildEnd() {
+      for (const pkg of packages) {
+        if (VITIATE_PACKAGES.has(pkg)) continue;
+        if (!seenPackages.has(pkg)) {
+          process.stderr.write(
+            `vitiate: warning: package "${pkg}" was listed in instrument.packages but no modules from it were transformed. Is the package installed?\n`,
+          );
+        }
+      }
     },
   };
 

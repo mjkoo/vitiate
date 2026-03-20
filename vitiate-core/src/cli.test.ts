@@ -482,14 +482,14 @@ describe("parseDetectorsFlag", () => {
     });
   });
 
-  it("end-to-end: schema coerces CLI string to array via VITIATE_FUZZ_OPTIONS", () => {
+  it("end-to-end: schema coerces CLI string to array via VITIATE_OPTIONS", () => {
     // Simulate: CLI produces raw string → JSON env var → getCliOptions schema coercion
     const cliResult = parseDetectorsFlag(
       `pathTraversal.deniedPaths=/etc/passwd${path.delimiter}/proc/self/environ`,
     );
-    const prev = process.env["VITIATE_FUZZ_OPTIONS"];
+    const prev = process.env["VITIATE_OPTIONS"];
     try {
-      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({
         detectors: cliResult,
       });
       const options = getCliOptions();
@@ -501,28 +501,28 @@ describe("parseDetectorsFlag", () => {
       }
     } finally {
       if (prev === undefined) {
-        delete process.env["VITIATE_FUZZ_OPTIONS"];
+        delete process.env["VITIATE_OPTIONS"];
       } else {
-        process.env["VITIATE_FUZZ_OPTIONS"] = prev;
+        process.env["VITIATE_OPTIONS"] = prev;
       }
     }
   });
 });
 
 describe("CLI env var forwarding", () => {
-  const originalOpts = process.env["VITIATE_FUZZ_OPTIONS"];
+  const originalOpts = process.env["VITIATE_OPTIONS"];
 
   afterEach(() => {
     if (originalOpts === undefined) {
-      delete process.env["VITIATE_FUZZ_OPTIONS"];
+      delete process.env["VITIATE_OPTIONS"];
     } else {
-      process.env["VITIATE_FUZZ_OPTIONS"] = originalOpts;
+      process.env["VITIATE_OPTIONS"] = originalOpts;
     }
   });
 
-  it("getCliOptions round-trips through VITIATE_FUZZ_OPTIONS", () => {
+  it("getCliOptions round-trips through VITIATE_OPTIONS", () => {
     const options = { fuzzExecs: 5000, maxLen: 2048, seed: 99 };
-    process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify(options);
+    process.env["VITIATE_OPTIONS"] = JSON.stringify(options);
     const parsed = getCliOptions();
     expect(parsed.fuzzExecs).toBe(5000);
     expect(parsed.maxLen).toBe(2048);
@@ -530,7 +530,7 @@ describe("CLI env var forwarding", () => {
   });
 
   it("getCliOptions returns empty object when env var is not set", () => {
-    delete process.env["VITIATE_FUZZ_OPTIONS"];
+    delete process.env["VITIATE_OPTIONS"];
     expect(getCliOptions()).toEqual({});
   });
 });
@@ -795,7 +795,7 @@ describe("fuzz subcommand flags", () => {
 describe("fuzz --detectors flag", () => {
   setupCliDispatchTest();
 
-  it("--detectors serializes to VITIATE_FUZZ_OPTIONS env var", async () => {
+  it("--detectors serializes to VITIATE_OPTIONS env var", async () => {
     process.argv = [
       "node",
       "vitiate",
@@ -809,7 +809,7 @@ describe("fuzz --detectors flag", () => {
     expect(mockSpawnSync).toHaveBeenCalledOnce();
     const [, , options] = mockSpawnSync.mock.calls[0]!;
     const env = (options as { env: Record<string, string> }).env;
-    const fuzzOptions = JSON.parse(env["VITIATE_FUZZ_OPTIONS"]!);
+    const fuzzOptions = JSON.parse(env["VITIATE_OPTIONS"]!);
     expect(fuzzOptions.detectors.prototypePollution).toBe(true);
     expect(fuzzOptions.detectors.pathTraversal).toBe(true);
     expect(fuzzOptions.detectors.commandInjection).toBe(false);
@@ -819,7 +819,7 @@ describe("fuzz --detectors flag", () => {
 describe("regression and optimize subcommand flags", () => {
   setupCliDispatchTest();
 
-  it("regression --detectors sets VITIATE_FUZZ_OPTIONS", async () => {
+  it("regression --detectors sets VITIATE_OPTIONS", async () => {
     process.argv = [
       "node",
       "vitiate",
@@ -833,14 +833,14 @@ describe("regression and optimize subcommand flags", () => {
     expect(mockSpawnSync).toHaveBeenCalledOnce();
     const [, , options] = mockSpawnSync.mock.calls[0]!;
     const env = (options as { env: Record<string, string> }).env;
-    const fuzzOptions = JSON.parse(env["VITIATE_FUZZ_OPTIONS"]!);
+    const fuzzOptions = JSON.parse(env["VITIATE_OPTIONS"]!);
     expect(fuzzOptions.detectors.prototypePollution).toBe(true);
     // regression should NOT set VITIATE_FUZZ or VITIATE_OPTIMIZE
     expect(env["VITIATE_FUZZ"]).toBeUndefined();
     expect(env["VITIATE_OPTIMIZE"]).toBeUndefined();
   });
 
-  it("optimize --detectors sets VITIATE_FUZZ_OPTIONS and VITIATE_OPTIMIZE", async () => {
+  it("optimize --detectors sets VITIATE_OPTIONS and VITIATE_OPTIMIZE", async () => {
     process.argv = [
       "node",
       "vitiate",
@@ -855,7 +855,7 @@ describe("regression and optimize subcommand flags", () => {
     const [, , options] = mockSpawnSync.mock.calls[0]!;
     const env = (options as { env: Record<string, string> }).env;
     expect(env["VITIATE_OPTIMIZE"]).toBe("1");
-    const fuzzOptions = JSON.parse(env["VITIATE_FUZZ_OPTIONS"]!);
+    const fuzzOptions = JSON.parse(env["VITIATE_OPTIONS"]!);
     expect(fuzzOptions.detectors.pathTraversal).toBe(true);
   });
 

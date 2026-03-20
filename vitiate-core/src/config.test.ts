@@ -24,6 +24,9 @@ import {
   getCoverageMapSize,
   setCoverageMapSize,
   resetCoverageMapSize,
+  setConfigFile,
+  getConfigFile,
+  resetConfigFile,
 } from "./config.js";
 
 describe("config", () => {
@@ -453,7 +456,7 @@ describe("config", () => {
         "VITIATE_SUPERVISOR",
         "VITIATE_SHMEM",
         "VITIATE_SHMEM_SIZE",
-        "VITIATE_FUZZ_OPTIONS",
+        "VITIATE_OPTIONS",
         "VITIATE_CLI_IPC",
         "VITIATE_RESULTS_FILE",
       ];
@@ -483,28 +486,28 @@ describe("config", () => {
   });
 
   describe("getCliOptions", () => {
-    const originalOpts = process.env["VITIATE_FUZZ_OPTIONS"];
+    const originalOpts = process.env["VITIATE_OPTIONS"];
 
     afterEach(() => {
       if (originalOpts === undefined) {
-        delete process.env["VITIATE_FUZZ_OPTIONS"];
+        delete process.env["VITIATE_OPTIONS"];
       } else {
-        process.env["VITIATE_FUZZ_OPTIONS"] = originalOpts;
+        process.env["VITIATE_OPTIONS"] = originalOpts;
       }
     });
 
     it("returns empty object when env var is not set", () => {
-      delete process.env["VITIATE_FUZZ_OPTIONS"];
+      delete process.env["VITIATE_OPTIONS"];
       expect(getCliOptions()).toEqual({});
     });
 
     it("returns empty object when env var is empty", () => {
-      process.env["VITIATE_FUZZ_OPTIONS"] = "";
+      process.env["VITIATE_OPTIONS"] = "";
       expect(getCliOptions()).toEqual({});
     });
 
     it("parses valid JSON options", () => {
-      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({
         fuzzExecs: 1000,
         maxLen: 4096,
         seed: 42,
@@ -524,14 +527,14 @@ describe("config", () => {
       }) as typeof process.stderr.write;
 
       try {
-        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        process.env["VITIATE_OPTIONS"] = JSON.stringify({
           fuzzExecs: "not-a-number",
           maxLen: 4096,
         });
         const opts = getCliOptions();
         expect(opts).toEqual({});
         expect(chunks.length).toBe(1);
-        expect(chunks[0]).toContain("VITIATE_FUZZ_OPTIONS.fuzzExecs");
+        expect(chunks[0]).toContain("VITIATE_OPTIONS.fuzzExecs");
       } finally {
         process.stderr.write = originalWrite;
       }
@@ -546,13 +549,13 @@ describe("config", () => {
       }) as typeof process.stderr.write;
 
       try {
-        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        process.env["VITIATE_OPTIONS"] = JSON.stringify({
           fuzzExecs: -1,
         });
         const opts = getCliOptions();
         expect(opts).toEqual({});
         expect(chunks.length).toBe(1);
-        expect(chunks[0]).toContain("VITIATE_FUZZ_OPTIONS.fuzzExecs");
+        expect(chunks[0]).toContain("VITIATE_OPTIONS.fuzzExecs");
       } finally {
         process.stderr.write = originalWrite;
       }
@@ -567,13 +570,13 @@ describe("config", () => {
       }) as typeof process.stderr.write;
 
       try {
-        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        process.env["VITIATE_OPTIONS"] = JSON.stringify({
           fuzzExecs: 1.5,
         });
         const opts = getCliOptions();
         expect(opts).toEqual({});
         expect(chunks.length).toBe(1);
-        expect(chunks[0]).toContain("VITIATE_FUZZ_OPTIONS.fuzzExecs");
+        expect(chunks[0]).toContain("VITIATE_OPTIONS.fuzzExecs");
       } finally {
         process.stderr.write = originalWrite;
       }
@@ -588,13 +591,13 @@ describe("config", () => {
       }) as typeof process.stderr.write;
 
       try {
-        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        process.env["VITIATE_OPTIONS"] = JSON.stringify({
           maxLen: 0,
         });
         const opts = getCliOptions();
         expect(opts).toEqual({});
         expect(chunks.length).toBe(1);
-        expect(chunks[0]).toContain("VITIATE_FUZZ_OPTIONS.maxLen");
+        expect(chunks[0]).toContain("VITIATE_OPTIONS.maxLen");
       } finally {
         process.stderr.write = originalWrite;
       }
@@ -609,7 +612,7 @@ describe("config", () => {
       }) as typeof process.stderr.write;
 
       try {
-        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        process.env["VITIATE_OPTIONS"] = JSON.stringify({
           timeoutMs: 0,
           minimizeTimeLimitMs: 0,
         });
@@ -623,14 +626,14 @@ describe("config", () => {
     });
 
     it("parses grimoire: true", () => {
-      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({
         grimoire: true,
       });
       expect(getCliOptions()).toEqual({ grimoire: true });
     });
 
     it("parses grimoire: false", () => {
-      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({
         grimoire: false,
       });
       expect(getCliOptions()).toEqual({ grimoire: false });
@@ -645,14 +648,14 @@ describe("config", () => {
       }) as typeof process.stderr.write;
 
       try {
-        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        process.env["VITIATE_OPTIONS"] = JSON.stringify({
           grimoire: "true",
           fuzzExecs: 100,
         });
         const opts = getCliOptions();
         expect(opts).toEqual({});
         expect(chunks.length).toBe(1);
-        expect(chunks[0]).toContain("VITIATE_FUZZ_OPTIONS.grimoire");
+        expect(chunks[0]).toContain("VITIATE_OPTIONS.grimoire");
       } finally {
         process.stderr.write = originalWrite;
       }
@@ -667,7 +670,7 @@ describe("config", () => {
       }) as typeof process.stderr.write;
 
       try {
-        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        process.env["VITIATE_OPTIONS"] = JSON.stringify({
           grimoire: null,
           fuzzExecs: 100,
         });
@@ -680,21 +683,21 @@ describe("config", () => {
     });
 
     it("omits grimoire when key is absent from input", () => {
-      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({ fuzzExecs: 100 });
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({ fuzzExecs: 100 });
       const opts = getCliOptions();
       expect(opts).toEqual({ fuzzExecs: 100 });
       expect("grimoire" in opts).toBe(false);
     });
 
     it("parses unicode: true", () => {
-      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({
         unicode: true,
       });
       expect(getCliOptions()).toEqual({ unicode: true });
     });
 
     it("parses unicode: false", () => {
-      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({
         unicode: false,
       });
       expect(getCliOptions()).toEqual({ unicode: false });
@@ -709,14 +712,14 @@ describe("config", () => {
       }) as typeof process.stderr.write;
 
       try {
-        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        process.env["VITIATE_OPTIONS"] = JSON.stringify({
           unicode: "true",
           fuzzExecs: 100,
         });
         const opts = getCliOptions();
         expect(opts).toEqual({});
         expect(chunks.length).toBe(1);
-        expect(chunks[0]).toContain("VITIATE_FUZZ_OPTIONS.unicode");
+        expect(chunks[0]).toContain("VITIATE_OPTIONS.unicode");
       } finally {
         process.stderr.write = originalWrite;
       }
@@ -731,7 +734,7 @@ describe("config", () => {
       }) as typeof process.stderr.write;
 
       try {
-        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        process.env["VITIATE_OPTIONS"] = JSON.stringify({
           unicode: null,
           fuzzExecs: 100,
         });
@@ -744,20 +747,20 @@ describe("config", () => {
     });
 
     it("omits unicode when key is absent from input", () => {
-      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({ fuzzExecs: 100 });
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({ fuzzExecs: 100 });
       const opts = getCliOptions();
       expect("unicode" in opts).toBe(false);
     });
 
     it("parses redqueen: true", () => {
-      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({
         redqueen: true,
       });
       expect(getCliOptions()).toEqual({ redqueen: true });
     });
 
     it("parses redqueen: false", () => {
-      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({
         redqueen: false,
       });
       expect(getCliOptions()).toEqual({ redqueen: false });
@@ -772,21 +775,21 @@ describe("config", () => {
       }) as typeof process.stderr.write;
 
       try {
-        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        process.env["VITIATE_OPTIONS"] = JSON.stringify({
           redqueen: "true",
           fuzzExecs: 100,
         });
         const opts = getCliOptions();
         expect(opts).toEqual({});
         expect(chunks.length).toBe(1);
-        expect(chunks[0]).toContain("VITIATE_FUZZ_OPTIONS.redqueen");
+        expect(chunks[0]).toContain("VITIATE_OPTIONS.redqueen");
       } finally {
         process.stderr.write = originalWrite;
       }
     });
 
     it("omits redqueen when key is absent from input", () => {
-      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({ fuzzExecs: 100 });
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({ fuzzExecs: 100 });
       const opts = getCliOptions();
       expect("redqueen" in opts).toBe(false);
     });
@@ -800,11 +803,11 @@ describe("config", () => {
       }) as typeof process.stderr.write;
 
       try {
-        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({ grimoire: 1 });
+        process.env["VITIATE_OPTIONS"] = JSON.stringify({ grimoire: 1 });
         const opts = getCliOptions();
         expect(opts).toEqual({});
         expect(chunks.length).toBe(1);
-        expect(chunks[0]).toContain("VITIATE_FUZZ_OPTIONS.grimoire");
+        expect(chunks[0]).toContain("VITIATE_OPTIONS.grimoire");
       } finally {
         process.stderr.write = originalWrite;
       }
@@ -819,11 +822,11 @@ describe("config", () => {
       }) as typeof process.stderr.write;
 
       try {
-        process.env["VITIATE_FUZZ_OPTIONS"] = "not-json";
+        process.env["VITIATE_OPTIONS"] = "not-json";
         expect(getCliOptions()).toEqual({});
         expect(chunks.length).toBe(1);
         expect(chunks[0]).toContain(
-          "vitiate: warning: invalid VITIATE_FUZZ_OPTIONS JSON:",
+          "vitiate: warning: invalid VITIATE_OPTIONS JSON:",
         );
       } finally {
         process.stderr.write = originalWrite;
@@ -831,7 +834,7 @@ describe("config", () => {
     });
 
     it("strips unknown fields from the output", () => {
-      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({
         fuzzExecs: 100,
         unknownField: "hello",
       });
@@ -849,7 +852,7 @@ describe("config", () => {
       }) as typeof process.stderr.write;
 
       try {
-        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        process.env["VITIATE_OPTIONS"] = JSON.stringify({
           fuzzExecs: "bad",
           grimoire: 42,
         });
@@ -967,14 +970,14 @@ describe("config", () => {
   });
 
   describe("getCliOptions VITIATE_FUZZ_TIME integration", () => {
-    const originalOpts = process.env["VITIATE_FUZZ_OPTIONS"];
+    const originalOpts = process.env["VITIATE_OPTIONS"];
     const originalFuzzTime = process.env["VITIATE_FUZZ_TIME"];
 
     afterEach(() => {
       if (originalOpts === undefined) {
-        delete process.env["VITIATE_FUZZ_OPTIONS"];
+        delete process.env["VITIATE_OPTIONS"];
       } else {
-        process.env["VITIATE_FUZZ_OPTIONS"] = originalOpts;
+        process.env["VITIATE_OPTIONS"] = originalOpts;
       }
       if (originalFuzzTime === undefined) {
         delete process.env["VITIATE_FUZZ_TIME"];
@@ -983,8 +986,8 @@ describe("config", () => {
       }
     });
 
-    it("VITIATE_FUZZ_TIME overrides VITIATE_FUZZ_OPTIONS.fuzzTimeMs", () => {
-      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+    it("VITIATE_FUZZ_TIME overrides VITIATE_OPTIONS.fuzzTimeMs", () => {
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({
         fuzzTimeMs: 60000,
         fuzzExecs: 100,
       });
@@ -994,14 +997,14 @@ describe("config", () => {
       expect(opts.fuzzExecs).toBe(100);
     });
 
-    it("VITIATE_FUZZ_TIME works alone without VITIATE_FUZZ_OPTIONS", () => {
-      delete process.env["VITIATE_FUZZ_OPTIONS"];
+    it("VITIATE_FUZZ_TIME works alone without VITIATE_OPTIONS", () => {
+      delete process.env["VITIATE_OPTIONS"];
       process.env["VITIATE_FUZZ_TIME"] = "30";
       const opts = getCliOptions();
       expect(opts.fuzzTimeMs).toBe(30000);
     });
 
-    it("valid VITIATE_FUZZ_TIME applies when VITIATE_FUZZ_OPTIONS has invalid JSON", () => {
+    it("valid VITIATE_FUZZ_TIME applies when VITIATE_OPTIONS has invalid JSON", () => {
       const chunks: string[] = [];
       const originalWrite = process.stderr.write;
       process.stderr.write = ((chunk: string) => {
@@ -1010,18 +1013,18 @@ describe("config", () => {
       }) as typeof process.stderr.write;
 
       try {
-        process.env["VITIATE_FUZZ_OPTIONS"] = "not-json";
+        process.env["VITIATE_OPTIONS"] = "not-json";
         process.env["VITIATE_FUZZ_TIME"] = "30";
         const opts = getCliOptions();
         expect(opts.fuzzTimeMs).toBe(30000);
         expect(chunks.length).toBe(1);
-        expect(chunks[0]).toContain("VITIATE_FUZZ_OPTIONS");
+        expect(chunks[0]).toContain("VITIATE_OPTIONS");
       } finally {
         process.stderr.write = originalWrite;
       }
     });
 
-    it("invalid VITIATE_FUZZ_TIME does not clobber valid VITIATE_FUZZ_OPTIONS.fuzzTimeMs", () => {
+    it("invalid VITIATE_FUZZ_TIME does not clobber valid VITIATE_OPTIONS.fuzzTimeMs", () => {
       const chunks: string[] = [];
       const originalWrite = process.stderr.write;
       process.stderr.write = ((chunk: string) => {
@@ -1030,7 +1033,7 @@ describe("config", () => {
       }) as typeof process.stderr.write;
 
       try {
-        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        process.env["VITIATE_OPTIONS"] = JSON.stringify({
           fuzzTimeMs: 60000,
         });
         process.env["VITIATE_FUZZ_TIME"] = "not-a-number";
@@ -1131,14 +1134,14 @@ describe("config", () => {
   });
 
   describe("getCliOptions VITIATE_FUZZ_EXECS integration", () => {
-    const originalOpts = process.env["VITIATE_FUZZ_OPTIONS"];
+    const originalOpts = process.env["VITIATE_OPTIONS"];
     const originalFuzzExecs = process.env["VITIATE_FUZZ_EXECS"];
 
     afterEach(() => {
       if (originalOpts === undefined) {
-        delete process.env["VITIATE_FUZZ_OPTIONS"];
+        delete process.env["VITIATE_OPTIONS"];
       } else {
-        process.env["VITIATE_FUZZ_OPTIONS"] = originalOpts;
+        process.env["VITIATE_OPTIONS"] = originalOpts;
       }
       if (originalFuzzExecs === undefined) {
         delete process.env["VITIATE_FUZZ_EXECS"];
@@ -1147,8 +1150,8 @@ describe("config", () => {
       }
     });
 
-    it("VITIATE_FUZZ_EXECS overrides VITIATE_FUZZ_OPTIONS.fuzzExecs", () => {
-      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+    it("VITIATE_FUZZ_EXECS overrides VITIATE_OPTIONS.fuzzExecs", () => {
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({
         fuzzExecs: 100000,
       });
       process.env["VITIATE_FUZZ_EXECS"] = "50000";
@@ -1156,14 +1159,14 @@ describe("config", () => {
       expect(opts.fuzzExecs).toBe(50000);
     });
 
-    it("VITIATE_FUZZ_EXECS works alone without VITIATE_FUZZ_OPTIONS", () => {
-      delete process.env["VITIATE_FUZZ_OPTIONS"];
+    it("VITIATE_FUZZ_EXECS works alone without VITIATE_OPTIONS", () => {
+      delete process.env["VITIATE_OPTIONS"];
       process.env["VITIATE_FUZZ_EXECS"] = "10000";
       const opts = getCliOptions();
       expect(opts.fuzzExecs).toBe(10000);
     });
 
-    it("invalid VITIATE_FUZZ_EXECS does not clobber valid VITIATE_FUZZ_OPTIONS.fuzzExecs", () => {
+    it("invalid VITIATE_FUZZ_EXECS does not clobber valid VITIATE_OPTIONS.fuzzExecs", () => {
       const chunks: string[] = [];
       const originalWrite = process.stderr.write;
       process.stderr.write = ((chunk: string) => {
@@ -1172,7 +1175,7 @@ describe("config", () => {
       }) as typeof process.stderr.write;
 
       try {
-        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        process.env["VITIATE_OPTIONS"] = JSON.stringify({
           fuzzExecs: 100000,
         });
         process.env["VITIATE_FUZZ_EXECS"] = "not-a-number";
@@ -1291,14 +1294,14 @@ describe("config", () => {
   });
 
   describe("getCliOptions VITIATE_MAX_CRASHES integration", () => {
-    const originalOpts = process.env["VITIATE_FUZZ_OPTIONS"];
+    const originalOpts = process.env["VITIATE_OPTIONS"];
     const originalMaxCrashes = process.env["VITIATE_MAX_CRASHES"];
 
     afterEach(() => {
       if (originalOpts === undefined) {
-        delete process.env["VITIATE_FUZZ_OPTIONS"];
+        delete process.env["VITIATE_OPTIONS"];
       } else {
-        process.env["VITIATE_FUZZ_OPTIONS"] = originalOpts;
+        process.env["VITIATE_OPTIONS"] = originalOpts;
       }
       if (originalMaxCrashes === undefined) {
         delete process.env["VITIATE_MAX_CRASHES"];
@@ -1307,8 +1310,8 @@ describe("config", () => {
       }
     });
 
-    it("VITIATE_MAX_CRASHES overrides VITIATE_FUZZ_OPTIONS.maxCrashes", () => {
-      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+    it("VITIATE_MAX_CRASHES overrides VITIATE_OPTIONS.maxCrashes", () => {
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({
         maxCrashes: 100,
       });
       process.env["VITIATE_MAX_CRASHES"] = "50";
@@ -1316,14 +1319,14 @@ describe("config", () => {
       expect(opts.maxCrashes).toBe(50);
     });
 
-    it("VITIATE_MAX_CRASHES works alone without VITIATE_FUZZ_OPTIONS", () => {
-      delete process.env["VITIATE_FUZZ_OPTIONS"];
+    it("VITIATE_MAX_CRASHES works alone without VITIATE_OPTIONS", () => {
+      delete process.env["VITIATE_OPTIONS"];
       process.env["VITIATE_MAX_CRASHES"] = "10";
       const opts = getCliOptions();
       expect(opts.maxCrashes).toBe(10);
     });
 
-    it("valid VITIATE_MAX_CRASHES applies when VITIATE_FUZZ_OPTIONS has invalid JSON", () => {
+    it("valid VITIATE_MAX_CRASHES applies when VITIATE_OPTIONS has invalid JSON", () => {
       const chunks: string[] = [];
       const originalWrite = process.stderr.write;
       process.stderr.write = ((chunk: string) => {
@@ -1332,18 +1335,18 @@ describe("config", () => {
       }) as typeof process.stderr.write;
 
       try {
-        process.env["VITIATE_FUZZ_OPTIONS"] = "not-json";
+        process.env["VITIATE_OPTIONS"] = "not-json";
         process.env["VITIATE_MAX_CRASHES"] = "30";
         const opts = getCliOptions();
         expect(opts.maxCrashes).toBe(30);
         expect(chunks.length).toBe(1);
-        expect(chunks[0]).toContain("VITIATE_FUZZ_OPTIONS");
+        expect(chunks[0]).toContain("VITIATE_OPTIONS");
       } finally {
         process.stderr.write = originalWrite;
       }
     });
 
-    it("invalid VITIATE_MAX_CRASHES does not clobber valid VITIATE_FUZZ_OPTIONS.maxCrashes", () => {
+    it("invalid VITIATE_MAX_CRASHES does not clobber valid VITIATE_OPTIONS.maxCrashes", () => {
       const chunks: string[] = [];
       const originalWrite = process.stderr.write;
       process.stderr.write = ((chunk: string) => {
@@ -1352,7 +1355,7 @@ describe("config", () => {
       }) as typeof process.stderr.write;
 
       try {
-        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        process.env["VITIATE_OPTIONS"] = JSON.stringify({
           maxCrashes: 100,
         });
         process.env["VITIATE_MAX_CRASHES"] = "not-a-number";
@@ -1370,7 +1373,8 @@ describe("config", () => {
     it("returns defaults when no options provided", () => {
       const result = resolveInstrumentOptions();
       expect(result.include).toEqual(["**/*.{js,ts,jsx,tsx,mjs,cjs,mts,cts}"]);
-      expect(result.exclude).toEqual(["**/node_modules/**"]);
+      expect(result.exclude).toEqual([]);
+      expect(result.packages).toEqual([]);
     });
 
     it("overrides exclude when provided", () => {
@@ -1486,39 +1490,39 @@ describe("config", () => {
   });
 
   describe("stopOnCrash config field", () => {
-    const originalOpts = process.env["VITIATE_FUZZ_OPTIONS"];
+    const originalOpts = process.env["VITIATE_OPTIONS"];
 
     afterEach(() => {
       if (originalOpts === undefined) {
-        delete process.env["VITIATE_FUZZ_OPTIONS"];
+        delete process.env["VITIATE_OPTIONS"];
       } else {
-        process.env["VITIATE_FUZZ_OPTIONS"] = originalOpts;
+        process.env["VITIATE_OPTIONS"] = originalOpts;
       }
     });
 
     it("parses stopOnCrash: true", () => {
-      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({
         stopOnCrash: true,
       });
       expect(getCliOptions().stopOnCrash).toBe(true);
     });
 
     it("parses stopOnCrash: false", () => {
-      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({
         stopOnCrash: false,
       });
       expect(getCliOptions().stopOnCrash).toBe(false);
     });
 
     it('parses stopOnCrash: "auto"', () => {
-      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({
         stopOnCrash: "auto",
       });
       expect(getCliOptions().stopOnCrash).toBe("auto");
     });
 
     it("omits stopOnCrash when absent", () => {
-      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({ fuzzExecs: 100 });
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({ fuzzExecs: 100 });
       const opts = getCliOptions();
       expect("stopOnCrash" in opts).toBe(false);
     });
@@ -1532,13 +1536,13 @@ describe("config", () => {
       }) as typeof process.stderr.write;
 
       try {
-        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        process.env["VITIATE_OPTIONS"] = JSON.stringify({
           stopOnCrash: "invalid",
         });
         const opts = getCliOptions();
         expect(opts).toEqual({});
         expect(chunks.length).toBe(1);
-        expect(chunks[0]).toContain("VITIATE_FUZZ_OPTIONS.stopOnCrash");
+        expect(chunks[0]).toContain("VITIATE_OPTIONS.stopOnCrash");
       } finally {
         process.stderr.write = originalWrite;
       }
@@ -1553,7 +1557,7 @@ describe("config", () => {
       }) as typeof process.stderr.write;
 
       try {
-        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        process.env["VITIATE_OPTIONS"] = JSON.stringify({
           stopOnCrash: null,
           fuzzExecs: 100,
         });
@@ -1566,7 +1570,7 @@ describe("config", () => {
     });
 
     it("round-trips through JSON serialization", () => {
-      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({
         stopOnCrash: "auto",
         maxCrashes: 50,
         fuzzExecs: 100,
@@ -1579,32 +1583,32 @@ describe("config", () => {
   });
 
   describe("maxCrashes config field", () => {
-    const originalOpts = process.env["VITIATE_FUZZ_OPTIONS"];
+    const originalOpts = process.env["VITIATE_OPTIONS"];
 
     afterEach(() => {
       if (originalOpts === undefined) {
-        delete process.env["VITIATE_FUZZ_OPTIONS"];
+        delete process.env["VITIATE_OPTIONS"];
       } else {
-        process.env["VITIATE_FUZZ_OPTIONS"] = originalOpts;
+        process.env["VITIATE_OPTIONS"] = originalOpts;
       }
     });
 
     it("parses maxCrashes: 0 (unlimited)", () => {
-      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({
         maxCrashes: 0,
       });
       expect(getCliOptions().maxCrashes).toBe(0);
     });
 
     it("parses maxCrashes: 1000", () => {
-      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({
         maxCrashes: 1000,
       });
       expect(getCliOptions().maxCrashes).toBe(1000);
     });
 
     it("omits maxCrashes when absent", () => {
-      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({ fuzzExecs: 100 });
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({ fuzzExecs: 100 });
       const opts = getCliOptions();
       expect("maxCrashes" in opts).toBe(false);
     });
@@ -1618,13 +1622,13 @@ describe("config", () => {
       }) as typeof process.stderr.write;
 
       try {
-        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        process.env["VITIATE_OPTIONS"] = JSON.stringify({
           maxCrashes: -1,
         });
         const opts = getCliOptions();
         expect(opts).toEqual({});
         expect(chunks.length).toBe(1);
-        expect(chunks[0]).toContain("VITIATE_FUZZ_OPTIONS.maxCrashes");
+        expect(chunks[0]).toContain("VITIATE_OPTIONS.maxCrashes");
       } finally {
         process.stderr.write = originalWrite;
       }
@@ -1639,13 +1643,13 @@ describe("config", () => {
       }) as typeof process.stderr.write;
 
       try {
-        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        process.env["VITIATE_OPTIONS"] = JSON.stringify({
           maxCrashes: 1.5,
         });
         const opts = getCliOptions();
         expect(opts).toEqual({});
         expect(chunks.length).toBe(1);
-        expect(chunks[0]).toContain("VITIATE_FUZZ_OPTIONS.maxCrashes");
+        expect(chunks[0]).toContain("VITIATE_OPTIONS.maxCrashes");
       } finally {
         process.stderr.write = originalWrite;
       }
@@ -1735,7 +1739,7 @@ describe("config", () => {
 
   describe("detectors schema validation", () => {
     it("accepts boolean detector values", () => {
-      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({
         detectors: { prototypePollution: false },
       });
       const options = getCliOptions();
@@ -1743,7 +1747,7 @@ describe("config", () => {
     });
 
     it("accepts options object for pathTraversal", () => {
-      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({
         detectors: {
           pathTraversal: {
             allowedPaths: ["/var/www"],
@@ -1759,7 +1763,7 @@ describe("config", () => {
     });
 
     it("accepts empty detectors object (uses defaults)", () => {
-      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({
         detectors: {},
       });
       const options = getCliOptions();
@@ -1767,7 +1771,7 @@ describe("config", () => {
     });
 
     it("absent detectors key results in undefined", () => {
-      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({});
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({});
       const options = getCliOptions();
       expect(options.detectors).toBeUndefined();
     });
@@ -1781,7 +1785,7 @@ describe("config", () => {
       }) as typeof process.stderr.write;
 
       try {
-        process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+        process.env["VITIATE_OPTIONS"] = JSON.stringify({
           detectors: { futureDetector: true, prototypePollution: true },
         });
         const options = getCliOptions();
@@ -1800,13 +1804,34 @@ describe("config", () => {
     });
 
     it("strips nested null values from detectors config", () => {
-      process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify({
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({
         detectors: { redos: null, prototypePollution: true },
       });
       const options = getCliOptions();
       expect(options.detectors?.prototypePollution).toBe(true);
       // redos: null should be stripped by recursive stripNulls
       expect(options.detectors?.redos).toBeUndefined();
+    });
+  });
+
+  describe("config file accessors", () => {
+    afterEach(() => {
+      resetConfigFile();
+    });
+
+    it("getConfigFile returns undefined before setConfigFile is called", () => {
+      expect(getConfigFile()).toBeUndefined();
+    });
+
+    it("setConfigFile stores and getConfigFile retrieves the path", () => {
+      setConfigFile("/project/vitest.config.ts");
+      expect(getConfigFile()).toBe("/project/vitest.config.ts");
+    });
+
+    it("resetConfigFile clears the stored config file", () => {
+      setConfigFile("/project/vitest.config.ts");
+      resetConfigFile();
+      expect(getConfigFile()).toBeUndefined();
     });
   });
 });

@@ -17,32 +17,23 @@ vitiatePlugin({
 
 Larger maps reduce hash collisions at the cost of more memory. Double the default is a good starting point for large codebases.
 
-## Slow Startup When Instrumenting node_modules
+## Slow Startup When Instrumenting Dependencies
 
-**Symptoms:** The fuzzer takes a long time to start because it instruments every imported module, including large dependency trees from `node_modules`.
+**Symptoms:** The fuzzer takes a long time to start because it instruments every file in listed dependency packages.
 
-This only happens if you have removed `**/node_modules/**` from the `exclude` list (it is excluded by default). When `node_modules` is not excluded, the plugin also sets `server.deps.inline: true` so that dependencies flow through the Vite transform pipeline, which adds overhead for every imported package.
+This happens when `instrument.packages` includes dependencies with large file counts. Each listed package's files pass through SWC instrumentation during Vite's module transform, which adds startup overhead proportional to the number of files.
 
-**Fix:** Narrow the `include` patterns to only the specific packages you need instrumented:
-
-```ts
-vitiatePlugin({
-  instrument: {
-    include: ["src/**/*.ts", "node_modules/my-library/**/*.js"],
-    exclude: [], // node_modules removed from exclude to allow instrumentation
-  },
-});
-```
-
-Or, if you don't need to instrument any dependencies, restore the default exclude:
+**Fix:** List only the specific packages you are actively investigating:
 
 ```ts
 vitiatePlugin({
   instrument: {
-    exclude: ["**/node_modules/**"],
+    packages: ["specific-lib"], // only instrument what you need
   },
 });
 ```
+
+Avoid listing large frameworks or utility libraries unless you specifically need coverage feedback from their internals. See [Plugin Options - packages](/reference/plugin-options/#instrumentpackages) for performance considerations.
 
 ## Fuzzer Not Finding Anything
 

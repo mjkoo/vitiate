@@ -59,7 +59,7 @@ When the crash counter reaches `maxCrashes` (and `maxCrashes` is not `0`), the f
 
 The `maxCrashes` option SHALL only take effect when `stopOnCrash` is `false`. When `stopOnCrash` is `true`, the loop terminates on the first crash and `maxCrashes` is irrelevant.
 
-The `maxCrashes` value MAY be overridden by the `VITIATE_MAX_CRASHES` environment variable, which accepts a non-negative integer string. When set, it takes precedence over any `maxCrashes` value in `VITIATE_FUZZ_OPTIONS`. Invalid values (non-integer, negative, non-numeric) SHALL produce a warning on stderr and be ignored (the `VITIATE_FUZZ_OPTIONS` value, if valid, is preserved). This follows the same override pattern as `VITIATE_FUZZ_TIME` and `VITIATE_FUZZ_EXECS`.
+The `maxCrashes` value MAY be overridden by the `VITIATE_MAX_CRASHES` environment variable, which accepts a non-negative integer string. When set, it takes precedence over any `maxCrashes` value in `VITIATE_OPTIONS`. Invalid values (non-integer, negative, non-numeric) SHALL produce a warning on stderr and be ignored (the `VITIATE_OPTIONS` value, if valid, is preserved). This follows the same override pattern as `VITIATE_FUZZ_TIME` and `VITIATE_FUZZ_EXECS`.
 
 #### Scenario: Default maxCrashes limits crash collection
 

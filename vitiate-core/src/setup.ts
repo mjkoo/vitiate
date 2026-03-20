@@ -24,7 +24,7 @@ warnUnknownVitiateEnvVars();
 // regression) but are gated by detectorActive - they are no-ops outside
 // the iteration window set by beforeIteration()/afterIteration().
 {
-  const options = isFuzzingMode() ? getCliOptions() : {};
+  const options = getCliOptions();
   installDetectorModuleHooks(options.detectors);
 }
 

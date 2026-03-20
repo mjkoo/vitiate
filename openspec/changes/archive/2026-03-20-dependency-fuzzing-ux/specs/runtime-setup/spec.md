@@ -1,4 +1,4 @@
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Coverage map initialization
 
@@ -43,7 +43,7 @@ In fuzzing mode (`VITIATE_FUZZ` env var is set): `__vitiate_cov` SHALL be the `B
 - **AND** `globalThis.__vitiate_cov` is not set
 - **THEN** `setup.ts`'s `initGlobals()` creates the coverage map as before
 
-### Requirement: Trace function initialization
+### Requirement: Trace function early initialization
 
 `globalThis.__vitiate_cmplog_write` SHALL be initialized in the plugin's `configResolved` hook as a stable forwarding wrapper. The wrapper SHALL read the current implementation function from `globalThis.__vitiate_cmplog_write_impl` on each call and delegate to it. Initially `globalThis.__vitiate_cmplog_write_impl` SHALL be set to a no-op `(_l, _r, _c, _o) => {}`.
 
@@ -55,7 +55,7 @@ A companion `globalThis.__vitiate_cmplog_reset_counts` SHALL also be initialized
 
 The `globalThis` indirection is chosen over closure-captured or module-scoped variables to avoid coupling the plugin and setup modules through a shared JS module import. `globalThis` is the coordination point, consistent with how `__vitiate_cov` is shared.
 
-`setup.ts`'s `initGlobals()` SHALL check if `globalThis.__vitiate_cmplog_write_impl` already exists. If it does, it SHALL replace `globalThis.__vitiate_cmplog_write_impl` (and `globalThis.__vitiate_cmplog_reset_counts_impl`) with the real implementations rather than replacing the wrapper function references. If `globalThis.__vitiate_cmplog_write_impl` does not exist (standalone CLI mode), it SHALL create the function as before.
+`setup.ts`'s `initGlobals()` SHALL check if `globalThis.__vitiate_cmplog_write` already exists. If it does, it SHALL replace `globalThis.__vitiate_cmplog_write_impl` (and `globalThis.__vitiate_cmplog_reset_counts_impl`) with the real implementations rather than replacing the wrapper function references. If `globalThis.__vitiate_cmplog_write` does not exist (standalone CLI mode), it SHALL create the function as before.
 
 #### Scenario: Trace function available before setup
 
@@ -79,11 +79,7 @@ The `globalThis` indirection is chosen over closure-captured or module-scoped va
 - **AND** calling it has no side effects
 - **AND** `setup.ts` does not swap the implementation
 
-#### Scenario: Old global names cause clear error
-
-- **WHEN** code compiled with an old SWC plugin references `globalThis.__vitiate_trace_cmp` or `globalThis.__vitiate_trace_cmp_record`
-- **THEN** the reference is `undefined`
-- **AND** attempting to call it throws a `TypeError` (not a silent incorrect result)
+## ADDED Requirements
 
 ### Requirement: Unconditional fuzz options reading
 
@@ -112,22 +108,3 @@ When `VITIATE_OPTIONS` is not set (no plugin, or plugin had no fuzz options), `g
 - **THEN** `getCliOptions()` returns `{}`
 - **AND** `installDetectorModuleHooks()` receives `undefined` for detectors
 - **AND** only Tier 1 detectors are active (default behavior preserved)
-
-### Requirement: Mode detection
-
-The runtime setup SHALL detect fuzzing mode by checking for the `VITIATE_FUZZ` environment variable. Any truthy value (non-empty string) activates fuzzing mode.
-
-#### Scenario: VITIATE_FUZZ not set
-
-- **WHEN** the `VITIATE_FUZZ` environment variable is not set or is empty
-- **THEN** regression mode is activated
-
-#### Scenario: VITIATE_FUZZ set to 1
-
-- **WHEN** `VITIATE_FUZZ=1` is set
-- **THEN** fuzzing mode is activated
-
-#### Scenario: VITIATE_FUZZ set to a non-boolean truthy value
-
-- **WHEN** `VITIATE_FUZZ=parser` is set
-- **THEN** fuzzing mode is activated (any truthy value activates fuzzing mode; the value itself is not used as a filter)

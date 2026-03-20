@@ -5,8 +5,7 @@ export default defineConfig({
   plugins: [
     vitiatePlugin({
       instrument: {
-        include: ["test/**", "**/flatted/**/*.js"],
-        exclude: ["__noop__/node_modules"],
+        packages: ["flatted"],
       },
       fuzz: {
         detectors: {
@@ -17,10 +16,5 @@ export default defineConfig({
   ],
   test: {
     include: ["test/**/*.fuzz.ts"],
-    server: {
-      deps: {
-        inline: [/flatted/],
-      },
-    },
   },
 });

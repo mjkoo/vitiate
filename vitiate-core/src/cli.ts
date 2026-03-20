@@ -585,7 +585,7 @@ async function runMergeChildMode(
   testName?: string,
 ): Promise<void> {
   // Forward CLI options (including detectors) to fuzz targets via env var
-  process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify(fuzzOptions);
+  process.env["VITIATE_OPTIONS"] = JSON.stringify(fuzzOptions);
 
   // Merge into existing IPC blob (parent already set merge+mergeControlFile)
   if (corpusDirs.length > 0) {
@@ -634,7 +634,7 @@ async function runChildMode(
   process.env["VITIATE_FUZZ"] = "1";
 
   // Forward CLI options to fuzz targets via env var
-  process.env["VITIATE_FUZZ_OPTIONS"] = JSON.stringify(fuzzOptions);
+  process.env["VITIATE_OPTIONS"] = JSON.stringify(fuzzOptions);
 
   // Forward CLI IPC state to fuzz targets via single JSON blob
   setCliIpc({
@@ -693,7 +693,7 @@ async function runLibfuzzerSubcommand(args: readonly string[]): Promise<void> {
         text(
           "Instruments JS/TS source with edge coverage counters via SWC and " +
             "drives mutation-based fuzzing via LibAFL. Accepts libFuzzer-compatible " +
-            "flags. Configuration via per-test options, VITIATE_FUZZ_OPTIONS JSON " +
+            "flags. Configuration via per-test options, VITIATE_OPTIONS JSON " +
             "env var, or CLI flags.",
         ),
       ],
@@ -867,7 +867,7 @@ function buildDetectorsEnv(
 ): Record<string, string> {
   if (detectorsSpec === undefined) return {};
   const detectors = parseDetectorsFlag(detectorsSpec);
-  return { VITIATE_FUZZ_OPTIONS: JSON.stringify({ detectors }) };
+  return { VITIATE_OPTIONS: JSON.stringify({ detectors }) };
 }
 
 /**
@@ -886,7 +886,7 @@ function runFuzzSubcommand(parsed: InferValue<typeof fuzzParser>): void {
     env["VITIATE_MAX_CRASHES"] = String(parsed.maxCrashes);
   }
 
-  // Detectors: merge into VITIATE_FUZZ_OPTIONS
+  // Detectors: merge into VITIATE_OPTIONS
   Object.assign(env, buildDetectorsEnv(parsed.detectors));
 
   spawnVitestWrapper(env, [...parsed.vitestArgs, ...parsed.positionalArgs]);

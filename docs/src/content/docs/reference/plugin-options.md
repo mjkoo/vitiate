@@ -31,32 +31,43 @@ instrument?: {
 ```
 
 **Defaults:**
-- `include`: all `.js`, `.ts`, `.jsx`, `.tsx` files
-- `exclude`: `**/node_modules/**`
+- `include`: all `.js`, `.ts`, `.jsx`, `.tsx`, `.mjs`, `.cjs`, `.mts`, `.cts` files
+- `exclude`: `[]` (no user code excluded)
 
-Instrument only the code you are fuzzing - excluding test files and dependencies improves performance and reduces noise in coverage feedback.
+`**/node_modules/**` is always excluded internally regardless of the `exclude` value - use `packages` to instrument dependencies.
 
-#### Instrumenting node_modules
+#### Include/exclude semantics
 
-By default, `**/node_modules/**` is in the `exclude` list, so dependencies are not instrumented. To fuzz into your dependencies (e.g., finding bugs in libraries you consume), remove the node_modules exclusion:
+- `include` and `exclude` control instrumentation of **your own code only** - they do not affect dependencies. Use `packages` for that.
+- `exclude` always takes precedence over `include`.
+- `**/node_modules/**` is always excluded internally regardless of the `exclude` value.
+- Default `exclude` is `[]` (no user code excluded).
+
+### instrument.packages
+
+```ts
+instrument?: {
+  packages?: string[];  // npm package names to instrument
+}
+```
+
+Lists third-party npm packages whose code should be instrumented with coverage counters. The plugin automatically configures Vitest module inlining (`test.server.deps.inline`) and transform filter bypass for the listed packages.
+
+Package matching uses `/node_modules/<packageName>/` as a substring match on the resolved module ID, handling standard, pnpm, and nested `node_modules` layouts. Vitiate's own packages (`@vitiate/core`, `@vitiate/engine`, `@vitiate/swc-plugin`) are always excluded regardless of your configuration.
 
 ```ts
 vitiatePlugin({
   instrument: {
-    exclude: [],  // instrument everything, including node_modules
+    packages: ["some-library"],  // instrument a specific dependency
   },
 });
 ```
 
-When `exclude` does not contain a pattern mentioning `node_modules`, the plugin automatically configures Vitest to inline dependencies through the Vite transform pipeline (`server.deps.inline: true`). This is required for node_modules files to reach the instrumentation hooks.
-
-Vitiate's own packages (`@vitiate/core`, `@vitiate/engine`, `@vitiate/swc-plugin`) are always excluded regardless of your configuration.
-
 **Performance considerations:**
 
-- **Transform time**: Instrumenting node_modules significantly increases startup time because every dependency file passes through SWC during Vite's module transform.
+- **Transform time**: Instrumenting dependencies increases startup time because each listed package's files pass through SWC during Vite's module transform.
 - **Coverage map saturation**: Large dependency trees produce many coverage edges, which can exhaust slots in the coverage map. If the fuzzer stops finding new coverage despite exercising new code paths, increase `coverageMapSize`.
-- **Feedback quality**: When the coverage map is saturated, hash collisions reduce the fuzzer's ability to distinguish interesting inputs. Narrow your `include` patterns to instrument only the specific packages you are investigating, or increase `coverageMapSize`.
+- **Feedback quality**: When the coverage map is saturated, hash collisions reduce the fuzzer's ability to distinguish interesting inputs. List only the specific packages you are investigating, or increase `coverageMapSize`.
 
 ### fuzz
 
@@ -101,7 +112,7 @@ export default defineConfig({
     vitiatePlugin({
       instrument: {
         include: ["src/**/*.ts"],
-        exclude: ["**/node_modules/**", "**/*.test.ts"],
+        exclude: ["**/*.test.ts"],
       },
       fuzz: {
         maxLen: 8192,

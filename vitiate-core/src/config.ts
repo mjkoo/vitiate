@@ -163,10 +163,31 @@ const CliIpcSchema = v.object({
 export type CliIpc = v.InferOutput<typeof CliIpcSchema>;
 
 export interface InstrumentOptions {
-  /** Glob patterns for files to instrument. */
+  /**
+   * Glob patterns for files to instrument. Only affects the user's own code,
+   * not dependencies. If specified, only matching files are instrumented.
+   * Exclude always takes precedence over include.
+   */
   include?: string[];
-  /** Glob patterns for files to skip. */
+  /**
+   * Glob patterns for files to skip. Only affects the user's own code, not
+   * dependencies. The `node_modules` directory pattern is always appended
+   * internally regardless of this value. Exclude always takes precedence
+   * over include.
+   */
   exclude?: string[];
+  /**
+   * npm package names to instrument. The plugin automatically handles vitest
+   * inlining (`test.server.deps.inline`) and transform filter bypass for
+   * listed packages. This is the exclusive mechanism for dependency
+   * instrumentation - `include`/`exclude` do not affect dependencies.
+   *
+   * Package matching uses `/node_modules/<packageName>/` as a substring
+   * match on the resolved module ID, handling standard, pnpm, and nested
+   * node_modules layouts. Vitiate's own packages (`@vitiate/core`,
+   * `@vitiate/engine`, `@vitiate/swc-plugin`) are always excluded.
+   */
+  packages?: string[];
 }
 
 export interface VitiatePluginOptions {
@@ -181,7 +202,7 @@ export interface VitiatePluginOptions {
 }
 
 const DEFAULT_INCLUDE = ["**/*.{js,ts,jsx,tsx,mjs,cjs,mts,cts}"];
-const DEFAULT_EXCLUDE = ["**/node_modules/**"];
+const DEFAULT_EXCLUDE: string[] = [];
 
 export function resolveInstrumentOptions(
   options?: InstrumentOptions,
@@ -189,6 +210,7 @@ export function resolveInstrumentOptions(
   return {
     include: options?.include ?? DEFAULT_INCLUDE,
     exclude: options?.exclude ?? DEFAULT_EXCLUDE,
+    packages: options?.packages ?? [],
   };
 }
 
@@ -380,6 +402,20 @@ export function resetProjectRoot(): void {
   resolvedProjectRoot = undefined;
 }
 
+let resolvedConfigFile: string | undefined;
+
+export function setConfigFile(configFile: string): void {
+  resolvedConfigFile = configFile;
+}
+
+export function getConfigFile(): string | undefined {
+  return resolvedConfigFile;
+}
+
+export function resetConfigFile(): void {
+  resolvedConfigFile = undefined;
+}
+
 let resolvedDataDir: string | undefined;
 
 export function setDataDir(dir: string): void {
@@ -415,7 +451,7 @@ const KNOWN_VITIATE_ENV_VARS = new Set([
   "VITIATE_SUPERVISOR",
   "VITIATE_SHMEM",
   "VITIATE_SHMEM_SIZE",
-  "VITIATE_FUZZ_OPTIONS",
+  "VITIATE_OPTIONS",
   "VITIATE_CLI_IPC",
   "VITIATE_DEBUG",
   "VITIATE_RESULTS_FILE",
@@ -465,14 +501,14 @@ function stripNulls(obj: Record<string, unknown>): Record<string, unknown> {
 export function getCliOptions(): FuzzOptions {
   let options: FuzzOptions = {};
 
-  const raw = process.env["VITIATE_FUZZ_OPTIONS"];
+  const raw = process.env["VITIATE_OPTIONS"];
   if (raw) {
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
     } catch (e) {
       process.stderr.write(
-        `vitiate: warning: invalid VITIATE_FUZZ_OPTIONS JSON: ${e instanceof Error ? e.message : String(e)}\n`,
+        `vitiate: warning: invalid VITIATE_OPTIONS JSON: ${e instanceof Error ? e.message : String(e)}\n`,
       );
       parsed = null;
     }
@@ -480,7 +516,7 @@ export function getCliOptions(): FuzzOptions {
     if (parsed !== null) {
       if (typeof parsed !== "object" || Array.isArray(parsed)) {
         process.stderr.write(
-          `vitiate: warning: VITIATE_FUZZ_OPTIONS must be a JSON object\n`,
+          `vitiate: warning: VITIATE_OPTIONS must be a JSON object\n`,
         );
       } else {
         const result = v.safeParse(
@@ -495,12 +531,12 @@ export function getCliOptions(): FuzzOptions {
             for (const [key, messages] of Object.entries(flat.nested)) {
               if (!messages?.length) continue;
               process.stderr.write(
-                `vitiate: warning: invalid VITIATE_FUZZ_OPTIONS.${key}: ${messages[0]}\n`,
+                `vitiate: warning: invalid VITIATE_OPTIONS.${key}: ${messages[0]}\n`,
               );
             }
           } else if (flat.root) {
             process.stderr.write(
-              `vitiate: warning: invalid VITIATE_FUZZ_OPTIONS: ${flat.root[0]}\n`,
+              `vitiate: warning: invalid VITIATE_OPTIONS: ${flat.root[0]}\n`,
             );
           }
         }

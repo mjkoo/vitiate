@@ -250,7 +250,7 @@ The flag value SHALL be a comma-separated list of directives:
 - `<name>`: Enable a detector (e.g., `pathTraversal`)
 - `<name>.<key>=<value>`: Enable a detector with an option (e.g., `pathTraversal.deniedPaths=/etc/passwd`)
 
-When the flag is absent, tier defaults apply (Tier 1 enabled, Tier 2 disabled). When the flag is present, the parsed configuration SHALL be passed via the `VITIATE_FUZZ_OPTIONS` JSON to the child process.
+When the flag is absent, tier defaults apply (Tier 1 enabled, Tier 2 disabled). When the flag is present, the parsed configuration SHALL be passed via the `VITIATE_OPTIONS` JSON to the child process.
 
 Detector names SHALL match the camelCase field names in `FuzzOptions.detectors` (e.g., `prototypePollution`, `commandInjection`, `pathTraversal`). An unknown detector name SHALL cause the CLI to print an error and exit.
 

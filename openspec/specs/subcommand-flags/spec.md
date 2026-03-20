@@ -13,7 +13,7 @@ The `vitiate fuzz` subcommand SHALL accept the following flags via an `@optique`
 - `--fuzz-time <N>`: Total fuzzing time limit in seconds. SHALL be set as `VITIATE_FUZZ_TIME=<N>` in the environment of the spawned vitest process. When both `--fuzz-time` and the `VITIATE_FUZZ_TIME` environment variable are present, the CLI flag SHALL take precedence.
 - `--fuzz-execs <N>`: Total fuzzing iterations. SHALL be set as `VITIATE_FUZZ_EXECS=<N>` in the environment of the spawned vitest process. When both `--fuzz-execs` and the `VITIATE_FUZZ_EXECS` environment variable are present, the CLI flag SHALL take precedence.
 - `--max-crashes <N>`: Maximum crashes to collect. SHALL be set as `VITIATE_MAX_CRASHES=<N>` in the environment of the spawned vitest process. When both `--max-crashes` and the `VITIATE_MAX_CRASHES` environment variable are present, the CLI flag SHALL take precedence.
-- `--detectors <spec>`: Comma-separated list of bug detectors to enable. SHALL use the same syntax and parsing logic as the libfuzzer subcommand's `-detectors` flag (see `standalone-cli` capability). The parsed value SHALL be serialized into the `VITIATE_FUZZ_OPTIONS` JSON environment variable.
+- `--detectors <spec>`: Comma-separated list of bug detectors to enable. SHALL use the same syntax and parsing logic as the libfuzzer subcommand's `-detectors` flag (see `standalone-cli` capability). The parsed value SHALL be serialized into the `VITIATE_OPTIONS` JSON environment variable.
 
 All flag values for `--fuzz-time`, `--fuzz-execs`, and `--max-crashes` SHALL be positive integers (minimum 1).
 
@@ -48,7 +48,7 @@ All flag values for `--fuzz-time`, `--fuzz-execs`, and `--max-crashes` SHALL be 
 #### Scenario: Fuzz with detectors
 
 - **WHEN** `npx vitiate fuzz --detectors prototypePollution,pathTraversal` is executed
-- **THEN** vitest SHALL be spawned with a `VITIATE_FUZZ_OPTIONS` JSON containing `detectors: { prototypePollution: true, pathTraversal: true, ... }` with unlisted detectors set to false
+- **THEN** vitest SHALL be spawned with a `VITIATE_OPTIONS` JSON containing `detectors: { prototypePollution: true, pathTraversal: true, ... }` with unlisted detectors set to false
 
 #### Scenario: Multiple flags combined
 
@@ -57,17 +57,17 @@ All flag values for `--fuzz-time`, `--fuzz-execs`, and `--max-crashes` SHALL be 
 
 ### Requirement: Detectors flag on regression and optimize subcommands
 
-The `vitiate regression` and `vitiate optimize` subcommands SHALL each accept a `--detectors <spec>` flag. The flag SHALL use the same syntax and parsing logic as the fuzz subcommand's `--detectors` flag. The parsed value SHALL be serialized into the `VITIATE_FUZZ_OPTIONS` JSON environment variable on the spawned vitest process.
+The `vitiate regression` and `vitiate optimize` subcommands SHALL each accept a `--detectors <spec>` flag. The flag SHALL use the same syntax and parsing logic as the fuzz subcommand's `--detectors` flag. The parsed value SHALL be serialized into the `VITIATE_OPTIONS` JSON environment variable on the spawned vitest process.
 
 #### Scenario: Regression with detectors
 
 - **WHEN** `npx vitiate regression --detectors prototypePollution` is executed
-- **THEN** vitest SHALL be spawned with a `VITIATE_FUZZ_OPTIONS` JSON containing `detectors: { prototypePollution: true, ... }` with unlisted detectors set to false
+- **THEN** vitest SHALL be spawned with a `VITIATE_OPTIONS` JSON containing `detectors: { prototypePollution: true, ... }` with unlisted detectors set to false
 
 #### Scenario: Optimize with detectors
 
 - **WHEN** `npx vitiate optimize --detectors pathTraversal` is executed
-- **THEN** vitest SHALL be spawned with `VITIATE_OPTIMIZE=1` and a `VITIATE_FUZZ_OPTIONS` JSON containing `detectors: { pathTraversal: true, ... }` with unlisted detectors set to false
+- **THEN** vitest SHALL be spawned with `VITIATE_OPTIMIZE=1` and a `VITIATE_OPTIONS` JSON containing `detectors: { pathTraversal: true, ... }` with unlisted detectors set to false
 
 ### Requirement: Vitest flag forwarding via passThrough
 

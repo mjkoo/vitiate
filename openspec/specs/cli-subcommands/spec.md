@@ -154,7 +154,7 @@ The spawn SHALL:
 
 1. Use `process.execPath` (the current Node.js binary) as the executable.
 2. Pass the resolved vitest CLI path as the first argument, followed by `run`, then `.fuzz.ts` as a positional file pattern, then any forwarded arguments from the `passThrough()` parser.
-3. Set environment variables derived from parsed vitiate flags (e.g., `VITIATE_FUZZ_TIME`, `VITIATE_FUZZ_EXECS`, `VITIATE_MAX_CRASHES`, `VITIATE_FUZZ_OPTIONS`).
+3. Set environment variables derived from parsed vitiate flags (e.g., `VITIATE_FUZZ_TIME`, `VITIATE_FUZZ_EXECS`, `VITIATE_MAX_CRASHES`, `VITIATE_OPTIONS`).
 4. Inherit stdio (`stdio: 'inherit'`).
 5. Forward the child's exit code as the process exit code.
 

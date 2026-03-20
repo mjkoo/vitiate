@@ -77,6 +77,10 @@ Add the following to your `.gitignore`:
 .swc/
 ```
 
+## Dependency Fuzzing
+
+To fuzz code inside third-party npm packages, use the [`instrument.packages`](https://vitiate.js.org/reference/plugin-options/#instrumentpackages) option. The plugin automatically handles module inlining and transform configuration for listed packages.
+
 ## How It Works
 
 1. **Transform time:** Vite's plugin hooks run every JS/TS module through the SWC plugin as it is imported, inserting edge coverage counters and comparison tracing calls. No separate build step required.

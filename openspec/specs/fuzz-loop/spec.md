@@ -568,14 +568,14 @@ When `reportResult()` returns `Interesting`, the system SHALL persist the input 
 
 The `VITIATE_FUZZ_EXECS` environment variable SHALL override `FuzzOptions.fuzzExecs` when set. It accepts a non-negative integer value (plain count, no unit conversion). Invalid values (non-integer, negative, non-finite) SHALL produce a warning on stderr and be ignored, matching the `VITIATE_FUZZ_TIME` / `getFuzzTime()` error handling pattern.
 
-The override SHALL be applied in `getCliOptions()` after parsing `VITIATE_FUZZ_OPTIONS`, following the same pattern as `getFuzzTime()` overriding `fuzzTimeMs`. This applies universally - both CLI and Vitest modes.
+The override SHALL be applied in `getCliOptions()` after parsing `VITIATE_OPTIONS`, following the same pattern as `getFuzzTime()` overriding `fuzzTimeMs`. This applies universally - both CLI and Vitest modes.
 
 `VITIATE_FUZZ_EXECS` SHALL be added to the `KNOWN_VITIATE_ENV_VARS` set so that it does not trigger the unknown-env-var warning.
 
 #### Scenario: VITIATE_FUZZ_EXECS overrides fuzzExecs
 
 - **WHEN** `VITIATE_FUZZ_EXECS=50000` is set in the environment
-- **AND** `fuzzExecs` is set to `100000` via `VITIATE_FUZZ_OPTIONS`
+- **AND** `fuzzExecs` is set to `100000` via `VITIATE_OPTIONS`
 - **THEN** the fuzzer SHALL use `fuzzExecs: 50000` (env var takes precedence)
 
 #### Scenario: VITIATE_FUZZ_EXECS with invalid value
@@ -592,4 +592,4 @@ The override SHALL be applied in `getCliOptions()` after parsing `VITIATE_FUZZ_O
 #### Scenario: VITIATE_FUZZ_EXECS unset
 
 - **WHEN** `VITIATE_FUZZ_EXECS` is not set in the environment
-- **THEN** the `fuzzExecs` value from `VITIATE_FUZZ_OPTIONS` or the per-test options SHALL be used unchanged
+- **THEN** the `fuzzExecs` value from `VITIATE_OPTIONS` or the per-test options SHALL be used unchanged

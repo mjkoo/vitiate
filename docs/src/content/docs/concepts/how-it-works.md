@@ -29,7 +29,7 @@ This powers the CmpLog mutation strategy: the engine observes what values are be
 
 ## 2. Runtime Initialization
 
-The setup file (`@vitiate/core/setup`) initializes two globals before any test code runs:
+The plugin's `configResolved` hook performs early initialization of the coverage map and cmplog globals, guaranteeing they are available before any instrumented code - including inlined dependency modules - can execute. The setup file (`@vitiate/core/setup`) serves as a fallback, re-initializing the globals if needed:
 
 - `globalThis.__vitiate_cov` - A `Buffer` backed by shared memory. In fuzzing mode, this buffer is allocated by the Rust engine and shared zero-copy between JavaScript and Rust. In regression mode, it is a plain buffer (coverage is tracked but not used for feedback).
 - `globalThis.__vitiate_trace_cmp` - A function that records comparison operands for the CmpLog system.

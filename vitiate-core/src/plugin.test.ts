@@ -10,8 +10,10 @@ import {
   resetProjectRoot,
   getResolvedDataDir,
   resetDataDir,
+  getConfigFile,
+  resetConfigFile,
 } from "./config.js";
-import { vitiatePlugin } from "./plugin.js";
+import { vitiatePlugin, isListedPackage } from "./plugin.js";
 
 /**
  * Extract the named plugin from the plugin array.
@@ -31,6 +33,17 @@ function callConfig(
       config: Record<string, unknown>,
     ) => Record<string, unknown>
   )(config);
+}
+
+function callConfigResolved(
+  plugin: Plugin,
+  resolvedConfig: Record<string, unknown>,
+): void {
+  (
+    plugin.configResolved as unknown as (
+      config: Record<string, unknown>,
+    ) => void
+  )(resolvedConfig);
 }
 
 describe("plugin", () => {
@@ -80,13 +93,13 @@ describe("plugin", () => {
   });
 
   describe("config hook", () => {
-    const savedFuzzOptions = process.env["VITIATE_FUZZ_OPTIONS"];
+    const savedFuzzOptions = process.env["VITIATE_OPTIONS"];
 
     afterEach(() => {
       if (savedFuzzOptions === undefined) {
-        delete process.env["VITIATE_FUZZ_OPTIONS"];
+        delete process.env["VITIATE_OPTIONS"];
       } else {
-        process.env["VITIATE_FUZZ_OPTIONS"] = savedFuzzOptions;
+        process.env["VITIATE_OPTIONS"] = savedFuzzOptions;
       }
       resetProjectRoot();
       resetDataDir();
@@ -140,30 +153,30 @@ describe("plugin", () => {
       expect(getResolvedDataDir()).toBeUndefined();
     });
 
-    it("sets VITIATE_FUZZ_OPTIONS when fuzz options are provided", () => {
-      delete process.env["VITIATE_FUZZ_OPTIONS"];
+    it("sets VITIATE_OPTIONS when fuzz options are provided", () => {
+      delete process.env["VITIATE_OPTIONS"];
       const instrument = findPlugin(
         vitiatePlugin({ fuzz: { maxLen: 4096, timeoutMs: 5000 } }),
         "vitiate:instrument",
       );
       callConfig(instrument, {});
-      expect(process.env["VITIATE_FUZZ_OPTIONS"]).toBe(
+      expect(process.env["VITIATE_OPTIONS"]).toBe(
         '{"maxLen":4096,"timeoutMs":5000}',
       );
     });
 
-    it("does not overwrite VITIATE_FUZZ_OPTIONS when already set", () => {
-      process.env["VITIATE_FUZZ_OPTIONS"] = '{"maxLen":1024}';
+    it("does not overwrite VITIATE_OPTIONS when already set", () => {
+      process.env["VITIATE_OPTIONS"] = '{"maxLen":1024}';
       const instrument = findPlugin(
         vitiatePlugin({ fuzz: { maxLen: 4096 } }),
         "vitiate:instrument",
       );
       callConfig(instrument, {});
-      expect(process.env["VITIATE_FUZZ_OPTIONS"]).toBe('{"maxLen":1024}');
+      expect(process.env["VITIATE_OPTIONS"]).toBe('{"maxLen":1024}');
     });
 
-    it("serializes boolean fuzz options to VITIATE_FUZZ_OPTIONS", () => {
-      delete process.env["VITIATE_FUZZ_OPTIONS"];
+    it("serializes boolean fuzz options to VITIATE_OPTIONS", () => {
+      delete process.env["VITIATE_OPTIONS"];
       const instrument = findPlugin(
         vitiatePlugin({
           fuzz: { grimoire: true, unicode: false, redqueen: true },
@@ -171,26 +184,26 @@ describe("plugin", () => {
         "vitiate:instrument",
       );
       callConfig(instrument, {});
-      expect(process.env["VITIATE_FUZZ_OPTIONS"]).toBe(
+      expect(process.env["VITIATE_OPTIONS"]).toBe(
         '{"grimoire":true,"unicode":false,"redqueen":true}',
       );
     });
 
-    it("does not set VITIATE_FUZZ_OPTIONS when no fuzz options are provided but dataDir is", () => {
-      delete process.env["VITIATE_FUZZ_OPTIONS"];
+    it("does not set VITIATE_OPTIONS when no fuzz options are provided but dataDir is", () => {
+      delete process.env["VITIATE_OPTIONS"];
       const instrument = findPlugin(
         vitiatePlugin({ dataDir: ".cache" }),
         "vitiate:instrument",
       );
       callConfig(instrument, {});
-      expect(process.env["VITIATE_FUZZ_OPTIONS"]).toBeUndefined();
+      expect(process.env["VITIATE_OPTIONS"]).toBeUndefined();
     });
 
-    it("does not set VITIATE_FUZZ_OPTIONS when no fuzz options are provided", () => {
-      delete process.env["VITIATE_FUZZ_OPTIONS"];
+    it("does not set VITIATE_OPTIONS when no fuzz options are provided", () => {
+      delete process.env["VITIATE_OPTIONS"];
       const instrument = findPlugin(vitiatePlugin(), "vitiate:instrument");
       callConfig(instrument, {});
-      expect(process.env["VITIATE_FUZZ_OPTIONS"]).toBeUndefined();
+      expect(process.env["VITIATE_OPTIONS"]).toBeUndefined();
     });
 
     it("sets coverage map size via setCoverageMapSize when coverageMapSize is provided", () => {
@@ -218,69 +231,152 @@ describe("plugin", () => {
       );
     });
 
-    it("returns test.server.deps.inline true when exclude is empty", () => {
+    it("does not set test.server.deps.inline when exclude is empty and no packages", () => {
       const instrument = findPlugin(
         vitiatePlugin({ instrument: { exclude: [] } }),
         "vitiate:instrument",
       );
       const config = callConfig(instrument, {});
       const testConfig = config["test"] as Record<string, unknown>;
-      expect(testConfig).toHaveProperty("server");
-      const server = testConfig["server"] as Record<string, unknown>;
-      const deps = server["deps"] as Record<string, unknown>;
-      expect(deps["inline"]).toBe(true);
-    });
-
-    it("does not set test.server.deps with default exclude", () => {
-      const instrument = findPlugin(vitiatePlugin(), "vitiate:instrument");
-      const config = callConfig(instrument, {});
-      const testConfig = config["test"] as Record<string, unknown>;
       expect(testConfig).not.toHaveProperty("server");
     });
 
-    it("does not set test.server.deps when exclude contains a narrower node_modules pattern", () => {
-      const instrument = findPlugin(
-        vitiatePlugin({
-          instrument: { exclude: ["**/node_modules/lodash/**"] },
-        }),
-        "vitiate:instrument",
-      );
+    it("does not set test.server.deps with default config", () => {
+      const instrument = findPlugin(vitiatePlugin(), "vitiate:instrument");
       const config = callConfig(instrument, {});
       const testConfig = config["test"] as Record<string, unknown>;
       expect(testConfig).not.toHaveProperty("server");
     });
   });
 
+  describe("configResolved hook", () => {
+    const savedFuzz = process.env["VITIATE_FUZZ"];
+    const savedCov = globalThis.__vitiate_cov;
+    const savedCmplog = globalThis.__vitiate_cmplog_write;
+    const savedResetCounts = globalThis.__vitiate_cmplog_reset_counts;
+    const savedCmplogImpl = globalThis.__vitiate_cmplog_write_impl;
+    const savedResetCountsImpl = globalThis.__vitiate_cmplog_reset_counts_impl;
+
+    afterEach(() => {
+      if (savedFuzz === undefined) {
+        delete process.env["VITIATE_FUZZ"];
+      } else {
+        process.env["VITIATE_FUZZ"] = savedFuzz;
+      }
+      resetConfigFile();
+      globalThis.__vitiate_cov = savedCov;
+      globalThis.__vitiate_cmplog_write = savedCmplog;
+      globalThis.__vitiate_cmplog_reset_counts = savedResetCounts;
+      globalThis.__vitiate_cmplog_write_impl = savedCmplogImpl;
+      globalThis.__vitiate_cmplog_reset_counts_impl = savedResetCountsImpl;
+    });
+
+    it("captures config file path from resolvedConfig.configFile", () => {
+      delete process.env["VITIATE_FUZZ"];
+      const instrument = findPlugin(vitiatePlugin(), "vitiate:instrument");
+      callConfigResolved(instrument, {
+        configFile: "/project/vitest.config.ts",
+      });
+      expect(getConfigFile()).toBe("/project/vitest.config.ts");
+    });
+
+    it("stores undefined when configFile is false (no config file)", () => {
+      delete process.env["VITIATE_FUZZ"];
+      resetConfigFile();
+      const instrument = findPlugin(vitiatePlugin(), "vitiate:instrument");
+      callConfigResolved(instrument, { configFile: false });
+      expect(getConfigFile()).toBeUndefined();
+    });
+
+    it("initializes __vitiate_cov as Uint8Array in regression mode", () => {
+      delete process.env["VITIATE_FUZZ"];
+      const instrument = findPlugin(vitiatePlugin(), "vitiate:instrument");
+      callConfigResolved(instrument, { configFile: false });
+      expect(globalThis.__vitiate_cov).toBeInstanceOf(Uint8Array);
+      expect(globalThis.__vitiate_cov.length).toBe(getCoverageMapSize());
+    });
+
+    it("initializes __vitiate_cov as Buffer in fuzz mode", () => {
+      process.env["VITIATE_FUZZ"] = "1";
+      const instrument = findPlugin(vitiatePlugin(), "vitiate:instrument");
+      callConfigResolved(instrument, { configFile: false });
+      expect(globalThis.__vitiate_cov).toBeInstanceOf(Buffer);
+      expect(globalThis.__vitiate_cov.length).toBe(getCoverageMapSize());
+    });
+
+    it("initializes __vitiate_cmplog_write as a forwarding wrapper", () => {
+      delete process.env["VITIATE_FUZZ"];
+      const instrument = findPlugin(vitiatePlugin(), "vitiate:instrument");
+      callConfigResolved(instrument, { configFile: false });
+      expect(typeof globalThis.__vitiate_cmplog_write).toBe("function");
+      // Should not throw - delegates to no-op impl
+      expect(globalThis.__vitiate_cmplog_write("a", "b", 0, 0)).toBeUndefined();
+    });
+
+    it("initializes __vitiate_cmplog_reset_counts as a forwarding wrapper", () => {
+      delete process.env["VITIATE_FUZZ"];
+      const instrument = findPlugin(vitiatePlugin(), "vitiate:instrument");
+      callConfigResolved(instrument, { configFile: false });
+      expect(typeof globalThis.__vitiate_cmplog_reset_counts).toBe("function");
+      expect(globalThis.__vitiate_cmplog_reset_counts()).toBeUndefined();
+    });
+
+    it("cmplog wrapper delegates to swapped implementation", () => {
+      delete process.env["VITIATE_FUZZ"];
+      const instrument = findPlugin(vitiatePlugin(), "vitiate:instrument");
+      callConfigResolved(instrument, { configFile: false });
+
+      // Cache the wrapper reference (as a module would at module scope)
+      const cachedWrite = globalThis.__vitiate_cmplog_write;
+      const calls: unknown[][] = [];
+
+      // Swap the implementation
+      globalThis.__vitiate_cmplog_write_impl = (
+        left: unknown,
+        right: unknown,
+        cmpId: number,
+        opId: number,
+      ) => {
+        calls.push([left, right, cmpId, opId]);
+      };
+
+      // Call through the cached reference
+      cachedWrite("hello", "world", 42, 1);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toEqual(["hello", "world", 42, 1]);
+    });
+  });
+
+  function callHooksTransform(
+    plugin: Plugin,
+    code: string,
+    id = "/project/src/app.ts",
+  ): { code: string; map: unknown } | null {
+    const transform = plugin.transform as (
+      code: string,
+      id: string,
+    ) => { code: string; map: unknown } | null;
+    return transform.call({ getCombinedSourcemap: () => null }, code, id);
+  }
+
+  function callInstrumentTransform(
+    plugins: Plugin[],
+    code: string,
+    id: string,
+  ): Promise<{ code: string; map?: string } | null> {
+    const instrument = findPlugin(plugins, "vitiate:instrument");
+    const transform = instrument.transform as (
+      code: string,
+      id: string,
+    ) => Promise<{ code: string; map?: string } | null>;
+    return transform.call({ getCombinedSourcemap: () => null }, code, id);
+  }
+
   describe("hooks plugin transform", () => {
     beforeAll(async () => {
       // es-module-lexer requires WASM init before first parse
       await init;
     });
-
-    function callHooksTransform(
-      plugin: Plugin,
-      code: string,
-      id = "/project/src/app.ts",
-    ): { code: string; map: unknown } | null {
-      const transform = plugin.transform as (
-        code: string,
-        id: string,
-      ) => { code: string; map: unknown } | null;
-      return transform.call({ getCombinedSourcemap: () => null }, code, id);
-    }
-
-    function callInstrumentTransform(
-      plugins: Plugin[],
-      code: string,
-      id: string,
-    ): Promise<{ code: string; map?: string } | null> {
-      const instrument = findPlugin(plugins, "vitiate:instrument");
-      const transform = instrument.transform as (
-        code: string,
-        id: string,
-      ) => Promise<{ code: string; map?: string } | null>;
-      return transform.call({ getCombinedSourcemap: () => null }, code, id);
-    }
 
     it("rewrites single-line named imports", () => {
       const hooks = findPlugin(vitiatePlugin(), "vitiate:hooks");
@@ -535,7 +631,7 @@ describe("plugin", () => {
       expect(result).toBeNull();
     });
 
-    it("processes a node_modules file when exclude is empty", () => {
+    it("skips node_modules files even when user exclude is empty", () => {
       const hooks = findPlugin(
         vitiatePlugin({ instrument: { exclude: [] } }),
         "vitiate:hooks",
@@ -545,13 +641,8 @@ describe("plugin", () => {
         'import { execSync } from "child_process";',
         "/project/node_modules/some-lib/index.js",
       );
-      expect(result).not.toBeNull();
-      expect(result!.code).toContain(
-        'import __vitiate_child_process from "child_process";',
-      );
-      expect(result!.code).toContain(
-        "const { execSync } = __vitiate_child_process;",
-      );
+      // node_modules is always excluded internally regardless of user exclude
+      expect(result).toBeNull();
     });
 
     it("excludes vitiate-core even when exclude is empty", async () => {
@@ -706,7 +797,7 @@ function add(a, b) {
       expect(result).toBeNull();
     });
 
-    it("instruments node_modules files when exclude is empty", async () => {
+    it("skips node_modules files even when user exclude is empty", async () => {
       const instrument = findPlugin(
         vitiatePlugin({ instrument: { exclude: [] } }),
         "vitiate:instrument",
@@ -728,8 +819,280 @@ function check(x) {
         "/project/node_modules/some-lib/check.js",
       );
 
+      // node_modules always excluded from include/exclude filter
+      expect(result).toBeNull();
+    });
+
+    it("exclude takes precedence over include", async () => {
+      const instrument = findPlugin(
+        vitiatePlugin({
+          instrument: {
+            include: ["**/*.js"],
+            exclude: ["**/generated/**"],
+          },
+        }),
+        "vitiate:instrument",
+      );
+      const transform = instrument.transform as (
+        code: string,
+        id: string,
+      ) => Promise<{ code: string; map?: string } | null>;
+
+      const code = "function f(x) { if (x > 0) return true; return false; }";
+
+      // File in include scope but also in exclude scope - exclude wins
+      const excluded = await transform.call(
+        { getCombinedSourcemap: () => null },
+        code,
+        "/project/src/generated/parser.js",
+      );
+      expect(excluded).toBeNull();
+
+      // File in include scope and not in exclude scope - instrumented
+      const included = await transform.call(
+        { getCombinedSourcemap: () => null },
+        code,
+        "/project/src/parser.js",
+      );
+      expect(included).not.toBeNull();
+      expect(included!.code).toContain("__vitiate_cov[");
+    });
+  });
+
+  describe("isListedPackage", () => {
+    it("returns the matched package name for a standard node_modules path", () => {
+      expect(
+        isListedPackage("/project/node_modules/flatted/src/index.js", [
+          "flatted",
+        ]),
+      ).toBe("flatted");
+    });
+
+    it("returns the matched package name for a pnpm nested layout path", () => {
+      expect(
+        isListedPackage(
+          "/project/node_modules/.pnpm/flatted@3.4.1/node_modules/flatted/src/index.js",
+          ["flatted"],
+        ),
+      ).toBe("flatted");
+    });
+
+    it("returns the matched package name for a nested node_modules path", () => {
+      expect(
+        isListedPackage(
+          "/project/node_modules/foo/node_modules/flatted/src/index.js",
+          ["flatted"],
+        ),
+      ).toBe("flatted");
+    });
+
+    it("rejects partial package name match", () => {
+      expect(
+        isListedPackage("/project/node_modules/flatted/src/index.js", ["flat"]),
+      ).toBeUndefined();
+    });
+
+    it("returns the matched scoped package name", () => {
+      expect(
+        isListedPackage("/project/node_modules/@scope/pkg/src/index.js", [
+          "@scope/pkg",
+        ]),
+      ).toBe("@scope/pkg");
+    });
+
+    it("rejects vitiate packages", () => {
+      expect(
+        isListedPackage("/project/node_modules/@vitiate/core/src/index.js", [
+          "@vitiate/core",
+        ]),
+      ).toBeUndefined();
+    });
+
+    it("returns undefined for empty packages list", () => {
+      expect(
+        isListedPackage("/project/node_modules/flatted/src/index.js", []),
+      ).toBeUndefined();
+    });
+
+    it("returns the first matched package name when multiple packages are listed", () => {
+      const packages = ["flatted", "lodash"];
+      expect(
+        isListedPackage("/project/node_modules/flatted/src/index.js", packages),
+      ).toBe("flatted");
+      expect(
+        isListedPackage("/project/node_modules/lodash/index.js", packages),
+      ).toBe("lodash");
+      expect(
+        isListedPackage("/project/node_modules/other/index.js", packages),
+      ).toBeUndefined();
+    });
+  });
+
+  describe("packages option", () => {
+    afterEach(() => {
+      resetProjectRoot();
+      resetConfigFile();
+    });
+
+    it("instruments listed package files via transform hook", async () => {
+      const plugins = vitiatePlugin({
+        instrument: { packages: ["flatted"] },
+      });
+      const instrument = findPlugin(plugins, "vitiate:instrument");
+      const transform = instrument.transform as (
+        code: string,
+        id: string,
+      ) => Promise<{ code: string; map?: string } | null>;
+
+      const code = `
+function check(x) {
+  if (x > 0) return true;
+  return false;
+}
+`;
+      const result = await transform.call(
+        { getCombinedSourcemap: () => null },
+        code,
+        "/project/node_modules/flatted/src/index.js",
+      );
+
       expect(result).not.toBeNull();
       expect(result!.code).toContain("__vitiate_cov[");
+    });
+
+    it("does not instrument unlisted package files", async () => {
+      const plugins = vitiatePlugin({
+        instrument: { packages: ["flatted"] },
+      });
+      const instrument = findPlugin(plugins, "vitiate:instrument");
+      const transform = instrument.transform as (
+        code: string,
+        id: string,
+      ) => Promise<{ code: string; map?: string } | null>;
+
+      const result = await transform.call(
+        { getCombinedSourcemap: () => null },
+        "export const x = 1;",
+        "/project/node_modules/lodash/index.js",
+      );
+
+      expect(result).toBeNull();
+    });
+
+    it("config hook returns inline patterns for listed packages", () => {
+      const plugins = vitiatePlugin({
+        instrument: { packages: ["flatted"] },
+      });
+      const instrument = findPlugin(plugins, "vitiate:instrument");
+      const config = callConfig(instrument, {});
+      const testConfig = config["test"] as Record<string, unknown>;
+      const server = testConfig["server"] as Record<string, unknown>;
+      const deps = server["deps"] as Record<string, unknown>;
+      const inline = deps["inline"] as RegExp[];
+      expect(inline).toHaveLength(1);
+      expect(inline[0]!.test("/node_modules/flatted/")).toBe(true);
+      expect(inline[0]!.test("/node_modules/other/")).toBe(false);
+    });
+
+    it("config hook does not modify inline when packages is empty", () => {
+      const plugins = vitiatePlugin({
+        instrument: { packages: [] },
+      });
+      const instrument = findPlugin(plugins, "vitiate:instrument");
+      const config = callConfig(instrument, {});
+      const testConfig = config["test"] as Record<string, unknown>;
+      expect(testConfig).not.toHaveProperty("server");
+    });
+
+    it("hooks plugin rewrites hooked imports in listed packages", () => {
+      const plugins = vitiatePlugin({
+        instrument: { packages: ["flatted"] },
+      });
+      const hooks = findPlugin(plugins, "vitiate:hooks");
+      const result = callHooksTransform(
+        hooks,
+        'import { execSync } from "child_process";',
+        "/project/node_modules/flatted/src/index.js",
+      );
+      expect(result).not.toBeNull();
+      expect(result!.code).toContain(
+        'import __vitiate_child_process from "child_process";',
+      );
+    });
+
+    it("hooks plugin does not process unlisted packages", () => {
+      const plugins = vitiatePlugin({
+        instrument: { packages: ["flatted"] },
+      });
+      const hooks = findPlugin(plugins, "vitiate:hooks");
+      const result = callHooksTransform(
+        hooks,
+        'import { execSync } from "child_process";',
+        "/project/node_modules/lodash/index.js",
+      );
+      expect(result).toBeNull();
+    });
+
+    it("vitiate packages are rejected from packages list", () => {
+      const plugins = vitiatePlugin({
+        instrument: { packages: ["@vitiate/core"] },
+      });
+      const instrument = findPlugin(plugins, "vitiate:instrument");
+      const config = callConfig(instrument, {});
+      const testConfig = config["test"] as Record<string, unknown>;
+      // No server config because vitiate packages are filtered out
+      expect(testConfig).not.toHaveProperty("server");
+    });
+
+    it("buildEnd warns about listed packages that were never transformed", () => {
+      const plugins = vitiatePlugin({
+        instrument: { packages: ["not-installed-pkg"] },
+      });
+      const instrument = findPlugin(plugins, "vitiate:instrument");
+
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        (instrument.buildEnd as () => void)();
+        expect(chunks).toHaveLength(1);
+        expect(chunks[0]).toContain("not-installed-pkg");
+        expect(chunks[0]).toContain("instrument.packages");
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+    });
+
+    it("buildEnd does not warn about packages that were transformed", async () => {
+      const plugins = vitiatePlugin({
+        instrument: { packages: ["flatted"] },
+      });
+
+      // Run a transform so the package is marked as seen
+      await callInstrumentTransform(
+        plugins,
+        "function f(x) { return x; }",
+        "/project/node_modules/flatted/src/index.js",
+      );
+
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        const instrument = findPlugin(plugins, "vitiate:instrument");
+        (instrument.buildEnd as () => void)();
+        expect(chunks).toHaveLength(0);
+      } finally {
+        process.stderr.write = originalWrite;
+      }
     });
   });
 });

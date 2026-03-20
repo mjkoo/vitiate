@@ -153,10 +153,10 @@ Jazzer.js uses kebab-case names; Vitiate uses camelCase. Vitiate also adds detec
 |----------------|--------------|------|---------|
 | `command-injection` | `commandInjection` | 1 | On |
 | `path-traversal` | `pathTraversal` | 1 | On |
-| `prototype-pollution` | `prototypePollution` | 1 | On |
+| - | `unsafeEval` | 1 | On |
+| `prototype-pollution` | `prototypePollution` | 2 | Off |
 | - | `redos` | 2 | Off |
 | - | `ssrf` | 2 | Off |
-| - | `unsafeEval` | 2 | Off |
 
 Tier 1 detectors are enabled by default. Tier 2 detectors must be explicitly enabled because they hook sensitive APIs and may produce false positives.
 

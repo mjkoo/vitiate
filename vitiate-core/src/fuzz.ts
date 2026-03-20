@@ -21,6 +21,7 @@ import {
   getCliOptions,
   getCliIpc,
   getProjectRoot,
+  getConfigFile,
   resolveStopOnCrash,
   resolveVitestCli,
   DEFAULT_MAX_INPUT_LEN,
@@ -266,6 +267,7 @@ function registerFuzzTest(
 
           const vitestCli = resolveVitestCli();
           const testNamePattern = buildTestNamePattern(task);
+          const configFile = getConfigFile();
 
           const result = await runSupervisor({
             shmem,
@@ -280,6 +282,7 @@ function registerFuzzTest(
                   testFilePath,
                   "--test-name-pattern",
                   testNamePattern,
+                  ...(configFile ? ["--config", configFile] : []),
                 ],
                 {
                   env: {

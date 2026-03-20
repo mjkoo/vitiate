@@ -40,6 +40,15 @@ declare global {
     opId: number,
   ) => void;
   var __vitiate_cmplog_reset_counts: () => void;
+  /** Internal implementation variable for cmplog write forwarding wrapper. */
+  var __vitiate_cmplog_write_impl: (
+    left: unknown,
+    right: unknown,
+    cmpId: number,
+    opId: number,
+  ) => void;
+  /** Internal implementation variable for cmplog reset counts forwarding wrapper. */
+  var __vitiate_cmplog_reset_counts_impl: () => void;
 }
 
 /**
@@ -145,10 +154,15 @@ export function createCmplogWriteFunctions(
 
 export async function initGlobals(): Promise<void> {
   if (isFuzzingMode()) {
-    const { createCoverageMap, cmplogGetSlotBuffer, cmplogGetWritePointer } =
-      await import("@vitiate/engine");
-    globalThis.__vitiate_cov = createCoverageMap(getCoverageMapSize());
+    // If coverage map was already created by the plugin's configResolved
+    // hook (early init), reuse it to preserve buffer identity.
+    if (!globalThis.__vitiate_cov) {
+      const { createCoverageMap } = await import("@vitiate/engine");
+      globalThis.__vitiate_cov = createCoverageMap(getCoverageMapSize());
+    }
 
+    const { cmplogGetSlotBuffer, cmplogGetWritePointer } =
+      await import("@vitiate/engine");
     const slotBuffer = cmplogGetSlotBuffer();
     const writePointerBuffer = cmplogGetWritePointer();
 
@@ -156,16 +170,33 @@ export async function initGlobals(): Promise<void> {
       slotBuffer,
       writePointerBuffer,
     );
-    globalThis.__vitiate_cmplog_write = write;
-    globalThis.__vitiate_cmplog_reset_counts = resetCounts;
+
+    // If cmplog wrapper was already set up by configResolved (early init),
+    // swap the internal implementation rather than replacing the function
+    // reference. This preserves identity for modules that cached the wrapper.
+    if (globalThis.__vitiate_cmplog_write_impl) {
+      globalThis.__vitiate_cmplog_write_impl = write;
+      globalThis.__vitiate_cmplog_reset_counts_impl = resetCounts;
+    } else {
+      globalThis.__vitiate_cmplog_write = write;
+      globalThis.__vitiate_cmplog_reset_counts = resetCounts;
+    }
   } else {
-    globalThis.__vitiate_cov = new Uint8Array(getCoverageMapSize());
-    globalThis.__vitiate_cmplog_write = (
-      _left: unknown,
-      _right: unknown,
-      _cmpId: number,
-      _opId: number,
-    ) => {};
-    globalThis.__vitiate_cmplog_reset_counts = () => {};
+    // If coverage map was already created by configResolved, reuse it.
+    if (!globalThis.__vitiate_cov) {
+      globalThis.__vitiate_cov = new Uint8Array(getCoverageMapSize());
+    }
+
+    // If cmplog wrappers were already set up by configResolved, leave them.
+    // The no-op implementation is already in place.
+    if (!globalThis.__vitiate_cmplog_write) {
+      globalThis.__vitiate_cmplog_write = (
+        _left: unknown,
+        _right: unknown,
+        _cmpId: number,
+        _opId: number,
+      ) => {};
+      globalThis.__vitiate_cmplog_reset_counts = () => {};
+    }
   }
 }
