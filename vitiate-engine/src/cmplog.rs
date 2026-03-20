@@ -17,6 +17,20 @@ use libafl::observers::cmp::{CmpValues, CmplogBytes};
 /// Maximum number of comparison entries per iteration.
 const MAX_ENTRIES: usize = 4096;
 
+/// Maximum number of CmpLog entries recorded per comparison site per iteration.
+///
+/// Beyond this cap, entries for the same site are silently dropped. This limits
+/// hot-loop comparisons (e.g., `i < length`) from flooding the accumulator while
+/// preserving enough entries for REDQUEEN dual-trace and I2S mutations.
+const MAX_ENTRIES_PER_SITE: u8 = 8;
+
+/// Number of slots in the per-site count array. Must be a power of two so that
+/// `cmp_id & (SITE_COUNT_SLOTS - 1)` is a valid index. Hash collisions cause
+/// two sites to share a budget, which is acceptable because the cap is a
+/// performance heuristic, not a correctness invariant.
+const SITE_COUNT_SLOTS: usize = 512;
+const _: () = assert!(SITE_COUNT_SLOTS.is_power_of_two());
+
 /// Largest integer JavaScript can represent exactly (`2^53 - 1`).
 const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 
@@ -61,27 +75,33 @@ pub type CmpLogEntry = (CmpValues, u32, CmpLogOperator);
 struct CmpLogState {
     enabled: bool,
     entries: Vec<CmpLogEntry>,
+    /// Per-site entry counts indexed by `cmp_id & (SITE_COUNT_SLOTS - 1)`.
+    /// Zeroed on drain/enable/disable.
+    site_counts: [u8; SITE_COUNT_SLOTS],
 }
 
 thread_local! {
-    static CMPLOG_STATE: RefCell<CmpLogState> = const { RefCell::new(CmpLogState { enabled: false, entries: Vec::new() }) };
+    static CMPLOG_STATE: RefCell<CmpLogState> = const { RefCell::new(CmpLogState { enabled: false, entries: Vec::new(), site_counts: [0u8; SITE_COUNT_SLOTS] }) };
 }
 
-/// Enable CmpLog recording, clearing any stale entries from a prior session.
+/// Enable CmpLog recording, clearing any stale entries and per-site counts
+/// from a prior session.
 pub fn enable() {
     CMPLOG_STATE.with(|s| {
         let mut state = s.borrow_mut();
         state.entries.clear();
+        state.site_counts = [0u8; SITE_COUNT_SLOTS];
         state.enabled = true;
     });
 }
 
-/// Disable CmpLog recording and clear accumulated entries.
+/// Disable CmpLog recording and clear accumulated entries and per-site counts.
 pub fn disable() {
     CMPLOG_STATE.with(|s| {
         let mut state = s.borrow_mut();
         state.enabled = false;
         state.entries.clear();
+        state.site_counts = [0u8; SITE_COUNT_SLOTS];
     });
 }
 
@@ -98,27 +118,65 @@ impl Drop for TestCleanupGuard {
 }
 
 /// Check if CmpLog recording is currently enabled.
+///
+/// Only used in tests now that `trace_cmp_record` uses [`is_site_at_cap`]
+/// for its early-exit check.
+#[cfg(test)]
 pub fn is_enabled() -> bool {
     CMPLOG_STATE.with(|s| s.borrow().enabled)
 }
 
+/// Check if a comparison site has reached its per-site entry cap.
+///
+/// Returns `true` (skip this site) when:
+/// - CmpLog is disabled (no active Fuzzer)
+/// - The global 4096-entry cap has been reached
+/// - The per-site count for `cmp_id` has reached `MAX_ENTRIES_PER_SITE`
+///
+/// Designed to be called from `trace_cmp_record` *before* serialization, so
+/// that NAPI extraction and ryu_js formatting are skipped entirely for capped
+/// sites. Uses an immutable borrow - the count is incremented later in `push()`.
+pub fn is_site_at_cap(cmp_id: u32) -> bool {
+    CMPLOG_STATE.with(|s| {
+        let state = s.borrow();
+        if !state.enabled {
+            return true;
+        }
+        if state.entries.len() >= MAX_ENTRIES {
+            return true;
+        }
+        let slot = (cmp_id as usize) & (SITE_COUNT_SLOTS - 1);
+        state.site_counts[slot] >= MAX_ENTRIES_PER_SITE
+    })
+}
+
 /// Push an enriched comparison entry into the thread-local accumulator.
 ///
-/// Silently drops entries when disabled or at capacity (4096).
+/// Silently drops entries when disabled, at global capacity (4096), or when the
+/// per-site cap for `site_id` has been reached.
 pub fn push(entry: CmpValues, site_id: u32, operator: CmpLogOperator) {
     CMPLOG_STATE.with(|s| {
         let mut state = s.borrow_mut();
         if state.enabled && state.entries.len() < MAX_ENTRIES {
+            let slot = (site_id as usize) & (SITE_COUNT_SLOTS - 1);
+            if state.site_counts[slot] >= MAX_ENTRIES_PER_SITE {
+                return;
+            }
             state.entries.push((entry, site_id, operator));
+            state.site_counts[slot] = state.site_counts[slot].saturating_add(1);
         }
     });
 }
 
 /// Drain all accumulated enriched entries and return them.
 ///
-/// The accumulator is empty after this call.
+/// The accumulator and per-site counts are reset after this call.
 pub fn drain() -> Vec<CmpLogEntry> {
-    CMPLOG_STATE.with(|s| std::mem::take(&mut s.borrow_mut().entries))
+    CMPLOG_STATE.with(|s| {
+        let mut state = s.borrow_mut();
+        state.site_counts = [0u8; SITE_COUNT_SLOTS];
+        std::mem::take(&mut state.entries)
+    })
 }
 
 /// Create a `CmplogBytes` from a byte slice, truncating to 32 bytes.
@@ -560,6 +618,234 @@ mod tests {
         assert!(is_enabled());
         disable(); // single disable is sufficient
         assert!(!is_enabled());
+    }
+
+    // === Per-site cap tests ===
+
+    #[test]
+    fn test_per_site_entries_within_cap_are_recorded() {
+        let _cleanup = reset();
+        enable();
+        let site_id = 42;
+        for i in 0..5 {
+            push(CmpValues::U8((i, 0, false)), site_id, CmpLogOperator::Equal);
+        }
+        let entries = drain();
+        assert_eq!(entries.len(), 5);
+    }
+
+    #[test]
+    fn test_per_site_entries_beyond_cap_are_dropped() {
+        let _cleanup = reset();
+        enable();
+        let site_id = 42;
+        for i in 0..(MAX_ENTRIES_PER_SITE + 4) {
+            push(CmpValues::U8((i, 0, false)), site_id, CmpLogOperator::Equal);
+        }
+        let entries = drain();
+        assert_eq!(entries.len(), MAX_ENTRIES_PER_SITE as usize);
+    }
+
+    #[test]
+    fn test_per_site_different_sites_have_independent_budgets() {
+        let _cleanup = reset();
+        enable();
+        // Site 1 and site 2 do not collide (1 & 511 = 1, 2 & 511 = 2)
+        let site_a = 1;
+        let site_b = 2;
+        // Fill site A to cap
+        for i in 0..MAX_ENTRIES_PER_SITE {
+            push(CmpValues::U8((i, 0, false)), site_a, CmpLogOperator::Equal);
+        }
+        // Site B should still accept entries
+        push(CmpValues::U8((99, 0, false)), site_b, CmpLogOperator::Equal);
+        let entries = drain();
+        assert_eq!(entries.len(), MAX_ENTRIES_PER_SITE as usize + 1);
+        // Last entry should be from site B
+        assert_eq!(entries.last().unwrap().1, site_b);
+    }
+
+    #[test]
+    fn test_per_site_colliding_sites_share_budget() {
+        let _cleanup = reset();
+        enable();
+        // Sites 1 and 513 collide: 1 & 511 == 513 & 511 == 1
+        let site_a = 1;
+        let site_b = 513;
+        assert_eq!(
+            site_a & (SITE_COUNT_SLOTS as u32 - 1),
+            site_b & (SITE_COUNT_SLOTS as u32 - 1),
+        );
+        // Push 5 entries for site A, then 3 for site B (total 8 = cap)
+        for i in 0..5u8 {
+            push(CmpValues::U8((i, 0, false)), site_a, CmpLogOperator::Equal);
+        }
+        for i in 0..3u8 {
+            push(CmpValues::U8((i, 0, false)), site_b, CmpLogOperator::Equal);
+        }
+        assert_eq!(drain().len(), MAX_ENTRIES_PER_SITE as usize);
+        // One more push to either site should be dropped
+        enable();
+        for i in 0..5u8 {
+            push(CmpValues::U8((i, 0, false)), site_a, CmpLogOperator::Equal);
+        }
+        for i in 0..5u8 {
+            push(CmpValues::U8((i, 0, false)), site_b, CmpLogOperator::Equal);
+        }
+        // Combined: 10 attempted, 8 recorded (shared budget)
+        assert_eq!(drain().len(), MAX_ENTRIES_PER_SITE as usize);
+    }
+
+    #[test]
+    fn test_per_site_global_cap_still_applies() {
+        let _cleanup = reset();
+        enable();
+        // Use many different site IDs so per-site caps are not hit
+        // Each site gets 1 entry, fill to global cap
+        for i in 0..(MAX_ENTRIES as u32 + 10) {
+            // Use site IDs that won't collide heavily: multiply by a large
+            // prime to spread across the 512 slots
+            push(
+                CmpValues::U8((0, 0, false)),
+                i.wrapping_mul(7919),
+                CmpLogOperator::Equal,
+            );
+        }
+        let entries = drain();
+        // 7919 mod 512 = 239, gcd(239,512) = 1, so i*7919 mod 512 cycles
+        // through all 512 slots. The first 4096 pushes distribute 8 entries
+        // per slot (4096/512), hitting both the global and per-site caps
+        // simultaneously. The remaining 10 pushes are all dropped.
+        assert_eq!(entries.len(), MAX_ENTRIES);
+    }
+
+    #[test]
+    fn test_per_site_drain_resets_counts() {
+        let _cleanup = reset();
+        enable();
+        let site_id = 42;
+        // Fill site to cap
+        for _ in 0..MAX_ENTRIES_PER_SITE {
+            push(CmpValues::U8((1, 0, false)), site_id, CmpLogOperator::Equal);
+        }
+        assert_eq!(drain().len(), MAX_ENTRIES_PER_SITE as usize);
+        // After drain, counts should be reset - new entry should be accepted
+        push(CmpValues::U8((2, 0, false)), site_id, CmpLogOperator::Equal);
+        let entries = drain();
+        assert_eq!(entries.len(), 1);
+    }
+
+    #[test]
+    fn test_per_site_enable_resets_counts() {
+        let _cleanup = reset();
+        enable();
+        let site_id = 42;
+        // Fill site to cap
+        for _ in 0..MAX_ENTRIES_PER_SITE {
+            push(CmpValues::U8((1, 0, false)), site_id, CmpLogOperator::Equal);
+        }
+        // Re-enable should reset counts
+        enable();
+        push(CmpValues::U8((2, 0, false)), site_id, CmpLogOperator::Equal);
+        let entries = drain();
+        assert_eq!(entries.len(), 1);
+    }
+
+    #[test]
+    fn test_is_site_at_cap_returns_true_when_disabled() {
+        let _cleanup = reset();
+        // Disabled by default after reset
+        assert!(is_site_at_cap(42));
+    }
+
+    #[test]
+    fn test_is_site_at_cap_returns_true_when_site_at_cap() {
+        let _cleanup = reset();
+        enable();
+        let site_id = 42;
+        for _ in 0..MAX_ENTRIES_PER_SITE {
+            push(CmpValues::U8((1, 0, false)), site_id, CmpLogOperator::Equal);
+        }
+        assert!(is_site_at_cap(site_id));
+    }
+
+    #[test]
+    fn test_is_site_at_cap_returns_false_when_room() {
+        let _cleanup = reset();
+        enable();
+        let site_id = 42;
+        push(CmpValues::U8((1, 0, false)), site_id, CmpLogOperator::Equal);
+        assert!(!is_site_at_cap(site_id));
+    }
+
+    #[test]
+    fn test_is_site_at_cap_returns_true_when_fully_saturated() {
+        let _cleanup = reset();
+        enable();
+        // Fill to global cap using sequential site IDs (0..4095). With 512
+        // slots and MAX_ENTRIES_PER_SITE=8, every slot gets exactly 8 entries
+        // (4096/512=8), so both the global cap and all per-site caps are
+        // reached simultaneously. The global-cap-only path (entries.len() >=
+        // MAX_ENTRIES) cannot be tested in isolation because 512*8=4096.
+        for i in 0..MAX_ENTRIES as u32 {
+            push(CmpValues::U8((0, 0, false)), i, CmpLogOperator::Equal);
+        }
+        assert!(is_site_at_cap(9999));
+    }
+
+    #[test]
+    fn test_per_site_multi_entry_counts_both_entries() {
+        let _cleanup = reset();
+        enable();
+        let site_id = 42;
+        // Simulate numeric comparisons producing 2 entries each (integer + bytes).
+        // Push 4 pairs = 8 entries total, hitting the per-site cap.
+        for i in 0..4u8 {
+            push(CmpValues::U8((i, 0, false)), site_id, CmpLogOperator::Equal);
+            push(
+                CmpValues::Bytes((to_cmplog_bytes(&[i]), to_cmplog_bytes(&[0]))),
+                site_id,
+                CmpLogOperator::Equal,
+            );
+        }
+        let entries = drain();
+        assert_eq!(entries.len(), MAX_ENTRIES_PER_SITE as usize);
+
+        // 5th pair should be fully dropped
+        enable();
+        for i in 0..5u8 {
+            push(CmpValues::U8((i, 0, false)), site_id, CmpLogOperator::Equal);
+            push(
+                CmpValues::Bytes((to_cmplog_bytes(&[i]), to_cmplog_bytes(&[0]))),
+                site_id,
+                CmpLogOperator::Equal,
+            );
+        }
+        let entries = drain();
+        assert_eq!(entries.len(), MAX_ENTRIES_PER_SITE as usize);
+    }
+
+    #[test]
+    fn test_per_site_partial_multi_entry_drop_at_cap_boundary() {
+        let _cleanup = reset();
+        enable();
+        let site_id = 42;
+        // Push 7 entries for the site (1 slot remaining under cap of 8)
+        for i in 0..7u8 {
+            push(CmpValues::U8((i, 0, false)), site_id, CmpLogOperator::Equal);
+        }
+        // Push 2 more entries for the same site (simulating a numeric pair)
+        // First should succeed (count becomes 8), second should be dropped
+        push(CmpValues::U8((7, 0, false)), site_id, CmpLogOperator::Equal);
+        push(
+            CmpValues::Bytes((to_cmplog_bytes(b"7"), to_cmplog_bytes(b"0"))),
+            site_id,
+            CmpLogOperator::Equal,
+        );
+        let entries = drain();
+        assert_eq!(entries.len(), MAX_ENTRIES_PER_SITE as usize);
+        // Last recorded entry should be the U8 (8th entry), not the Bytes
+        assert!(matches!(entries.last().unwrap().0, CmpValues::U8(_)));
     }
 
     // === CmpLogOperator tests ===

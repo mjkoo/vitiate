@@ -21,7 +21,7 @@ pub fn trace_cmp_record(
 ) {
     // Errors silently ignored - a throw here would skip the comparison in the IIFE body
     let _: Result<()> = (|| {
-        if !crate::cmplog::is_enabled() {
+        if crate::cmplog::is_site_at_cap(cmp_id) {
             return Ok(());
         }
 
