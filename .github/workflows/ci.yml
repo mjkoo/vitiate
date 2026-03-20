@@ -166,7 +166,7 @@ jobs:
       image: node:22-alpine
     steps:
       - name: Install system dependencies
-        run: apk add --no-cache build-base python3 git curl bash libucontext-dev
+        run: apk add --no-cache build-base python3 git curl bash libucontext-dev tar
 
       - uses: actions/checkout@v6
 
