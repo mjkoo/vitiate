@@ -1,6 +1,6 @@
 {
   "name": "@vitiate/fuzzed-data-provider",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "A modern fuzzer for the JavaScript ecosystem - structured input provider for fuzz targets",
   "license": "MIT",
   "repository": {
