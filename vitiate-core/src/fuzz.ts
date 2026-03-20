@@ -48,7 +48,7 @@ function getCachedCliOptions(): FuzzOptions {
   return (cachedCliOptions ??= getCliOptions());
 }
 
-type FuzzTarget = (data: Buffer) => void | Promise<void>;
+type FuzzTarget = (data: Buffer) => unknown | Promise<unknown>;
 
 /** INT32_MAX - disables Vitest's built-in timeout so vitiate manages its own. */
 const VITEST_NO_TIMEOUT = 2_147_483_647;
@@ -323,13 +323,17 @@ function registerFuzzTest(
         detectorManager?.beforeIteration();
         let targetError: unknown;
         let targetCompletedOk = true;
+        let targetReturnValue: unknown;
         try {
-          await target(entry);
+          targetReturnValue = await target(entry);
         } catch (e) {
           targetError = e;
           targetCompletedOk = false;
         }
-        const detectorError = detectorManager?.endIteration(targetCompletedOk);
+        const detectorError = detectorManager?.endIteration(
+          targetCompletedOk,
+          targetReturnValue,
+        );
         const failure = detectorError ?? targetError;
         if (failure !== undefined) {
           const err =

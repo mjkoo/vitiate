@@ -170,12 +170,15 @@ export class DetectorManager {
    * Re-throws non-VulnerabilityError exceptions (detector bugs), unless
    * a stashed VulnerabilityError exists (real finding takes priority).
    */
-  endIteration(targetCompletedOk: boolean): VulnerabilityError | undefined {
+  endIteration(
+    targetCompletedOk: boolean,
+    targetReturnValue?: unknown,
+  ): VulnerabilityError | undefined {
     try {
       const stashed = drainStashedVulnerabilityError();
       if (targetCompletedOk) {
         try {
-          const afterIterationResult = this.afterIteration();
+          const afterIterationResult = this.afterIteration(targetReturnValue);
           return afterIterationResult ?? stashed;
         } catch (e) {
           if (stashed) return stashed;
@@ -191,13 +194,15 @@ export class DetectorManager {
     }
   }
 
-  private afterIteration(): VulnerabilityError | undefined {
+  private afterIteration(
+    targetReturnValue?: unknown,
+  ): VulnerabilityError | undefined {
     let firstVulnerabilityError: VulnerabilityError | undefined;
     let firstNonVulnerabilityError: unknown;
 
     for (const detector of this.detectors) {
       try {
-        detector.afterIteration();
+        detector.afterIteration(targetReturnValue);
       } catch (e) {
         if (e instanceof VulnerabilityError) {
           firstVulnerabilityError ??= e;

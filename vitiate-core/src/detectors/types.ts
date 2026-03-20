@@ -39,7 +39,7 @@ export interface Detector {
   /** Called before each target execution. Capture baseline state. */
   beforeIteration(): void;
   /** Called after target execution completes without throwing. Check for violations. */
-  afterIteration(): void;
+  afterIteration(targetReturnValue?: unknown): void;
   /**
    * Called after every iteration regardless of exit kind.
    * Restores any per-iteration state captured by beforeIteration().

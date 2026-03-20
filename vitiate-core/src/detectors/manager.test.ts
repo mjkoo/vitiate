@@ -733,3 +733,59 @@ describe("installDetectorModuleHooks", () => {
     expect(fn).not.toThrow();
   });
 });
+
+// ── endIteration return value forwarding ─────────────────────────────────
+
+describe("DetectorManager.endIteration return value forwarding", () => {
+  function createManagerWithReturnValueCapture(): {
+    manager: DetectorManager;
+    receivedValues: unknown[];
+  } {
+    const receivedValues: unknown[] = [];
+    const capturingDetector: Detector = {
+      name: "capture",
+      tier: 1,
+      getTokens: () => [],
+      setup: () => {},
+      beforeIteration: () => {},
+      afterIteration: (targetReturnValue?: unknown) => {
+        receivedValues.push(targetReturnValue);
+      },
+      resetIteration: () => {},
+      teardown: () => {},
+    };
+
+    const manager = new DetectorManager({
+      prototypePollution: false,
+      commandInjection: false,
+      pathTraversal: false,
+    });
+    Object.defineProperty(manager, "detectors", {
+      value: [capturingDetector],
+    });
+
+    return { manager, receivedValues };
+  }
+
+  it("forwards return value to detector afterIteration", () => {
+    const { manager, receivedValues } = createManagerWithReturnValueCapture();
+    const testValue = { x: 42 };
+    manager.beforeIteration();
+    manager.endIteration(true, testValue);
+    expect(receivedValues).toEqual([testValue]);
+  });
+
+  it("forwards undefined when called without second argument", () => {
+    const { manager, receivedValues } = createManagerWithReturnValueCapture();
+    manager.beforeIteration();
+    manager.endIteration(true);
+    expect(receivedValues).toEqual([undefined]);
+  });
+
+  it("does not call afterIteration on non-Ok exit", () => {
+    const { manager, receivedValues } = createManagerWithReturnValueCapture();
+    manager.beforeIteration();
+    manager.endIteration(false);
+    expect(receivedValues).toHaveLength(0);
+  });
+});

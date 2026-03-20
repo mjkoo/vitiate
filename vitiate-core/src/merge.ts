@@ -171,7 +171,7 @@ export function appendControlRecord(
 
 // -- Merge mode orchestration --
 
-type FuzzTarget = (data: Buffer) => void | Promise<void>;
+type FuzzTarget = (data: Buffer) => unknown | Promise<unknown>;
 
 export interface MergeModeOptions {
   target: FuzzTarget;
@@ -241,8 +241,9 @@ export async function runMergeMode(options: MergeModeOptions): Promise<void> {
     for (const entry of remaining) {
       detectorManager?.beforeIteration();
       let targetCompletedOk = true;
+      let targetReturnValue: unknown;
       try {
-        await target(entry.data);
+        targetReturnValue = await target(entry.data);
       } catch {
         targetCompletedOk = false;
         process.stderr.write(
@@ -251,7 +252,10 @@ export async function runMergeMode(options: MergeModeOptions): Promise<void> {
         coverageMap.fill(0);
       }
 
-      const detectorError = detectorManager?.endIteration(targetCompletedOk);
+      const detectorError = detectorManager?.endIteration(
+        targetCompletedOk,
+        targetReturnValue,
+      );
       if (detectorError) {
         process.stderr.write(
           `vitiate: merge: warning: detector finding in ${entry.path}: ${detectorError.message}\n`,
@@ -363,14 +367,18 @@ export async function runOptimizeMode(
     for (const entry of seedEntries) {
       detectorManager?.beforeIteration();
       let targetCompletedOk = true;
+      let seedReturnValue: unknown;
       try {
-        await target(entry.data);
+        seedReturnValue = await target(entry.data);
       } catch {
         targetCompletedOk = false;
         // Seed entries might throw; clear partial coverage and skip
         coverageMap.fill(0);
       }
-      const detectorError = detectorManager?.endIteration(targetCompletedOk);
+      const detectorError = detectorManager?.endIteration(
+        targetCompletedOk,
+        seedReturnValue,
+      );
       if (detectorError) {
         process.stderr.write(
           `vitiate: optimize: warning: detector finding in seed ${entry.path}: ${detectorError.message}\n`,
@@ -391,14 +399,18 @@ export async function runOptimizeMode(
     for (const entry of cachedEntries) {
       detectorManager?.beforeIteration();
       let targetCompletedOk = true;
+      let cachedReturnValue: unknown;
       try {
-        await target(entry.data);
+        cachedReturnValue = await target(entry.data);
       } catch {
         targetCompletedOk = false;
         // Skip entries that throw
         coverageMap.fill(0);
       }
-      const detectorError = detectorManager?.endIteration(targetCompletedOk);
+      const detectorError = detectorManager?.endIteration(
+        targetCompletedOk,
+        cachedReturnValue,
+      );
       if (detectorError) {
         process.stderr.write(
           `vitiate: optimize: warning: detector finding in ${entry.path}: ${detectorError.message}\n`,

@@ -101,15 +101,15 @@ function beginIteration(
  * to recover the error for the artifact.
  */
 export function makeBatchCallback(
-  target: (data: Buffer) => void,
+  target: (data: Buffer) => unknown,
   detectorManager: Pick<DetectorManager, "beforeIteration" | "endIteration">,
 ): (inputBuffer: Buffer, inputLength: number) => number {
   return (inputBuffer: Buffer, inputLength: number): number => {
     const input = inputBuffer.subarray(0, inputLength);
     beginIteration(detectorManager);
     try {
-      target(input);
-      const vuln = detectorManager.endIteration(true);
+      const returnValue = target(input);
+      const vuln = detectorManager.endIteration(true, returnValue);
       if (vuln) return 1; // ExitKind.Crash (detector finding)
       return 0; // ExitKind.Ok
     } catch {
@@ -139,6 +139,8 @@ interface TargetExecutionResult {
   error?: Error;
   /** True when the target returned a Promise (async target). */
   isAsync?: boolean;
+  /** The target's return value (sync: direct return, async: resolved Promise value). */
+  result?: unknown;
 }
 
 /**
@@ -148,7 +150,7 @@ interface TargetExecutionResult {
  * calls directly if no Watchdog). Handles async targets via arm/disarm.
  */
 async function executeTarget(
-  target: (data: Buffer) => void | Promise<void>,
+  target: (data: Buffer) => unknown | Promise<unknown>,
   input: Buffer,
   fuzzer: Fuzzer,
   timeoutMs: number | undefined,
@@ -157,7 +159,15 @@ async function executeTarget(
 
   // fuzzer.runTarget: arms watchdog (if owned), calls target at the NAPI
   // C level, disarms. If no watchdog, calls directly without timeout.
-  const targetResult = fuzzer.runTarget(target, input, timeoutMs ?? 0);
+  // Cast: the NAPI .d.ts declares void|Promise<void> because it is
+  // auto-generated from Rust #[napi] annotations and not manually patched.
+  // At runtime the callback's return value is captured in
+  // targetResult.result regardless of the declared type.
+  const targetResult = fuzzer.runTarget(
+    target as (data: Buffer) => void | Promise<void>,
+    input,
+    timeoutMs ?? 0,
+  );
 
   if (targetResult.exitKind === ExitKind.Timeout) {
     return {
@@ -187,8 +197,9 @@ async function executeTarget(
     if (hasTimeout) {
       fuzzer.armWatchdog(timeoutMs);
     }
+    let resolvedValue: unknown;
     try {
-      await targetResult.result;
+      resolvedValue = await targetResult.result;
     } catch (e) {
       if (hasTimeout && fuzzer.didWatchdogFire) {
         return {
@@ -207,10 +218,10 @@ async function executeTarget(
         fuzzer.disarmWatchdog();
       }
     }
-    return { exitKind: ExitKind.Ok, isAsync: true };
+    return { exitKind: ExitKind.Ok, isAsync: true, result: resolvedValue };
   }
 
-  return { exitKind: ExitKind.Ok };
+  return { exitKind: ExitKind.Ok, result: targetResult.result };
 }
 
 /**
@@ -262,7 +273,7 @@ interface CalibrationResult {
 }
 
 async function runCalibration(
-  target: (data: Buffer) => void | Promise<void>,
+  target: (data: Buffer) => unknown | Promise<unknown>,
   input: Buffer,
   fuzzer: Fuzzer,
   timeoutMs: number | undefined,
@@ -283,6 +294,7 @@ async function runCalibration(
     let { exitKind } = calibrationResult;
     const detectorError = detectorManager.endIteration(
       exitKind === ExitKind.Ok,
+      calibrationResult.result,
     );
     if (detectorError) {
       exitKind = ExitKind.Crash;
@@ -327,7 +339,7 @@ interface StageCrash {
  * completed without crashes.
  */
 async function runStage(
-  target: (data: Buffer) => void | Promise<void>,
+  target: (data: Buffer) => unknown | Promise<unknown>,
   fuzzer: Fuzzer,
   timeoutMs: number | undefined,
   detectorManager: DetectorManager,
@@ -340,11 +352,17 @@ async function runStage(
 
     const stageStartNs = process.hrtime.bigint();
     beginIteration(detectorManager);
-    let { exitKind: stageExitKind, error: stageCaughtError } =
-      await executeTarget(target, stageInput, fuzzer, timeoutMs);
+    const stageExecResult = await executeTarget(
+      target,
+      stageInput,
+      fuzzer,
+      timeoutMs,
+    );
+    let { exitKind: stageExitKind, error: stageCaughtError } = stageExecResult;
 
     const stageDetectorError = detectorManager.endIteration(
       stageExitKind === ExitKind.Ok,
+      stageExecResult.result,
     );
     if (stageDetectorError) {
       stageExitKind = ExitKind.Crash;
@@ -417,7 +435,7 @@ export interface FuzzLoopOptions {
 }
 
 export async function runFuzzLoop(
-  target: (data: Buffer) => void | Promise<void>,
+  target: (data: Buffer) => unknown | Promise<unknown>,
   testName: string,
   relativeTestFilePath: string,
   options: FuzzOptions,
@@ -770,6 +788,7 @@ export async function runFuzzLoop(
     let { exitKind: replayExitKind, error: replayError } = replayResult;
     const detectorError = detectorManager.endIteration(
       replayExitKind === ExitKind.Ok,
+      replayResult.result,
     );
     if (detectorError) {
       replayExitKind = ExitKind.Crash;
@@ -835,6 +854,7 @@ export async function runFuzzLoop(
 
       const detectorError = detectorManager.endIteration(
         exitKind === ExitKind.Ok,
+        firstResult.result,
       );
       if (detectorError) {
         exitKind = ExitKind.Crash;
@@ -890,15 +910,17 @@ export async function runFuzzLoop(
 
         const startNs = process.hrtime.bigint();
         beginIteration(detectorManager);
-        let { exitKind, error: caughtError } = await executeTarget(
+        const asyncExecResult = await executeTarget(
           target,
           input,
           fuzzer,
           timeoutMs,
         );
+        let { exitKind, error: caughtError } = asyncExecResult;
 
         const detectorError = detectorManager.endIteration(
           exitKind === ExitKind.Ok,
+          asyncExecResult.result,
         );
         if (detectorError) {
           exitKind = ExitKind.Crash;
@@ -1044,7 +1066,7 @@ export async function runFuzzLoop(
  */
 async function minimizeCrashInput(
   input: Buffer,
-  target: (data: Buffer) => void | Promise<void>,
+  target: (data: Buffer) => unknown | Promise<unknown>,
   fuzzer: Fuzzer,
   timeoutMs: number | undefined,
   options: FuzzOptions,
@@ -1058,6 +1080,7 @@ async function minimizeCrashInput(
 
     const detectorError = detectorManager.endIteration(
       result.exitKind === ExitKind.Ok,
+      result.result,
     );
     // If a detector fires, accept iff original was same detector type.
     if (detectorError) {

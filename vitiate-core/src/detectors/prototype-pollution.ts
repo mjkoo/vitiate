@@ -86,6 +86,72 @@ function formatKey(key: string | symbol): string {
   return typeof key === "symbol" ? key.toString() : key;
 }
 
+const MAX_WALK_DEPTH = 3;
+
+interface LeakedReference {
+  prototype: string;
+  keyPath: string;
+}
+
+/**
+ * Walk `value` to depth `MAX_WALK_DEPTH`, checking via strict identity
+ * whether any reachable object value is a monitored prototype.
+ *
+ * Returns the first match found, or `undefined` if no leak is detected.
+ * Cycle-safe via a visited `Set<object>`. Only own enumerable string keys
+ * (via `Object.keys()`) are traversed.
+ */
+export function containsPrototypeReference(
+  value: unknown,
+): LeakedReference | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+
+  const visited = new Set<object>();
+
+  function walk(
+    current: object,
+    depth: number,
+    path: string,
+  ): LeakedReference | undefined {
+    // Check the current value against all monitored prototypes
+    for (const { name, proto } of MONITORED_PROTOTYPES) {
+      if (current === proto) {
+        return { prototype: name, keyPath: path };
+      }
+    }
+
+    if (depth >= MAX_WALK_DEPTH) return undefined;
+    if (visited.has(current)) return undefined;
+    visited.add(current);
+
+    // Object.keys() or property access can throw on exotic objects
+    // (revoked Proxies, throwing getters). Treat the subtree as
+    // unwalkable and continue checking sibling branches.
+    let keys: string[];
+    try {
+      keys = Object.keys(current);
+    } catch {
+      return undefined;
+    }
+    for (const key of keys) {
+      let child: unknown;
+      try {
+        child = (current as Record<string, unknown>)[key];
+      } catch {
+        continue;
+      }
+      if (typeof child !== "object" || child === null) continue;
+      const childPath = path === "" ? key : `${path}.${key}`;
+      const found = walk(child, depth + 1, childPath);
+      if (found) return found;
+    }
+
+    return undefined;
+  }
+
+  return walk(value as object, 0, "");
+}
+
 export class PrototypePollutionDetector implements Detector {
   readonly name = "prototype-pollution";
   readonly tier = 2 as const;
@@ -108,7 +174,7 @@ export class PrototypePollutionDetector implements Detector {
     );
   }
 
-  afterIteration(): void {
+  afterIteration(targetReturnValue?: unknown): void {
     let firstFinding: VulnerabilityError | undefined;
 
     for (const snapshot of this.snapshots) {
@@ -167,9 +233,21 @@ export class PrototypePollutionDetector implements Detector {
       }
     }
 
+    // Snapshot-diff finding takes priority over reference leak
     if (firstFinding) {
       throw firstFinding;
     }
+
+    // Reference leak check: walk the return value for leaked prototype refs
+    const leak = containsPrototypeReference(targetReturnValue);
+    if (leak) {
+      throw new VulnerabilityError(this.name, "Prototype Pollution", {
+        prototype: leak.prototype,
+        changeType: "leaked-reference",
+        keyPath: leak.keyPath,
+      });
+    }
+
     this.dirty = false;
   }
 
