@@ -6,7 +6,8 @@ import {
   Watchdog,
   ExitKind,
   IterationResult,
-  traceCmpRecord,
+  cmplogGetSlotBuffer,
+  cmplogGetWritePointer,
   v8ShimAvailable,
 } from "../index.js";
 
@@ -168,41 +169,68 @@ assert.equal(
   `Expected ${ITERATIONS + 2} total execs after crash+timeout, got ${stats.totalExecs}`,
 );
 
-// ===== traceCmpRecord tests =====
+// ===== Slot buffer allocation and CmpLog pipeline tests =====
 
-// traceCmpRecord returns void (no comparison evaluation)
-assert.equal(
-  traceCmpRecord(42, 42, 0, 0),
-  undefined,
-  "traceCmpRecord returns void",
-);
-assert.equal(
-  traceCmpRecord("hello", "world", 0, 0),
-  undefined,
-  "traceCmpRecord returns void for strings",
-);
-assert.equal(
-  traceCmpRecord(3, 5, 0, 4),
-  undefined,
-  "traceCmpRecord returns void for numbers",
-);
+// ===== Slot buffer allocation tests =====
 
-// Invalid operator ID should not throw
-assert.equal(
-  traceCmpRecord(1, 2, 0, 99),
-  undefined,
-  "invalid operator ID does not throw",
-);
-assert.equal(
-  traceCmpRecord(null, undefined, 0, 0),
-  undefined,
-  "null/undefined operands do not throw",
-);
-
-console.log("traceCmpRecord tests passed!");
-
-// ===== CmpLog pipeline tests =====
+// Verify slot buffer and write pointer allocation, and cross-validate
+// constants that must match between JS (globals.ts) and Rust (cmplog.rs).
 {
+  const SLOT_SIZE_JS = 80;
+  const SLOT_BUFFER_SIZE_JS = 256 * 1024;
+  const MAX_SLOTS_JS = (SLOT_BUFFER_SIZE_JS / SLOT_SIZE_JS) | 0;
+
+  const slotBuffer = cmplogGetSlotBuffer();
+  assert.ok(
+    Buffer.isBuffer(slotBuffer),
+    "cmplogGetSlotBuffer returns a Buffer",
+  );
+  assert.equal(
+    slotBuffer.length,
+    SLOT_BUFFER_SIZE_JS,
+    `Slot buffer size mismatch: Rust returned ${slotBuffer.length}, JS expects ${SLOT_BUFFER_SIZE_JS}`,
+  );
+  assert.equal(
+    (slotBuffer.length / SLOT_SIZE_JS) | 0,
+    MAX_SLOTS_JS,
+    `MAX_SLOTS mismatch: derived ${(slotBuffer.length / SLOT_SIZE_JS) | 0}, JS expects ${MAX_SLOTS_JS}`,
+  );
+
+  const writePointer = cmplogGetWritePointer();
+  assert.ok(
+    Buffer.isBuffer(writePointer),
+    "cmplogGetWritePointer returns a Buffer",
+  );
+  assert.equal(writePointer.length, 4, "Write pointer is 4 bytes");
+
+  console.log("Slot buffer allocation tests passed!");
+}
+
+// ===== CmpLog pipeline tests (via slot buffer) =====
+// These tests also serve as cross-validation of the slot layout between JS and
+// Rust: entries are written at specific byte offsets by JS, then deserialized by
+// Rust's drain(). A mismatch in SLOT_SIZE or field offsets would produce wrong
+// type tags, corrupted values, or incorrect entry counts.
+{
+  const SLOT_SIZE = 80;
+  const slotBuffer = cmplogGetSlotBuffer();
+  const writePointerBuf = cmplogGetWritePointer();
+  const buf = new Uint8Array(
+    slotBuffer.buffer,
+    slotBuffer.byteOffset,
+    slotBuffer.byteLength,
+  );
+  const view = new DataView(
+    slotBuffer.buffer,
+    slotBuffer.byteOffset,
+    slotBuffer.byteLength,
+  );
+  const wptr = new Uint32Array(
+    writePointerBuf.buffer,
+    writePointerBuf.byteOffset,
+    1,
+  );
+
   const cmpMap = createCoverageMap(MAP_SIZE);
   const cmpFuzzer = new Fuzzer(cmpMap, { maxInputLen: 256 });
 
@@ -211,25 +239,46 @@ console.log("traceCmpRecord tests passed!");
   // Verify no CmpLog entries initially.
   assert.equal(cmpFuzzer.cmpLogEntryCount, 0);
 
-  // Drain stale entries left by the traceCmpRecord tests above.
-  // The global CmpLog accumulator still holds entries from those calls.
+  // Run one iteration: write entries to slot buffer, then drain via reportResult.
   cmpFuzzer.getNextInput();
+
+  // Write a string comparison to slot 0: "foo" === "bar", cmpId=1, opId=0
+  {
+    const off = 0;
+    view.setUint32(off, 1, true); // cmpId
+    buf[off + 4] = 0; // operatorId (===)
+    buf[off + 5] = 2; // leftType = string
+    buf[off + 6] = 2; // rightType = string
+    const enc = new TextEncoder();
+    const leftN = enc.encodeInto(
+      "foo",
+      buf.subarray(off + 8, off + 40),
+    ).written;
+    buf[off + 7] = leftN;
+    const rightN = enc.encodeInto(
+      "bar",
+      buf.subarray(off + 41, off + 73),
+    ).written;
+    buf[off + 40] = rightN;
+  }
+
+  // Write a numeric comparison to slot 1: 42 === 100, cmpId=2, opId=0
+  {
+    const off = SLOT_SIZE;
+    view.setUint32(off, 2, true); // cmpId
+    buf[off + 4] = 0; // operatorId (===)
+    buf[off + 5] = 1; // leftType = f64
+    buf[off + 6] = 1; // rightType = f64
+    view.setFloat64(off + 8, 42, true);
+    view.setFloat64(off + 41, 100, true);
+  }
+
+  wptr[0] = 2; // 2 entries written
+
   cmpMap[0] = 1;
   cmpFuzzer.reportResult(ExitKind.Ok, 1000);
 
-  // Run one iteration with traceCmpRecord calls.
-  cmpFuzzer.getNextInput();
-
-  // String comparison → 1 Bytes entry (operator ID 0 = ===)
-  traceCmpRecord("foo", "bar", 1, 0);
-
-  // Integer comparison → 1 U8 + 1 Bytes entry = 2 entries
-  traceCmpRecord(42, 100, 2, 0);
-
-  cmpMap[0] = 1;
-  cmpFuzzer.reportResult(ExitKind.Ok, 1000);
-
-  // After reportResult, metadata should contain entries from traceCmpRecord calls.
+  // After reportResult, metadata should contain entries from slot buffer.
   // String pair: 1 entry (Bytes). Number pair: 2 entries (U8 + Bytes).
   assert.equal(
     cmpFuzzer.cmpLogEntryCount,
@@ -239,7 +288,27 @@ console.log("traceCmpRecord tests passed!");
 
   // Verify entries are replaced on next iteration.
   cmpFuzzer.getNextInput();
-  traceCmpRecord("only", "one", 3, 0);
+  // Write "only" === "one" to slot 0
+  {
+    const off = 0;
+    view.setUint32(off, 3, true);
+    buf[off + 4] = 0;
+    buf[off + 5] = 2;
+    buf[off + 6] = 2;
+    const enc = new TextEncoder();
+    const leftN = enc.encodeInto(
+      "only",
+      buf.subarray(off + 8, off + 40),
+    ).written;
+    buf[off + 7] = leftN;
+    const rightN = enc.encodeInto(
+      "one",
+      buf.subarray(off + 41, off + 73),
+    ).written;
+    buf[off + 40] = rightN;
+  }
+  wptr[0] = 1;
+
   cmpMap[1] = 1;
   cmpFuzzer.reportResult(ExitKind.Ok, 1000);
   assert.equal(
@@ -248,16 +317,15 @@ console.log("traceCmpRecord tests passed!");
     `Expected 1 CmpLog entry after second iteration, got ${cmpFuzzer.cmpLogEntryCount}`,
   );
 
-  // Verify skip types produce no entries.
+  // Verify empty slot buffer produces no entries.
   cmpFuzzer.getNextInput();
-  traceCmpRecord(null, undefined, 4, 0); // both skip → no entry
-  traceCmpRecord(true, false, 5, 0); // both skip → no entry
+  wptr[0] = 0; // no entries written
   cmpMap[2] = 1;
   cmpFuzzer.reportResult(ExitKind.Ok, 1000);
   assert.equal(
     cmpFuzzer.cmpLogEntryCount,
     0,
-    `Expected 0 CmpLog entries for skip types, got ${cmpFuzzer.cmpLogEntryCount}`,
+    `Expected 0 CmpLog entries for empty buffer, got ${cmpFuzzer.cmpLogEntryCount}`,
   );
 
   console.log("CmpLog pipeline tests passed!");

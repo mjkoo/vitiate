@@ -1,4 +1,16 @@
-## Requirements
+## REMOVED Requirements
+
+### Requirement: Export traceCmp napi function
+
+**Reason**: The `traceCmpRecord` NAPI function is replaced by the shared-memory slot buffer. JS writes comparison operands directly to the slot buffer without crossing the NAPI boundary. The NAPI function is removed (or gated to `#[cfg(test)]`).
+**Migration**: JS code that called `traceCmpRecord` directly (e.g., test helpers) SHALL call `globalThis.__vitiate_cmplog_write(left, right, cmpId, operatorId)` instead.
+
+### Requirement: Record function must not throw
+
+**Reason**: With no NAPI record function, this requirement moves to the `cmplog-slot-buffer` capability's "Write function must not throw" requirement, which preserves the same safety guarantee for the JS write function.
+**Migration**: No migration needed. The non-throwing guarantee is now specified in `cmplog-slot-buffer`.
+
+## MODIFIED Requirements
 
 ### Requirement: Correct comparison evaluation for all operators
 
@@ -55,6 +67,8 @@ In regression mode, `globalThis.__vitiate_cmplog_write` is a no-op function that
 - **WHEN** a Fuzzer instance is active (write pointer set to a valid slot index)
 - **AND** `__vitiate_cmplog_write("hello", "world", 42, 0)` is called
 - **THEN** the comparison operands are written to the slot buffer
+
+## ADDED Requirements
 
 ### Requirement: Export slot buffer allocation functions
 

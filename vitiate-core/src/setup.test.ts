@@ -5,7 +5,8 @@ import { initGlobals } from "./globals.js";
 describe("setup - regression mode", () => {
   const originalFuzz = process.env["VITIATE_FUZZ"];
   const originalCov = globalThis.__vitiate_cov;
-  const originalTrace = globalThis.__vitiate_trace_cmp_record;
+  const originalTrace = globalThis.__vitiate_cmplog_write;
+  const originalResetCounts = globalThis.__vitiate_cmplog_reset_counts;
 
   afterEach(() => {
     if (originalFuzz === undefined) {
@@ -14,7 +15,8 @@ describe("setup - regression mode", () => {
       process.env["VITIATE_FUZZ"] = originalFuzz;
     }
     globalThis.__vitiate_cov = originalCov;
-    globalThis.__vitiate_trace_cmp_record = originalTrace;
+    globalThis.__vitiate_cmplog_write = originalTrace;
+    globalThis.__vitiate_cmplog_reset_counts = originalResetCounts;
   });
 
   it("initializes __vitiate_cov as Uint8Array in regression mode", async () => {
@@ -24,22 +26,23 @@ describe("setup - regression mode", () => {
     expect(globalThis.__vitiate_cov.length).toBe(COVERAGE_MAP_SIZE);
   });
 
-  it("initializes __vitiate_trace_cmp_record as no-op function in regression mode", async () => {
+  it("initializes __vitiate_cmplog_write as no-op function in regression mode", async () => {
     delete process.env["VITIATE_FUZZ"];
     await initGlobals();
-    expect(typeof globalThis.__vitiate_trace_cmp_record).toBe("function");
+    expect(typeof globalThis.__vitiate_cmplog_write).toBe("function");
     // No-op: does not throw, returns void
     expect(
-      globalThis.__vitiate_trace_cmp_record("hello", "hello", 0, 0),
+      globalThis.__vitiate_cmplog_write("hello", "hello", 0, 0),
     ).toBeUndefined();
-    expect(globalThis.__vitiate_trace_cmp_record(1, 2, 0, 4)).toBeUndefined();
+    expect(globalThis.__vitiate_cmplog_write(1, 2, 0, 4)).toBeUndefined();
   });
 });
 
 describe("setup - fuzzing mode", () => {
   const originalFuzz = process.env["VITIATE_FUZZ"];
   const originalCov = globalThis.__vitiate_cov;
-  const originalTrace = globalThis.__vitiate_trace_cmp_record;
+  const originalTrace = globalThis.__vitiate_cmplog_write;
+  const originalResetCounts = globalThis.__vitiate_cmplog_reset_counts;
 
   afterEach(() => {
     if (originalFuzz === undefined) {
@@ -48,7 +51,8 @@ describe("setup - fuzzing mode", () => {
       process.env["VITIATE_FUZZ"] = originalFuzz;
     }
     globalThis.__vitiate_cov = originalCov;
-    globalThis.__vitiate_trace_cmp_record = originalTrace;
+    globalThis.__vitiate_cmplog_write = originalTrace;
+    globalThis.__vitiate_cmplog_reset_counts = originalResetCounts;
   });
 
   it("initializes __vitiate_cov as Buffer (napi-backed) in fuzzing mode", async () => {
@@ -58,13 +62,13 @@ describe("setup - fuzzing mode", () => {
     expect(globalThis.__vitiate_cov.length).toBe(COVERAGE_MAP_SIZE);
   });
 
-  it("initializes __vitiate_trace_cmp_record as napi traceCmpRecord in fuzzing mode", async () => {
+  it("initializes __vitiate_cmplog_write as JS closure that writes to slot buffer in fuzzing mode", async () => {
     process.env["VITIATE_FUZZ"] = "1";
     await initGlobals();
-    expect(typeof globalThis.__vitiate_trace_cmp_record).toBe("function");
-    // Record call returns void, does not throw
+    expect(typeof globalThis.__vitiate_cmplog_write).toBe("function");
+    // Write call returns void, does not throw
     expect(
-      globalThis.__vitiate_trace_cmp_record("hello", "hello", 0, 0),
+      globalThis.__vitiate_cmplog_write("hello", "hello", 0, 0),
     ).toBeUndefined();
   });
 });

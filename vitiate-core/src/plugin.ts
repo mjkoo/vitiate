@@ -450,7 +450,7 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin[] {
                   coverageMapSize: getCoverageMapSize(),
                   traceCmp: true,
                   coverageGlobalName: "__vitiate_cov",
-                  traceCmpGlobalName: "__vitiate_trace_cmp_record",
+                  traceCmpGlobalName: "__vitiate_cmplog_write",
                 },
               ],
             ],

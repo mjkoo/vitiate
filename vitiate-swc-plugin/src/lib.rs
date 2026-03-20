@@ -22,7 +22,7 @@ impl Default for PluginConfig {
             coverage_map_size: 65536,
             trace_cmp: true,
             coverage_global_name: "__vitiate_cov".to_string(),
-            trace_cmp_global_name: "__vitiate_trace_cmp_record".to_string(),
+            trace_cmp_global_name: "__vitiate_cmplog_write".to_string(),
         }
     }
 }
@@ -161,7 +161,7 @@ impl TransformVisitor {
     }
 
     /// Build an IIFE-wrapped comparison with CmpLog recording:
-    /// `((l, r) => (__vitiate_trace_cmp_record(l, r, cmpId, opId), l OP r))(left, right)`
+    /// `((l, r) => (__vitiate_cmplog_write(l, r, cmpId, opId), l OP r))(left, right)`
     fn make_trace_cmp_call(
         &self,
         left: Box<Expr>,
@@ -210,7 +210,7 @@ impl TransformVisitor {
             }))
         };
 
-        // __vitiate_trace_cmp_record(l, r, cmpId, opId)
+        // __vitiate_cmplog_write(l, r, cmpId, opId)
         let record_call = Box::new(Expr::Call(CallExpr {
             span: DUMMY_SP,
             ctxt: SyntaxContext::empty(),
@@ -674,7 +674,7 @@ mod tests {
         preamble_before_existing,
         r#"console.log("hello");"#,
         r#"var __vitiate_cov = globalThis.__vitiate_cov;
-var __vitiate_trace_cmp_record = globalThis.__vitiate_trace_cmp_record;
+var __vitiate_cmplog_write = globalThis.__vitiate_cmplog_write;
 console.log("hello");"#
     );
 
@@ -685,7 +685,7 @@ console.log("hello");"#
         preamble_empty_module,
         r#""#,
         r#"var __vitiate_cov = globalThis.__vitiate_cov;
-var __vitiate_trace_cmp_record = globalThis.__vitiate_trace_cmp_record;"#
+var __vitiate_cmplog_write = globalThis.__vitiate_cmplog_write;"#
     );
 
     // ===== 3. Edge Coverage - Statements =====
@@ -888,7 +888,7 @@ var __vitiate_trace_cmp_record = globalThis.__vitiate_trace_cmp_record;"#
     fn trace_cmp_strict_eq() {
         let out = transform_default(r#"var x = a === b;"#);
         assert!(
-            out.contains("__vitiate_trace_cmp_record("),
+            out.contains("__vitiate_cmplog_write("),
             "missing trace_cmp record call: {out}"
         );
         // IIFE should preserve the original === comparison in the body
@@ -908,7 +908,7 @@ var __vitiate_trace_cmp_record = globalThis.__vitiate_trace_cmp_record;"#
     fn trace_cmp_less_than() {
         let out = transform_default(r#"var x = a < b;"#);
         assert!(
-            out.contains("__vitiate_trace_cmp_record("),
+            out.contains("__vitiate_cmplog_write("),
             "missing trace_cmp record call: {out}"
         );
         // IIFE should preserve the original < comparison in the body
@@ -921,7 +921,7 @@ var __vitiate_trace_cmp_record = globalThis.__vitiate_trace_cmp_record;"#
         let out = transform_default(r#"var x = a === b && c > d;"#);
         // Exactly 2 trace_cmp record calls (one per comparison, no double-wrapping)
         assert_eq!(
-            out.matches("__vitiate_trace_cmp_record(").count(),
+            out.matches("__vitiate_cmplog_write(").count(),
             2,
             "expected exactly 2 trace_cmp: {out}"
         );
@@ -941,7 +941,7 @@ var __vitiate_trace_cmp_record = globalThis.__vitiate_trace_cmp_record;"#
     fn arithmetic_not_wrapped() {
         let out = transform_default(r#"var x = a + b;"#);
         assert!(
-            !out.contains("__vitiate_trace_cmp_record("),
+            !out.contains("__vitiate_cmplog_write("),
             "arithmetic should not be wrapped: {out}"
         );
     }
@@ -951,7 +951,7 @@ var __vitiate_trace_cmp_record = globalThis.__vitiate_trace_cmp_record;"#
     fn trace_cmp_disabled() {
         let out = transform_no_trace_cmp(r#"var x = a === b;"#);
         assert!(
-            !out.contains("__vitiate_trace_cmp_record("),
+            !out.contains("__vitiate_cmplog_write("),
             "trace_cmp should be disabled: {out}"
         );
         assert!(out.contains("==="), "comparison should remain: {out}");
@@ -985,12 +985,12 @@ var __vitiate_trace_cmp_record = globalThis.__vitiate_trace_cmp_record;"#
             "missing cov preamble: {out}"
         );
         assert!(
-            out.contains("var __vitiate_trace_cmp_record = globalThis.__vitiate_trace_cmp_record"),
+            out.contains("var __vitiate_cmplog_write = globalThis.__vitiate_cmplog_write"),
             "missing trace preamble: {out}"
         );
         // Comparison tracing IIFE
         assert!(
-            out.contains("__vitiate_trace_cmp_record("),
+            out.contains("__vitiate_cmplog_write("),
             "missing trace_cmp record call: {out}"
         );
         assert!(
@@ -1031,7 +1031,7 @@ var __vitiate_trace_cmp_record = globalThis.__vitiate_trace_cmp_record;"#
             "missing cov preamble: {out}"
         );
         assert!(
-            !out.contains("__vitiate_trace_cmp_record"),
+            !out.contains("__vitiate_cmplog_write"),
             "trace_cmp preamble should be omitted: {out}"
         );
     }
@@ -1257,7 +1257,7 @@ var __vitiate_trace_cmp_record = globalThis.__vitiate_trace_cmp_record;"#
         let out = transform_default(r#"var x = a === b && c < d || e !== f;"#);
         // 3 comparisons should generate 3 trace_cmp calls
         assert_eq!(
-            out.matches("__vitiate_trace_cmp_record(").count(),
+            out.matches("__vitiate_cmplog_write(").count(),
             3,
             "expected 3 trace_cmp for 3 comparisons: {out}"
         );
@@ -1287,7 +1287,7 @@ var __vitiate_trace_cmp_record = globalThis.__vitiate_trace_cmp_record;"#
             "IIFE record call should use custom name: {out}"
         );
         assert!(
-            !out.contains("__vitiate_trace_cmp_record"),
+            !out.contains("__vitiate_cmplog_write"),
             "default name should not appear: {out}"
         );
     }
@@ -1298,7 +1298,7 @@ var __vitiate_trace_cmp_record = globalThis.__vitiate_trace_cmp_record;"#
         let out = transform_default(r#"var x = (a < b) === (c > d);"#);
         // 3 comparisons: a < b, c > d, and the outer ===
         assert_eq!(
-            out.matches("__vitiate_trace_cmp_record(").count(),
+            out.matches("__vitiate_cmplog_write(").count(),
             3,
             "expected 3 trace_cmp for 3 comparisons: {out}"
         );
@@ -1316,7 +1316,7 @@ var __vitiate_trace_cmp_record = globalThis.__vitiate_trace_cmp_record;"#
     fn arrow_expr_body_with_comparison() {
         let out = transform_default(r#"const f = () => a === b;"#);
         assert!(
-            out.contains("__vitiate_trace_cmp_record("),
+            out.contains("__vitiate_cmplog_write("),
             "missing trace_cmp in arrow expr: {out}"
         );
         // The original `a === b` is replaced by an IIFE; `a` and `b` become

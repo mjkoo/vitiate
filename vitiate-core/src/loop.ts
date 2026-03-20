@@ -76,6 +76,18 @@ export function computeBatchSize(execsPerSec: number): number {
 }
 
 /**
+ * Reset per-site CmpLog counts and run detector pre-iteration hooks.
+ * Called at the start of every target execution (batch, calibration, stage,
+ * replay, minimize, and per-iteration fallback paths).
+ */
+function beginIteration(
+  detectorManager: Pick<DetectorManager, "beforeIteration">,
+): void {
+  globalThis.__vitiate_cmplog_reset_counts();
+  detectorManager.beforeIteration();
+}
+
+/**
  * Create a batch callback that wraps detector lifecycle hooks around
  * target execution. Returns ExitKind number: 0 = Ok, 1 = Crash.
  *
@@ -94,7 +106,7 @@ export function makeBatchCallback(
 ): (inputBuffer: Buffer, inputLength: number) => number {
   return (inputBuffer: Buffer, inputLength: number): number => {
     const input = inputBuffer.subarray(0, inputLength);
-    detectorManager.beforeIteration();
+    beginIteration(detectorManager);
     try {
       target(input);
       const vuln = detectorManager.endIteration(true);
@@ -260,7 +272,7 @@ async function runCalibration(
   while (needsMore) {
     const calibrationStartNs = process.hrtime.bigint();
 
-    detectorManager.beforeIteration();
+    beginIteration(detectorManager);
     const calibrationResult = await executeTarget(
       target,
       input,
@@ -327,7 +339,7 @@ async function runStage(
     fuzzer.stashInput(stageInput);
 
     const stageStartNs = process.hrtime.bigint();
-    detectorManager.beforeIteration();
+    beginIteration(detectorManager);
     let { exitKind: stageExitKind, error: stageCaughtError } =
       await executeTarget(target, stageInput, fuzzer, timeoutMs);
 
@@ -753,7 +765,7 @@ export async function runFuzzLoop(
 
     // Crash (solutionExitKind === 1) - replay with detectors to classify.
     fuzzer.stashInput(input);
-    detectorManager.beforeIteration();
+    beginIteration(detectorManager);
     const replayResult = await executeTarget(target, input, fuzzer, timeoutMs);
     let { exitKind: replayExitKind, error: replayError } = replayResult;
     const detectorError = detectorManager.endIteration(
@@ -815,7 +827,7 @@ export async function runFuzzLoop(
       fuzzer.stashInput(input);
 
       const startNs = process.hrtime.bigint();
-      detectorManager.beforeIteration();
+      beginIteration(detectorManager);
       const firstResult = await executeTarget(target, input, fuzzer, timeoutMs);
       isAsyncTarget = firstResult.isAsync === true;
 
@@ -877,7 +889,7 @@ export async function runFuzzLoop(
         fuzzer.stashInput(input);
 
         const startNs = process.hrtime.bigint();
-        detectorManager.beforeIteration();
+        beginIteration(detectorManager);
         let { exitKind, error: caughtError } = await executeTarget(
           target,
           input,
@@ -1041,7 +1053,7 @@ async function minimizeCrashInput(
 ): Promise<Buffer> {
   const testCandidate = async (candidate: Buffer): Promise<boolean> => {
     fuzzer.stashInput(candidate);
-    detectorManager.beforeIteration();
+    beginIteration(detectorManager);
     const result = await executeTarget(target, candidate, fuzzer, timeoutMs);
 
     const detectorError = detectorManager.endIteration(

@@ -236,6 +236,30 @@ export interface BatchResult {
   solutionExitKind?: number
 }
 
+/**
+ * Return a 256 KB Buffer backed by the CmpLog slot buffer's Rust-owned memory.
+ *
+ * Called once during `initGlobals()`. JS creates `Uint8Array` and `DataView`
+ * views over this buffer and writes comparison operands into fixed-size slots.
+ * Rust reads the slots during `drain()`.
+ *
+ * The backing memory lives in thread-local `CmpLogState` (effectively `'static`).
+ * The Buffer has no release callback because Rust owns the memory.
+ */
+export declare function cmplogGetSlotBuffer(): Buffer
+
+/**
+ * Return a 4-byte Buffer backed by the CmpLog write pointer's Rust-owned memory.
+ *
+ * Called once during `initGlobals()`. JS creates a `Uint32Array(1)` view over
+ * this buffer. The write pointer serves dual purposes: tracking the next write
+ * slot AND signaling enabled/disabled state (0xFFFFFFFF = disabled).
+ *
+ * The backing memory lives in thread-local `CmpLogState` (effectively `'static`).
+ * The Buffer has no release callback because Rust owns the memory.
+ */
+export declare function cmplogGetWritePointer(): Buffer
+
 export declare function createCoverageMap(size: number): Buffer
 
 export declare const enum ExitKind {
@@ -322,19 +346,6 @@ export declare const enum IterationResult {
   /** Input triggered a crash or timeout; added to the solutions corpus. */
   Solution = 2
 }
-
-/**
- * Record comparison operands for the I2S replacement mutator.
- *
- * When a Fuzzer is active (CmpLog enabled), the comparison operands are
- * recorded for use by the I2S replacement mutator. When no Fuzzer is active,
- * this is a no-op. The function never throws - internal errors are silently
- * ignored because the record call precedes the comparison in the IIFE body,
- * and a throw would skip the comparison, changing program control flow.
- *
- * @param operatorId - Numeric operator ID (0=`===`, 1=`!==`, 2=`==`, 3=`!=`, 4=`<`, 5=`>`, 6=`<=`, 7=`>=`)
- */
-export declare function traceCmpRecord(left: unknown, right: unknown, cmpId: number, operatorId: number): void
 
 /**
  * Returns `true` if the V8 C++ shim resolved all required symbols at runtime.

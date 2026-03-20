@@ -22,17 +22,17 @@ The operator SHALL be passed as a numeric ID, not a string. The mapping is:
 #### Scenario: Strict equality
 
 - **WHEN** `a === b` is transformed
-- **THEN** the output is `((l, r) => (__vitiate_trace_cmp_record(l, r, CMP_ID, 0), l === r))(a, b)`
+- **THEN** the output is `((l, r) => (__vitiate_cmplog_write(l, r, CMP_ID, 0), l === r))(a, b)`
 
 #### Scenario: Less-than
 
 - **WHEN** `a < b` is transformed
-- **THEN** the output is `((l, r) => (__vitiate_trace_cmp_record(l, r, CMP_ID, 4), l < r))(a, b)`
+- **THEN** the output is `((l, r) => (__vitiate_cmplog_write(l, r, CMP_ID, 4), l < r))(a, b)`
 
 #### Scenario: All comparison operators
 
 - **WHEN** any of `===`, `!==`, `==`, `!=`, `<`, `>`, `<=`, `>=` is transformed
-- **THEN** the numeric operator ID passed to `__vitiate_trace_cmp_record` matches the operator's assigned ID
+- **THEN** the numeric operator ID passed to `__vitiate_cmplog_write` matches the operator's assigned ID
 - **AND** the original comparison operator is preserved in the IIFE body
 
 #### Scenario: Operands evaluated exactly once
@@ -46,13 +46,14 @@ The operator SHALL be passed as a numeric ID, not a string. The mapping is:
 #### Scenario: cmp_id stored in accumulator
 
 - **WHEN** the record function is called with cmp_id `42`
-- **THEN** the CmpLog accumulator entry SHALL include site ID `42`
-- **AND** the site ID SHALL NOT be discarded
+- **THEN** the slot buffer entry SHALL include cmpId `42`
+- **AND** after `drain()`, the CmpLog accumulator entry SHALL include site ID `42`
 
 #### Scenario: operator ID stored as CmpLogOperator in accumulator
 
 - **WHEN** the record function is called with operator ID `4` (less-than)
-- **THEN** the CmpLog accumulator entry SHALL include `CmpLogOperator::Less`
+- **THEN** the slot buffer entry SHALL include operatorId `4`
+- **AND** after `drain()`, the CmpLog accumulator entry SHALL include `CmpLogOperator::Less`
 
 ### Requirement: Comparison tracing preserves semantics
 
@@ -113,13 +114,13 @@ tracing instrumentation is skipped entirely. Default: `true`.
 - **WHEN** the plugin is configured with `{ "traceCmp": false }`
 - **THEN** comparison operators are NOT wrapped with the tracing IIFE
 - **AND** edge coverage counters are still inserted normally
-- **AND** no `__vitiate_trace_cmp_record` preamble var is emitted
+- **AND** no `__vitiate_cmplog_write` preamble var is emitted
 
 #### Scenario: Custom traceCmpGlobalName
 
 - **WHEN** the plugin is configured with `{ "traceCmpGlobalName": "__my_record" }`
 - **THEN** the preamble contains `var __my_record = globalThis.__my_record;`
-- **AND** IIFE bodies reference `__my_record` instead of `__vitiate_trace_cmp_record`
+- **AND** IIFE bodies reference `__my_record` instead of `__vitiate_cmplog_write`
 
 ### Requirement: Non-comparison binary operators are not traced
 
@@ -135,19 +136,19 @@ and `in` / `instanceof` operators SHALL NOT be wrapped with comparison tracing.
 
 When `traceCmp` is enabled, the module/script preamble SHALL include a `var` declaration that caches the record function from `globalThis`. No additional temporary variable declarations are needed - the IIFE parameters provide operand isolation.
 
-The default name for the record function preamble variable is `__vitiate_trace_cmp_record` (configurable via `traceCmpGlobalName`).
+The default name for the record function preamble variable is `__vitiate_cmplog_write` (configurable via `traceCmpGlobalName`).
 
 #### Scenario: Preamble with trace-cmp enabled
 
 - **WHEN** a module is transformed with `traceCmp: true` (default)
 - **THEN** the preamble contains `var __vitiate_cov = globalThis.__vitiate_cov;`
-- **AND** `var __vitiate_trace_cmp_record = globalThis.__vitiate_trace_cmp_record;`
+- **AND** `var __vitiate_cmplog_write = globalThis.__vitiate_cmplog_write;`
 
 #### Scenario: Preamble with trace-cmp disabled
 
 - **WHEN** a module is transformed with `traceCmp: false`
 - **THEN** the preamble contains `var __vitiate_cov = globalThis.__vitiate_cov;`
-- **AND** no `__vitiate_trace_cmp_record` preamble var is emitted
+- **AND** no `__vitiate_cmplog_write` preamble var is emitted
 
 ### Requirement: Nested and re-entrant comparisons evaluate correctly
 

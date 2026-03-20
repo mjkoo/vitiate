@@ -1,32 +1,16 @@
-## Requirements
+## REMOVED Requirements
 
-### Requirement: CmpLogOperator enum
+### Requirement: Early-exit check before serialization
 
-The system SHALL define a `CmpLogOperator` enum with the following variants:
-- `Equal` - derived from `"==="` and `"=="`
-- `NotEqual` - derived from `"!=="` and `"!="`
-- `Less` - derived from `"<"` and `"<="`
-- `Greater` - derived from `">"` and `">="`
+**Reason**: The `is_site_at_cap` Rust function is no longer needed. Per-site cap enforcement has moved to the JS write function, which checks per-site counts before writing to the slot buffer. The NAPI `trace_cmp_record` function that called `is_site_at_cap` is removed.
+**Migration**: No migration needed. The JS write function's per-site check replaces the Rust early-exit check. The Rust global cap (4,096 entries) is still enforced during bulk processing in `push()`.
 
-#### Scenario: trace_cmp stores site ID and operator
+### Requirement: Per-site counts reset on drain, enable, and disable
 
-- **WHEN** `trace_cmp(left, right, 42, "===")` is called
-- **THEN** the accumulator entry SHALL contain the `CmpValues` for the operands, site ID `42`, and `CmpLogOperator::Equal`
+**Reason**: Per-site counts have moved from Rust to JS-local state. The reset lifecycle is now managed by the JS fuzz loop (reset at iteration start), not by Rust's `enable()`/`disable()`/`drain()`. The new behavior is specified in the `cmplog-slot-buffer` capability's "JS-local per-site counts" requirement.
+**Migration**: No migration needed. The JS fuzz loop resets `counts.fill(0)` at the top of each iteration.
 
-#### Scenario: Less-than operator mapped
-
-- **WHEN** `trace_cmp(left, right, 7, "<")` is called
-- **THEN** the accumulator entry SHALL contain site ID `7` and `CmpLogOperator::Less`
-
-#### Scenario: Less-than-or-equal mapped to Less
-
-- **WHEN** `trace_cmp(left, right, 7, "<=")` is called
-- **THEN** the accumulator entry SHALL contain `CmpLogOperator::Less`
-
-#### Scenario: Not-equal operator mapped
-
-- **WHEN** `trace_cmp(left, right, 3, "!==")` is called
-- **THEN** the accumulator entry SHALL contain `CmpLogOperator::NotEqual`
+## MODIFIED Requirements
 
 ### Requirement: Thread-local comparison log accumulator
 
@@ -186,7 +170,7 @@ For strings with multi-byte UTF-8 characters near the 32-byte boundary, `TextEnc
 
 The system SHALL provide a function to drain the slot buffer into the thread-local accumulator and return the collected enriched entries as a `Vec<(CmpValues, u32, CmpLogOperator)>`. The drain process SHALL:
 
-1. Read the write pointer to get entry count N. If N > MAX_SLOTS, return any pre-accumulated entries without processing the slot buffer or modifying the write pointer. This guards against the disabled sentinel (`0xFFFFFFFF`) and any corruption, ensuring `drain()` is safe to call regardless of CmpLog state.
+1. Read the write pointer to get entry count N. If N > MAX_SLOTS, return an empty Vec without modifying the write pointer. This guards against the disabled sentinel (`0xFFFFFFFF`) and any corruption, ensuring `drain()` is safe to call regardless of CmpLog state.
 2. For entries 0..N:
    - Read `cmpId` and `operatorId` from the slot.
    - Map `operatorId` to `CmpLogOperator` (skip slots with invalid operator IDs).
@@ -195,7 +179,7 @@ The system SHALL provide a function to drain the slot buffer into the thread-loc
      - Type 2 (string): read `len` bytes as UTF-8 -> `ExtractedValue::Str`
      - Type 0 or other: `ExtractedValue::Skip`
    - Call existing `serialize_pair(&left, &right)` to get `Vec<CmpValues>`.
-   - Append each `CmpValues` to the entries accumulator (inline, not via `push()`, because `drain()` already holds the `RefCell` borrow), enforcing the global 4,096-entry cap.
+   - Push each `CmpValues` via existing `push(entry, cmpId, operator)` (which enforces the global 4,096-entry cap).
 3. Reset the write pointer to 0.
 4. Return the accumulated entries and clear the entries vector.
 
@@ -242,79 +226,6 @@ During `reportResult()`, the drained entries SHALL be processed into `AflppCmpVa
 - **THEN** the target's instrumented comparisons write to the slot buffer via `__vitiate_cmplog_write`
 - **AND** `drain()` processes the slot buffer entries into `new_cmpvals`
 - **AND** no special code path is needed for colorization
-
-### Requirement: Site-keyed CmpLog metadata
-
-The system SHALL store CmpLog metadata in `AflppCmpValuesMetadata` format, which keys comparison values by site ID. The metadata SHALL contain:
-
-- `orig_cmpvals: HashMap<usize, Vec<CmpValues>>` - comparison values from the main loop execution, keyed by comparison site ID.
-- `new_cmpvals: HashMap<usize, Vec<CmpValues>>` - comparison values from the dual trace execution (colorized input), keyed by comparison site ID.
-- `headers: Vec<(usize, AflppCmpLogHeader)>` - comparison attributes (operator type, operand size) per site ID, stored as a list of (site ID, header) tuples.
-
-The `orig_cmpvals` and `headers` SHALL be populated during `reportResult()` by draining the enriched CmpLog accumulator, grouping entries by site ID, and deriving header attributes from the `CmpLogOperator`.
-
-The `new_cmpvals` SHALL be populated during the dual trace step of the colorization stage.
-
-#### Scenario: CmpLog entries grouped by site ID
-
-- **WHEN** a fuzz iteration produces comparisons at sites 1, 2, and 1 (site 1 hit twice)
-- **AND** `reportResult()` is called
-- **THEN** `orig_cmpvals[1]` SHALL contain 2 entries
-- **AND** `orig_cmpvals[2]` SHALL contain 1 entry
-
-#### Scenario: Headers record operator attributes
-
-- **WHEN** site ID 5 has `CmpLogOperator::Less` and operands are `U32` values
-- **THEN** `headers` SHALL contain a `(5, header)` tuple where `header` indicates `CMP_ATTRIBUTE_IS_LESSER` and the appropriate operand size
-
-#### Scenario: new_cmpvals initially empty
-
-- **WHEN** `reportResult()` populates `AflppCmpValuesMetadata`
-- **THEN** `new_cmpvals` SHALL be an empty HashMap
-- **AND** it SHALL be populated later by the colorization dual trace step
-
-### Requirement: Dual metadata storage for I2S compatibility
-
-During `reportResult()`, the system SHALL store **both** metadata types on the fuzzer state:
-
-- `AflppCmpValuesMetadata` - site-keyed, used by REDQUEEN.
-- `CmpValuesMetadata` - flat list, synthesized by flattening `orig_cmpvals` values into a `Vec<CmpValues>` at drain time. Used by I2S mutators with zero code changes.
-
-Both metadata types are populated once during `reportResult()`. No runtime adapter is needed - I2S mutators read `CmpValuesMetadata` as before.
-
-#### Scenario: I2S reads from flat metadata
-
-- **WHEN** `reportResult()` processes enriched CmpLog entries with sites 1 and 2
-- **THEN** `CmpValuesMetadata.list` SHALL contain all entries from both sites (flattened)
-- **AND** `I2SRandReplace` SHALL operate identically to before
-
-#### Scenario: I2S works when orig_cmpvals is empty
-
-- **WHEN** `reportResult()` processes an empty CmpLog drain
-- **THEN** `CmpValuesMetadata` SHALL have an empty list
-- **AND** `I2SRandReplace` SHALL return `MutationResult::Skipped`
-
-### Requirement: I2SRandReplace mutator integration
-
-The `Fuzzer` SHALL include LibAFL's `I2SRandReplace` mutator in its mutation pipeline. After the standard havoc mutation, `I2SRandReplace` SHALL be applied to the mutated input. `I2SRandReplace` reads `CmpValuesMetadata` from the fuzzer state.
-
-Since `reportResult()` stores both `AflppCmpValuesMetadata` and `CmpValuesMetadata` (flattened from `orig_cmpvals`) on the state, the I2S mutator reads `CmpValuesMetadata` directly with zero code changes.
-
-#### Scenario: I2S mutation applied after havoc
-
-- **WHEN** `getNextInput()` is called on a Fuzzer with `CmpValuesMetadata` in its state
-- **THEN** the input is first mutated by havoc mutations and then by `I2SRandReplace`
-- **AND** `I2SRandReplace` reads `CmpValuesMetadata` directly (populated by `reportResult()`)
-
-#### Scenario: I2S skips when no comparison metadata exists
-
-- **WHEN** `getNextInput()` is called and the state has no `CmpValuesMetadata`
-- **THEN** `I2SRandReplace` returns `MutationResult::Skipped` and the input is unaffected by I2S
-
-#### Scenario: I2S replaces matching bytes
-
-- **WHEN** the input contains the bytes `"test"` and `CmpValuesMetadata.list` contains `CmpValues::Bytes("test", "pass")`
-- **THEN** `I2SRandReplace` may replace `"test"` with `"pass"` in the input
 
 ### Requirement: AflppCmpValuesMetadata populated each iteration
 

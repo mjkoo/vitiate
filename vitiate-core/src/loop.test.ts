@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import {
   mkdirSync,
   rmSync,
@@ -30,7 +30,8 @@ describe("fuzz loop", () => {
   const originalCliIpc = process.env["VITIATE_CLI_IPC"];
   const originalResultsFile = process.env["VITIATE_RESULTS_FILE"];
   const originalCov = globalThis.__vitiate_cov;
-  const originalTrace = globalThis.__vitiate_trace_cmp_record;
+  const originalTrace = globalThis.__vitiate_cmplog_write;
+  const originalResetCounts = globalThis.__vitiate_cmplog_reset_counts;
 
   afterEach(() => {
     if (originalFuzz === undefined) {
@@ -51,7 +52,8 @@ describe("fuzz loop", () => {
       process.env["VITIATE_RESULTS_FILE"] = originalResultsFile;
     }
     globalThis.__vitiate_cov = originalCov;
-    globalThis.__vitiate_trace_cmp_record = originalTrace;
+    globalThis.__vitiate_cmplog_write = originalTrace;
+    globalThis.__vitiate_cmplog_reset_counts = originalResetCounts;
     if (tmpDir) {
       rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -370,7 +372,7 @@ describe("fuzz loop", () => {
         covMap[data[0]!] = 1;
       }
       if (data.length >= 2) {
-        globalThis.__vitiate_trace_cmp_record(
+        globalThis.__vitiate_cmplog_write(
           data.subarray(0, 2).toString(),
           "\xDE\xAD",
           0,
@@ -564,7 +566,7 @@ describe("fuzz loop", () => {
         if (data.length > 0) {
           covMap[data[0]!] = 1;
         }
-        globalThis.__vitiate_trace_cmp_record(
+        globalThis.__vitiate_cmplog_write(
           data.toString(),
           "target_value",
           0,
@@ -623,7 +625,7 @@ describe("fuzz loop", () => {
         }
         // Record comparison; I2S mutator will try to splice "DEAD" into inputs.
         if (data.length >= 4) {
-          globalThis.__vitiate_trace_cmp_record(
+          globalThis.__vitiate_cmplog_write(
             data.subarray(0, 4).toString(),
             "DEAD",
             0,
@@ -666,12 +668,7 @@ describe("fuzz loop", () => {
         if (data.length > 0) {
           covMap[data[0]!] = 1;
         }
-        globalThis.__vitiate_trace_cmp_record(
-          data.toString(),
-          "async_val",
-          0,
-          0,
-        );
+        globalThis.__vitiate_cmplog_write(data.toString(), "async_val", 0, 0);
       };
 
       const result = await runFuzzLoop(target, "stage-async", "test.fuzz.ts", {
@@ -696,7 +693,7 @@ describe("fuzz loop", () => {
           covMap[data[0]!] = 1;
         }
         if (data.length >= 4) {
-          globalThis.__vitiate_trace_cmp_record(
+          globalThis.__vitiate_cmplog_write(
             data.subarray(0, 4).toString(),
             "HANG",
             0,
@@ -742,7 +739,7 @@ describe("fuzz loop", () => {
           covMap[data[0]!] = 1;
         }
         if (data.length >= 4) {
-          globalThis.__vitiate_trace_cmp_record(
+          globalThis.__vitiate_cmplog_write(
             data.subarray(0, 4).toString(),
             "DEAD",
             0,
@@ -779,7 +776,7 @@ describe("fuzz loop", () => {
       // Step 1: Execute first input with new coverage + CmpLog data
       fuzzer.getNextInput();
       covMap[10] = 1;
-      globalThis.__vitiate_trace_cmp_record("hello", "world", 0, 0);
+      globalThis.__vitiate_cmplog_write("hello", "world", 0, 0);
       // ExitKind.Ok = 0, IterationResult.Interesting = 1
       const iterResult = fuzzer.reportResult(0, 1000);
       expect(iterResult).toBe(1);
@@ -842,7 +839,7 @@ describe("fuzz loop", () => {
         if (data.length > 0) {
           covMap[data[0]!] = 1;
         }
-        globalThis.__vitiate_trace_cmp_record(data.toString(), "no_wd", 0, 0);
+        globalThis.__vitiate_cmplog_write(data.toString(), "no_wd", 0, 0);
       };
 
       const result = await runFuzzLoop(target, "stage-no-wd", "test.fuzz.ts", {
@@ -872,12 +869,7 @@ describe("fuzz loop", () => {
         if (data.length > 0) {
           covMap[data[0]!] = 1;
         }
-        globalThis.__vitiate_trace_cmp_record(
-          data.toString(),
-          "calib_crash",
-          0,
-          0,
-        );
+        globalThis.__vitiate_cmplog_write(data.toString(), "calib_crash", 0, 0);
 
         const byte = data.length > 0 ? data[0]! : -1;
         const isNovel = byte >= 0 && !seenFirstBytes.has(byte);
@@ -1100,7 +1092,7 @@ describe("fuzz loop", () => {
           covMap[data[0]!] = 1;
         }
         if (data.length >= 4) {
-          globalThis.__vitiate_trace_cmp_record(
+          globalThis.__vitiate_cmplog_write(
             data.subarray(0, 4).toString(),
             "DEAD",
             0,
@@ -1583,6 +1575,16 @@ describe("checkDedupPolicy", () => {
 describe("makeBatchCallback", () => {
   type MockDetectorManager = Parameters<typeof makeBatchCallback>[1];
 
+  const originalResetCounts = globalThis.__vitiate_cmplog_reset_counts;
+
+  beforeEach(() => {
+    globalThis.__vitiate_cmplog_reset_counts = () => {};
+  });
+
+  afterEach(() => {
+    globalThis.__vitiate_cmplog_reset_counts = originalResetCounts;
+  });
+
   it("calls detector hooks per-iteration (beforeIteration and endIteration)", () => {
     let beforeCount = 0;
     let endCount = 0;
@@ -1693,7 +1695,8 @@ describe("async target detection", () => {
   let tmpDir: string;
   const originalFuzz = process.env["VITIATE_FUZZ"];
   const originalCov = globalThis.__vitiate_cov;
-  const originalTrace = globalThis.__vitiate_trace_cmp_record;
+  const originalTrace = globalThis.__vitiate_cmplog_write;
+  const originalResetCounts = globalThis.__vitiate_cmplog_reset_counts;
 
   async function setupFuzzingModeLocal(): Promise<void> {
     process.env["VITIATE_FUZZ"] = "1";
@@ -1716,7 +1719,8 @@ describe("async target detection", () => {
     resetDataDir();
     resetProjectRoot();
     globalThis.__vitiate_cov = originalCov;
-    globalThis.__vitiate_trace_cmp_record = originalTrace;
+    globalThis.__vitiate_cmplog_write = originalTrace;
+    globalThis.__vitiate_cmplog_reset_counts = originalResetCounts;
     if (tmpDir) {
       rmSync(tmpDir, { recursive: true, force: true });
     }
