@@ -3014,7 +3014,7 @@ checksum = "051eb1abcf10076295e815102942cc58f9d5e3b4560e46e53c21e8ff6f3af7b1"
 
 [[package]]
 name = "vitiate-swc-plugin"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3023,7 +3023,7 @@ dependencies = [
 
 [[package]]
 name = "vitiate_engine"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "cc",
  "hashbrown 0.16.1",

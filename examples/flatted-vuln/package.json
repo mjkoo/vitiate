@@ -1,0 +1,14 @@
+{
+  "name": "example-flatted-vuln",
+  "private": true,
+  "type": "module",
+  "scripts": {},
+  "dependencies": {
+    "@vitiate/core": "workspace:*",
+    "flatted-vulnerable": "npm:flatted@3.4.1"
+  },
+  "devDependencies": {
+    "vite": "^8.0.1",
+    "vitest": "^4.1.0"
+  }
+}
