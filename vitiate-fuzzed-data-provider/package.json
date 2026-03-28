@@ -34,12 +34,12 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsup",
+    "build": "tsdown",
     "check": "tsc --noEmit",
     "test": "vitest run"
   },
   "devDependencies": {
-    "tsup": "^8.0.0",
+    "tsdown": "^0.12.0",
     "vitest": "^4.1.0"
   }
 }

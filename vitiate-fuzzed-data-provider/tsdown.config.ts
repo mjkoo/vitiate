@@ -1,4 +1,4 @@
-import { defineConfig } from "tsup";
+import { defineConfig } from "tsdown";
 
 export default defineConfig({
   entry: {
@@ -7,5 +7,6 @@ export default defineConfig({
   format: ["esm"],
   dts: true,
   clean: true,
+  hash: false,
   target: "node18",
 });
