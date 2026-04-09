@@ -9,19 +9,19 @@ rust-version = "1.89"
 license = "MIT"
 
 [workspace.dependencies]
-hashbrown = { version = "0.16.1", default-features = false }
+hashbrown = { version = "0.17.0", default-features = false }
 libafl = { git = "https://github.com/mjkoo/LibAFL", branch = "constructable-unicode-metadata", default-features = false, features = ["std", "derive", "serdeany_autoreg", "unicode"] }
 libafl_bolts = { git = "https://github.com/mjkoo/LibAFL", branch = "constructable-unicode-metadata", default-features = false, features = ["std", "derive", "serdeany_autoreg"] }
-napi = "3.0.0"
+napi = "3.8.4"
 napi-build = "2"
-napi-derive = "3.0.0"
+napi-derive = "3.5.3"
 serde = "1"
-swc_core = "58.0.*"
+swc_core = "63.1.*"
 ryu-js = "1"
 serde_json = "1"
 cc = "1"
 libc = "0.2"
-sha2 = "0.10"
+sha2 = "0.11"
 tempfile = "3.27.0"
 
 [workspace.lints.clippy]
