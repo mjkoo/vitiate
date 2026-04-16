@@ -7,6 +7,9 @@ packages:
   - vitiate-swc-plugin
   - examples/*
   - docs
+auditConfig:
+  ignoreGhsas:
+    - GHSA-rf6f-7fwh-wjgh
 
 onlyBuiltDependencies:
   - "@optique/core"
