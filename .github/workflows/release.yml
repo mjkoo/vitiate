@@ -80,6 +80,8 @@ jobs:
         uses: taiki-e/install-action@cargo-zigbuild
 
       - uses: pnpm/action-setup@v5
+        with:
+          version: 10.30.2
 
       - uses: actions/setup-node@v6
         with:
@@ -119,6 +121,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - uses: pnpm/action-setup@v5
+        with:
+          version: 10.30.2
 
       - uses: actions/setup-node@v6
         with:
@@ -163,6 +167,8 @@ jobs:
           ref: ${{ needs.release-please.outputs.tag_name || github.sha }}
 
       - uses: pnpm/action-setup@v5
+        with:
+          version: 10.30.2
 
       - uses: actions/setup-node@v6
         with:

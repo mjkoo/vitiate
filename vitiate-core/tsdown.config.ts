@@ -8,6 +8,7 @@ export default defineConfig({
     cli: "src/cli.ts",
   },
   format: ["esm"],
+  outExtensions: () => ({ js: ".js" }),
   dts: true,
   clean: true,
   hash: false,

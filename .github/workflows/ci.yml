@@ -33,6 +33,8 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
 
       - uses: pnpm/action-setup@v5
+        with:
+          version: 10.30.2
 
       - uses: actions/setup-node@v6
         with:
@@ -92,6 +94,8 @@ jobs:
         run: cargo test --workspace
 
       - uses: pnpm/action-setup@v5
+        with:
+          version: 10.30.2
 
       - uses: actions/setup-node@v6
         with:
@@ -138,6 +142,8 @@ jobs:
         run: cargo test --workspace
 
       - uses: pnpm/action-setup@v5
+        with:
+          version: 10.30.2
 
       - uses: actions/setup-node@v6
         with:
