@@ -55,8 +55,8 @@
     "test:e2e": "vitest run --config test/vitest.e2e.config.ts"
   },
   "dependencies": {
-    "@optique/core": "1.0.0+923a6492",
-    "@optique/run": "1.0.0+923a6492",
+    "@optique/core": "1.0.0",
+    "@optique/run": "1.0.0",
     "@swc/core": "^1.15.26",
     "@vitiate/engine": "workspace:*",
     "@vitiate/swc-plugin": "workspace:*",

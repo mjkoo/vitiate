@@ -123,10 +123,10 @@ importers:
   vitiate-core:
     dependencies:
       '@optique/core':
-        specifier: 1.0.0+923a6492
+        specifier: 1.0.0
         version: 1.0.0
       '@optique/run':
-        specifier: 1.0.0+923a6492
+        specifier: 1.0.0
         version: 1.0.0
       '@swc/core':
         specifier: ^1.15.26
