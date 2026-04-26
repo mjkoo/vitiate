@@ -10,8 +10,8 @@ license = "MIT"
 
 [workspace.dependencies]
 hashbrown = { version = "0.16.1", default-features = false }
-libafl = { git = "https://github.com/mjkoo/LibAFL", branch = "constructable-unicode-metadata", default-features = false, features = ["std", "derive", "serdeany_autoreg", "unicode"] }
-libafl_bolts = { git = "https://github.com/mjkoo/LibAFL", branch = "constructable-unicode-metadata", default-features = false, features = ["std", "derive", "serdeany_autoreg"] }
+libafl = { git = "https://github.com/AFLplusplus/LibAFL", rev = "b32557c8ae7e2300657de06382f2761f831c1963", default-features = false, features = ["std", "derive", "serdeany_autoreg", "unicode"] }
+libafl_bolts = { git = "https://github.com/AFLplusplus/LibAFL", rev = "b32557c8ae7e2300657de06382f2761f831c1963", default-features = false, features = ["std", "derive", "serdeany_autoreg"] }
 napi = "3.0.0"
 napi-build = "2"
 napi-derive = "3.0.0"
