@@ -27,7 +27,7 @@ libc = "0.2"
 # several duplicate-version pairs cargo-deny would (correctly) reject. Bump once
 # swc_core moves to the 0.11 chain. artifact_hash() already uses hex::encode, so
 # the 0.11 move will be drop-in.
-sha2 = "0.10"
+sha2 = "0.11"
 tempfile = "3.27.0"
 
 [workspace.lints.clippy]
