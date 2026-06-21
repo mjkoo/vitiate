@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/mjkoo/vitiate/compare/v0.3.0...v0.3.1) (2026-06-21)
+
+
+### Bug Fixes
+
+* restore green CI, update all deps to latest, pin Rust toolchain ([#60](https://github.com/mjkoo/vitiate/issues/60)) ([5722939](https://github.com/mjkoo/vitiate/commit/5722939375b32d515f65fa33904729a19b3b2d61))
+
 ## [0.3.0](https://github.com/mjkoo/vitiate/compare/v0.2.0...v0.3.0) (2026-03-20)
 
 
