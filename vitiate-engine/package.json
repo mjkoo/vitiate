@@ -50,15 +50,15 @@
     "test": "node test/smoke.mjs"
   },
   "devDependencies": {
-    "@napi-rs/cli": "^3.6.2"
+    "@napi-rs/cli": "^3.7.2"
   },
   "optionalDependencies": {
-    "@vitiate/engine-win32-x64-msvc": "workspace:*",
-    "@vitiate/engine-linux-x64-gnu": "workspace:*",
-    "@vitiate/engine-linux-x64-musl": "workspace:*",
+    "@vitiate/engine-darwin-arm64": "workspace:*",
+    "@vitiate/engine-linux-arm-gnueabihf": "workspace:*",
     "@vitiate/engine-linux-arm64-gnu": "workspace:*",
     "@vitiate/engine-linux-arm64-musl": "workspace:*",
-    "@vitiate/engine-linux-arm-gnueabihf": "workspace:*",
-    "@vitiate/engine-darwin-arm64": "workspace:*"
+    "@vitiate/engine-linux-x64-gnu": "workspace:*",
+    "@vitiate/engine-linux-x64-musl": "workspace:*",
+    "@vitiate/engine-win32-x64-msvc": "workspace:*"
   }
 }

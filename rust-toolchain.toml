@@ -1,0 +1,8 @@
+[toolchain]
+# Pin to a specific stable release so local and CI builds are reproducible and
+# do not silently drift when a new Rust stable changes behavior (e.g. wasm-ld
+# linking of SWC plugins). Bump this deliberately as new stables are released.
+channel = "1.96.0"
+components = ["rustfmt", "clippy"]
+targets = ["wasm32-wasip1"]
+profile = "minimal"

@@ -31,19 +31,21 @@ exceptions = [
 ]
 
 [bans]
-multiple-versions = "warn"
-# Transitive duplicates from libafl (git main) and swc_core v57 that we can't resolve.
-# cargo-deny will warn if any of these become unused after a future cargo update.
+# Fail CI on any duplicate dependency version not explicitly skipped below. This
+# is what caught the hashbrown 0.16/0.17 split; keeping it as "deny" prevents a
+# silent re-introduction. Each skip is a duplicate forced by a transitive
+# dependency (swc_core or libafl) that we cannot deduplicate from our side.
+# Re-evaluate this list when bumping swc_core or the libafl rev.
+multiple-versions = "deny"
 skip = [
   { crate = "cargo-platform@0.1.9", reason = "swc_core internal: testing uses cargo_metadata 0.18" },
   { crate = "cargo_metadata@0.18.1", reason = "swc_core internal: testing vs vergen" },
-  { crate = "hashbrown@0.14.5", reason = "swc hstr/allocator require 0.14" },
-  { crate = "hashbrown@0.16.1", reason = "libafl requires 0.16 alongside swc 0.17" },
+  { crate = "hashbrown@0.14.5", reason = "swc hstr/allocator require 0.14 alongside our 0.17" },
   { crate = "siphasher@0.3.11", reason = "swc_common requires 0.3" },
   { crate = "thiserror@1.0.69", reason = "swc_core testing transitive via cargo_metadata 0.18" },
   { crate = "thiserror-impl@1.0.69", reason = "follows thiserror 1.x" },
   { crate = "unicode-width@0.1.14", reason = "swc_core internal: miette requires 0.1" },
-  { crate = "wit-bindgen@0.51.0", reason = "libafl getrandom wasm deps require 0.51 alongside swc 0.57" },
+  { crate = "wit-bindgen@0.51.0", reason = "libafl getrandom wasm deps require 0.51 alongside swc" },
 ]
 
 [sources]

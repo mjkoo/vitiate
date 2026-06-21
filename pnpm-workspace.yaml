@@ -7,9 +7,6 @@ packages:
   - vitiate-swc-plugin
   - examples/*
   - docs
-auditConfig:
-  ignoreGhsas:
-    - GHSA-rf6f-7fwh-wjgh
 
 onlyBuiltDependencies:
   - "@optique/core"
@@ -21,3 +18,7 @@ onlyBuiltDependencies:
 
 overrides:
   flatted@<=3.4.1: ">=3.4.2"
+  # astro transitively pins esbuild <0.28.1 (GHSA-g7r4-m6w7-qqqr, dev-server
+  # arbitrary file read on Windows). Force the patched line; drop once astro
+  # ships a release that depends on esbuild >=0.28.1.
+  esbuild@<0.28.1: ">=0.28.1"

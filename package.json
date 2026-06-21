@@ -26,24 +26,17 @@
     "docs:build": "turbo run build --filter=@vitiate/docs",
     "prepare": "lefthook install"
   },
-  "pnpm": {
-    "auditConfig": {
-      "ignoreGhsas": [
-        "GHSA-rf6f-7fwh-wjgh"
-      ]
-    }
-  },
   "devDependencies": {
-    "@commitlint/cli": "^20.5.0",
-    "@commitlint/config-conventional": "^20.5.0",
+    "@commitlint/cli": "^21.0.2",
+    "@commitlint/config-conventional": "^21.0.2",
     "@eslint/js": "^10.0.1",
-    "eslint": "^10.2.1",
+    "eslint": "^10.5.0",
     "eslint-config-prettier": "^10.1.8",
-    "globals": "^17.5.0",
-    "lefthook": "^2.1.6",
-    "prettier": "^3.8.3",
-    "turbo": "^2.9.6",
+    "globals": "^17.6.0",
+    "lefthook": "^2.1.9",
+    "prettier": "^3.8.4",
+    "turbo": "^2.9.18",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.59.0"
+    "typescript-eslint": "^8.61.1"
   }
 }

@@ -15,6 +15,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 hashbrown.workspace = true
+hex.workspace = true
 libafl.workspace = true
 libafl_bolts.workspace = true
 napi.workspace = true
