@@ -927,10 +927,28 @@ describe("fuzz loop", () => {
         }
       };
 
+      // Pre-seed the corpus so crash discovery is deterministic - no reliance
+      // on the mutator generating specific byte patterns. The non-crashing
+      // [0x00] seed keeps the corpus non-empty; the three 0x42 seeds route to
+      // the three distinct crash sites (data[1] % 3), giving 3 unique crashes.
+      const testName = "multi-crash";
+      const relativeTestFilePath = "test.fuzz.ts";
+      const seedDir = path.join(
+        tmpDir,
+        "testdata",
+        hashTestPath(relativeTestFilePath, testName),
+        "seeds",
+      );
+      mkdirSync(seedDir, { recursive: true });
+      writeFileSync(path.join(seedDir, "seed-ok"), Buffer.from([0x00]));
+      writeFileSync(path.join(seedDir, "seed-a"), Buffer.from([0x42, 0x00]));
+      writeFileSync(path.join(seedDir, "seed-b"), Buffer.from([0x42, 0x01]));
+      writeFileSync(path.join(seedDir, "seed-c"), Buffer.from([0x42, 0x02]));
+
       const result = await runFuzzLoop(
         target,
-        "multi-crash",
-        "test.fuzz.ts",
+        testName,
+        relativeTestFilePath,
         { fuzzExecs: 1_000_000, fuzzTimeMs: 30_000 },
         { stopOnCrash: false, maxCrashes: 3 },
       );
@@ -1166,17 +1184,44 @@ describe("fuzz loop", () => {
         }
       };
 
+      // Make this deterministic instead of relying on the mutator to randomly
+      // rediscover the crash the required number of times. The crash must be
+      // found in the mutation loop (where dedup applies) so that the first hit
+      // is the single unique crash and later hits are suppressed - a crashing
+      // corpus seed would instead be counted separately during calibration. The
+      // [0x00] seed keeps the corpus non-empty; a fixed RNG seed plus disabled
+      // nondeterministic stages (grimoire/unicode/redqueen, per the determinism
+      // note earlier in this file) make the mutation phase reproducible across
+      // platforms, so the bug is re-hit and suppressed (duplicateCrashesSkipped
+      // > 0) every run, not just on fast hardware.
+      const testName = "dedup-suppress";
+      const relativeTestFilePath = "test.fuzz.ts";
+      const seedDir = path.join(
+        tmpDir,
+        "testdata",
+        hashTestPath(relativeTestFilePath, testName),
+        "seeds",
+      );
+      mkdirSync(seedDir, { recursive: true });
+      writeFileSync(path.join(seedDir, "seed-ok"), Buffer.from([0x00]));
+
       const result = await runFuzzLoop(
         target,
-        "dedup-suppress",
-        "test.fuzz.ts",
-        { fuzzExecs: 5000 },
+        testName,
+        relativeTestFilePath,
+        {
+          fuzzExecs: 5000,
+          seed: 0x42_42_42,
+          grimoire: false,
+          unicode: false,
+          redqueen: false,
+        },
         { stopOnCrash: false, maxCrashes: 0 },
       );
 
       expect(result.crashed).toBe(true);
       expect(result.crashCount).toBe(1);
-      // Multiple crashes found by fuzzer, but only 1 unique
+      // The same bug is hit many times, but only 1 unique crash is saved
       expect(crashCount).toBeGreaterThan(1);
       expect(result.duplicateCrashesSkipped).toBeGreaterThan(0);
       // Suppressed crashes don't count toward maxCrashes
@@ -1228,11 +1273,38 @@ describe("fuzz loop", () => {
         throw new Error("same bug for replacement");
       }
 
+      // Make this deterministic instead of relying on the mutator to randomly
+      // rediscover the crash the required number of times. The crash must be
+      // found in the mutation loop (where dedup applies) so the first hit is the
+      // single unique crash, gets minimized to the canonical 1-byte artifact,
+      // and later hits are suppressed - a crashing corpus seed would instead be
+      // counted separately during calibration. The [0x00] seed keeps the corpus
+      // non-empty; a fixed RNG seed plus disabled nondeterministic stages
+      // (grimoire/unicode/redqueen, per the determinism note earlier in this
+      // file) make the mutation phase reproducible, so the bug is re-hit and
+      // suppressed after minimization (duplicateCrashesSkipped > 0) every run.
+      const testName = "dedup-replace";
+      const relativeTestFilePath = "test.fuzz.ts";
+      const seedDir = path.join(
+        tmpDir,
+        "testdata",
+        hashTestPath(relativeTestFilePath, testName),
+        "seeds",
+      );
+      mkdirSync(seedDir, { recursive: true });
+      writeFileSync(path.join(seedDir, "seed-ok"), Buffer.from([0x00]));
+
       const result = await runFuzzLoop(
         target,
-        "dedup-replace",
-        "test.fuzz.ts",
-        { fuzzExecs: 5000 },
+        testName,
+        relativeTestFilePath,
+        {
+          fuzzExecs: 5000,
+          seed: 0x42_42_42,
+          grimoire: false,
+          unicode: false,
+          redqueen: false,
+        },
         { stopOnCrash: false, maxCrashes: 0 },
       );
 
