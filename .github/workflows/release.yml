@@ -59,11 +59,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Toolchain (channel, components) read from rust-toolchain.toml; add the
+      # cross-compile target on top. This action also provides Rust build caching.
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          targets: ${{ matrix.target }}
-
-      - uses: Swatinem/rust-cache@v2
+          target: ${{ matrix.target }}
 
       - name: Install aarch64 cross-compilation tools
         if: matrix.target == 'aarch64-unknown-linux-gnu'
@@ -114,11 +114,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-wasip1
-
-      - uses: Swatinem/rust-cache@v2
+      # Toolchain (channel, components, targets incl. wasm32-wasip1) read from
+      # rust-toolchain.toml. This action also provides Rust build caching.
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
 
       - uses: pnpm/action-setup@v6
         with:
