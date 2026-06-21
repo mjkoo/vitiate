@@ -8,6 +8,15 @@ packages:
   - examples/*
   - docs
 
+auditConfig:
+  ignoreGhsas:
+    # examples/flatted-vuln intentionally pins the vulnerable flatted@3.4.1
+    # (aliased as flatted-vulnerable) as a prototype-pollution test fixture;
+    # the bug is patched in 3.4.2 but we fuzz the vulnerable line on purpose.
+    # The flatted override below does not upgrade the alias, so suppress this
+    # one known advisory here. https://github.com/advisories/GHSA-rf6f-7fwh-wjgh
+    - GHSA-rf6f-7fwh-wjgh
+
 onlyBuiltDependencies:
   - "@optique/core"
   - "@optique/run"
