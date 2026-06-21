@@ -40,6 +40,8 @@ multiple-versions = "deny"
 skip = [
   { crate = "cargo-platform@0.1.9", reason = "swc_core internal: testing uses cargo_metadata 0.18" },
   { crate = "cargo_metadata@0.18.1", reason = "swc_core internal: testing vs vergen" },
+  { crate = "ctor@0.10.1", reason = "libafl_bolts serdeany requires 0.10 alongside napi's newer ctor" },
+  { crate = "ctor@0.11.1", reason = "napi 3.9 requires 0.11; napi-derive uses ctor 1.0 (upstream napi-rs split)" },
   { crate = "hashbrown@0.14.5", reason = "swc hstr/allocator require 0.14 alongside our 0.17" },
   { crate = "siphasher@0.3.11", reason = "swc_common requires 0.3" },
   { crate = "thiserror@1.0.69", reason = "swc_core testing transitive via cargo_metadata 0.18" },
