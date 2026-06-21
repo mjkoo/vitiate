@@ -33,8 +33,7 @@ pub fn v8_shim_available() -> bool {
 /// Similar to libFuzzer's use of SHA-1 for artifact naming, but using SHA-256
 /// for better collision resistance (already a transitive dependency).
 pub(crate) fn artifact_hash(data: &[u8]) -> String {
-    let digest = Sha256::digest(data);
-    format!("{digest:x}")
+    hex::encode(Sha256::digest(data))
 }
 
 #[cfg(test)]

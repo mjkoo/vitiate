@@ -6,5 +6,14 @@ build-wasm32 = "build --target wasm32-unknown-unknown"
 
 [target.'cfg(target_arch = "wasm32")']
 rustflags = [
-  "--cfg=swc_ast_unknown"
+  "--cfg=swc_ast_unknown",
+  # SWC's plugin runtime (swc_plugin_proxy) declares its host functions
+  # (__set_transform_result, __emit_diagnostics, ...) as `extern "C"` without a
+  # `#[link(wasm_import_module = ...)]` attribute. Rust 1.96 stopped passing
+  # `--allow-undefined` to wasm-ld by default, so those host imports now fail to
+  # link as "undefined symbol". Restore the prior behavior (undefined symbols
+  # become wasm imports resolved by the @swc/core host at load time). Remove once
+  # swc_plugin_proxy annotates the imports upstream.
+  # See https://blog.rust-lang.org/2026/04/04/changes-to-webassembly-targets-and-handling-undefined-symbols/
+  "-Clink-arg=--allow-undefined",
 ]

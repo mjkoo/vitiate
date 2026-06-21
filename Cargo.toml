@@ -9,18 +9,24 @@ rust-version = "1.89"
 license = "MIT"
 
 [workspace.dependencies]
-hashbrown = { version = "0.16.1", default-features = false }
-libafl = { git = "https://github.com/AFLplusplus/LibAFL", rev = "b32557c8ae7e2300657de06382f2761f831c1963", default-features = false, features = ["std", "derive", "serdeany_autoreg", "unicode"] }
-libafl_bolts = { git = "https://github.com/AFLplusplus/LibAFL", rev = "b32557c8ae7e2300657de06382f2761f831c1963", default-features = false, features = ["std", "derive", "serdeany_autoreg"] }
+hashbrown = { version = "0.17", default-features = false }
+libafl = { git = "https://github.com/AFLplusplus/LibAFL", rev = "73ee3e4fe9549ff0ce03c5b3a9d702871132a981", default-features = false, features = ["std", "derive", "serdeany_autoreg", "unicode"] }
+libafl_bolts = { git = "https://github.com/AFLplusplus/LibAFL", rev = "73ee3e4fe9549ff0ce03c5b3a9d702871132a981", default-features = false, features = ["std", "derive", "serdeany_autoreg"] }
 napi = "3.0.0"
 napi-build = "2"
 napi-derive = "3.0.0"
 serde = "1"
-swc_core = "58.0.*"
+swc_core = "70"
 ryu-js = "1"
 serde_json = "1"
 cc = "1"
+hex = "0.4"
 libc = "0.2"
+# Kept at 0.10 to share swc_core's transitive sha2 chain. Bumping to 0.11 forks
+# the whole RustCrypto stack (sha2/digest/crypto-common/block-buffer), adding
+# several duplicate-version pairs cargo-deny would (correctly) reject. Bump once
+# swc_core moves to the 0.11 chain. artifact_hash() already uses hex::encode, so
+# the 0.11 move will be drop-in.
 sha2 = "0.10"
 tempfile = "3.27.0"
 

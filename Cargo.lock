@@ -199,7 +199,7 @@ dependencies = [
 [[package]]
 name = "build_id2"
 version = "0.16.0"
-source = "git+https://github.com/AFLplusplus/LibAFL?rev=b32557c8ae7e2300657de06382f2761f831c1963#b32557c8ae7e2300657de06382f2761f831c1963"
+source = "git+https://github.com/AFLplusplus/LibAFL?rev=73ee3e4fe9549ff0ce03c5b3a9d702871132a981#73ee3e4fe9549ff0ce03c5b3a9d702871132a981"
 dependencies = [
  "ahash",
  "rustversion",
@@ -418,7 +418,7 @@ dependencies = [
 [[package]]
 name = "core_affinity2"
 version = "0.16.0"
-source = "git+https://github.com/AFLplusplus/LibAFL?rev=b32557c8ae7e2300657de06382f2761f831c1963#b32557c8ae7e2300657de06382f2761f831c1963"
+source = "git+https://github.com/AFLplusplus/LibAFL?rev=73ee3e4fe9549ff0ce03c5b3a9d702871132a981#73ee3e4fe9549ff0ce03c5b3a9d702871132a981"
 dependencies = [
  "libafl_core",
  "libc",
@@ -647,7 +647,7 @@ dependencies = [
 [[package]]
 name = "exceptional"
 version = "0.16.0"
-source = "git+https://github.com/AFLplusplus/LibAFL?rev=b32557c8ae7e2300657de06382f2761f831c1963#b32557c8ae7e2300657de06382f2761f831c1963"
+source = "git+https://github.com/AFLplusplus/LibAFL?rev=73ee3e4fe9549ff0ce03c5b3a9d702871132a981#73ee3e4fe9549ff0ce03c5b3a9d702871132a981"
 dependencies = [
  "libafl_core",
  "libc",
@@ -662,7 +662,7 @@ dependencies = [
 [[package]]
 name = "fast_rands"
 version = "0.16.0"
-source = "git+https://github.com/AFLplusplus/LibAFL?rev=b32557c8ae7e2300657de06382f2761f831c1963#b32557c8ae7e2300657de06382f2761f831c1963"
+source = "git+https://github.com/AFLplusplus/LibAFL?rev=73ee3e4fe9549ff0ce03c5b3a9d702871132a981#73ee3e4fe9549ff0ce03c5b3a9d702871132a981"
 dependencies = [
  "rustversion",
  "serde",
@@ -889,20 +889,14 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
-version = "0.16.1"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
+checksum = "4f467dd6dccf739c208452f8014c75c18bb8301b050ad1cfb27153803edb0f51"
 dependencies = [
  "foldhash 0.2.0",
  "serde",
  "serde_core",
 ]
-
-[[package]]
-name = "hashbrown"
-version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4f467dd6dccf739c208452f8014c75c18bb8301b050ad1cfb27153803edb0f51"
 
 [[package]]
 name = "heck"
@@ -935,9 +929,9 @@ dependencies = [
 
 [[package]]
 name = "hstr"
-version = "3.0.4"
+version = "3.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "faa57007c3c9dab34df2fa4c1fb52fe9c34ec5a27ed9d8edea53254b50cd7887"
+checksum = "83bb87e4b300d73412f6dcc7022ee7741452b51b155c2b06e5994d0770c2dbe2"
 dependencies = [
  "hashbrown 0.14.5",
  "new_debug_unreachable",
@@ -1138,7 +1132,7 @@ checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 [[package]]
 name = "libafl"
 version = "0.16.0"
-source = "git+https://github.com/AFLplusplus/LibAFL?rev=b32557c8ae7e2300657de06382f2761f831c1963#b32557c8ae7e2300657de06382f2761f831c1963"
+source = "git+https://github.com/AFLplusplus/LibAFL?rev=73ee3e4fe9549ff0ce03c5b3a9d702871132a981#73ee3e4fe9549ff0ce03c5b3a9d702871132a981"
 dependencies = [
  "ahash",
  "arbitrary-int",
@@ -1150,7 +1144,7 @@ dependencies = [
  "const_panic",
  "fastbloom",
  "fs2",
- "hashbrown 0.16.1",
+ "hashbrown 0.17.0",
  "libafl_bolts",
  "libafl_core",
  "libafl_derive",
@@ -1179,7 +1173,7 @@ dependencies = [
 [[package]]
 name = "libafl_bolts"
 version = "0.16.0"
-source = "git+https://github.com/AFLplusplus/LibAFL?rev=b32557c8ae7e2300657de06382f2761f831c1963#b32557c8ae7e2300657de06382f2761f831c1963"
+source = "git+https://github.com/AFLplusplus/LibAFL?rev=73ee3e4fe9549ff0ce03c5b3a9d702871132a981#73ee3e4fe9549ff0ce03c5b3a9d702871132a981"
 dependencies = [
  "ahash",
  "backtrace",
@@ -1188,7 +1182,7 @@ dependencies = [
  "erased-serde",
  "exceptional",
  "fast_rands",
- "hashbrown 0.16.1",
+ "hashbrown 0.17.0",
  "hostname",
  "libafl_core",
  "libafl_derive",
@@ -1220,7 +1214,7 @@ dependencies = [
 [[package]]
 name = "libafl_core"
 version = "0.16.0"
-source = "git+https://github.com/AFLplusplus/LibAFL?rev=b32557c8ae7e2300657de06382f2761f831c1963#b32557c8ae7e2300657de06382f2761f831c1963"
+source = "git+https://github.com/AFLplusplus/LibAFL?rev=73ee3e4fe9549ff0ce03c5b3a9d702871132a981#73ee3e4fe9549ff0ce03c5b3a9d702871132a981"
 dependencies = [
  "nix",
  "nonzero_macros",
@@ -1233,7 +1227,7 @@ dependencies = [
 [[package]]
 name = "libafl_derive"
 version = "0.16.0"
-source = "git+https://github.com/AFLplusplus/LibAFL?rev=b32557c8ae7e2300657de06382f2761f831c1963#b32557c8ae7e2300657de06382f2761f831c1963"
+source = "git+https://github.com/AFLplusplus/LibAFL?rev=73ee3e4fe9549ff0ce03c5b3a9d702871132a981#73ee3e4fe9549ff0ce03c5b3a9d702871132a981"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1283,7 +1277,7 @@ checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 [[package]]
 name = "ll_mp"
 version = "0.16.0"
-source = "git+https://github.com/AFLplusplus/LibAFL?rev=b32557c8ae7e2300657de06382f2761f831c1963#b32557c8ae7e2300657de06382f2761f831c1963"
+source = "git+https://github.com/AFLplusplus/LibAFL?rev=73ee3e4fe9549ff0ce03c5b3a9d702871132a981#73ee3e4fe9549ff0ce03c5b3a9d702871132a981"
 dependencies = [
  "exceptional",
  "hostname",
@@ -1381,7 +1375,7 @@ dependencies = [
 [[package]]
 name = "minibsod"
 version = "0.16.0"
-source = "git+https://github.com/AFLplusplus/LibAFL?rev=b32557c8ae7e2300657de06382f2761f831c1963#b32557c8ae7e2300657de06382f2761f831c1963"
+source = "git+https://github.com/AFLplusplus/LibAFL?rev=73ee3e4fe9549ff0ce03c5b3a9d702871132a981#73ee3e4fe9549ff0ce03c5b3a9d702871132a981"
 dependencies = [
  "exceptional",
  "libc",
@@ -1498,7 +1492,7 @@ dependencies = [
 [[package]]
 name = "no_std_time"
 version = "0.16.0"
-source = "git+https://github.com/AFLplusplus/LibAFL?rev=b32557c8ae7e2300657de06382f2761f831c1963#b32557c8ae7e2300657de06382f2761f831c1963"
+source = "git+https://github.com/AFLplusplus/LibAFL?rev=73ee3e4fe9549ff0ce03c5b3a9d702871132a981#73ee3e4fe9549ff0ce03c5b3a9d702871132a981"
 dependencies = [
  "rustversion",
 ]
@@ -1512,7 +1506,7 @@ checksum = "2bf50223579dc7cdcfb3bfcacf7069ff68243f8c363f62ffa99cf000a6b9c451"
 [[package]]
 name = "nonzero_macros"
 version = "0.16.0"
-source = "git+https://github.com/AFLplusplus/LibAFL?rev=b32557c8ae7e2300657de06382f2761f831c1963#b32557c8ae7e2300657de06382f2761f831c1963"
+source = "git+https://github.com/AFLplusplus/LibAFL?rev=73ee3e4fe9549ff0ce03c5b3a9d702871132a981#73ee3e4fe9549ff0ce03c5b3a9d702871132a981"
 
 [[package]]
 name = "nu-ansi-term"
@@ -1607,7 +1601,7 @@ checksum = "1a80800c0488c3a21695ea981a54918fbb37abf04f4d0720c453632255e2ff0e"
 [[package]]
 name = "ownedref"
 version = "0.16.0"
-source = "git+https://github.com/AFLplusplus/LibAFL?rev=b32557c8ae7e2300657de06382f2761f831c1963#b32557c8ae7e2300657de06382f2761f831c1963"
+source = "git+https://github.com/AFLplusplus/LibAFL?rev=73ee3e4fe9549ff0ce03c5b3a9d702871132a981#73ee3e4fe9549ff0ce03c5b3a9d702871132a981"
 dependencies = [
  "libafl_core",
  "rustversion",
@@ -2028,11 +2022,11 @@ dependencies = [
 [[package]]
 name = "serde_anymap"
 version = "0.16.0"
-source = "git+https://github.com/AFLplusplus/LibAFL?rev=b32557c8ae7e2300657de06382f2761f831c1963#b32557c8ae7e2300657de06382f2761f831c1963"
+source = "git+https://github.com/AFLplusplus/LibAFL?rev=73ee3e4fe9549ff0ce03c5b3a9d702871132a981#73ee3e4fe9549ff0ce03c5b3a9d702871132a981"
 dependencies = [
  "ctor",
  "erased-serde",
- "hashbrown 0.16.1",
+ "hashbrown 0.17.0",
  "libafl_core",
  "postcard",
  "rustversion",
@@ -2126,10 +2120,10 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 [[package]]
 name = "shmem_providers"
 version = "0.16.0"
-source = "git+https://github.com/AFLplusplus/LibAFL?rev=b32557c8ae7e2300657de06382f2761f831c1963#b32557c8ae7e2300657de06382f2761f831c1963"
+source = "git+https://github.com/AFLplusplus/LibAFL?rev=73ee3e4fe9549ff0ce03c5b3a9d702871132a981#73ee3e4fe9549ff0ce03c5b3a9d702871132a981"
 dependencies = [
  "fast_rands",
- "hashbrown 0.16.1",
+ "hashbrown 0.17.0",
  "libafl_core",
  "libc",
  "log",
@@ -2240,9 +2234,9 @@ dependencies = [
 
 [[package]]
 name = "swc_atoms"
-version = "9.0.0"
+version = "9.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4ccbe2ecad10ad7432100f878a107b1d972a8aee83ca53184d00c23a078bb8a"
+checksum = "845f31910b5236db42dba106e8277681098d183b9b65b8dfa88ca8abe464aeff"
 dependencies = [
  "bytecheck",
  "cbor4ii",
@@ -2255,9 +2249,9 @@ dependencies = [
 
 [[package]]
 name = "swc_common"
-version = "19.0.0"
+version = "23.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "623a4ee8bb19d87de6fc781e44e1696af20136d1c1eabf9f3712ff1fb50b6189"
+checksum = "176fb11b1abd0a175e8ac47d4b061c5c8a9ae13b9196f30d44fe5db9cb7dfcbd"
 dependencies = [
  "anyhow",
  "ast_node",
@@ -2287,9 +2281,9 @@ dependencies = [
 
 [[package]]
 name = "swc_core"
-version = "58.0.4"
+version = "70.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b4c5412d3e9b4e88611a4d64d5aca10bc6ccc56a72f14f12d94529c645167b8"
+checksum = "cf20433400c103927d9b6f458cea00642394331eda25514649e66fe1af60a72a"
 dependencies = [
  "swc_allocator",
  "swc_atoms",
@@ -2309,9 +2303,9 @@ dependencies = [
 
 [[package]]
 name = "swc_ecma_ast"
-version = "21.0.0"
+version = "25.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27111582629a1cc116f9cffa6bfa501e6c849e0e66fafdf78cd404dce919117d"
+checksum = "a207e09f23885ff1f4354ebfdd4e715ccd4a68fca2e7e0df09baafbca850762e"
 dependencies = [
  "bitflags",
  "cbor4ii",
@@ -2329,9 +2323,9 @@ dependencies = [
 
 [[package]]
 name = "swc_ecma_codegen"
-version = "24.0.0"
+version = "28.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "50b8dbdc2be434883934cda8c3f6638130390032c44e1952e543252fcafd67e0"
+checksum = "a5a2fbf46c8cc66e112b6d8226ae0dacc6b983589df6192b38c7669d7721e02a"
 dependencies = [
  "ascii",
  "compact_str",
@@ -2363,9 +2357,9 @@ dependencies = [
 
 [[package]]
 name = "swc_ecma_parser"
-version = "35.0.0"
+version = "41.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "943b8743c57783b35b6c173b0a8ef539a6c1d06ee5d1588b2821992c3fd35f39"
+checksum = "4df2b42a1ddafa5a64d7fbcd13f6df93d7fb428c9c51e60c4578ea6d48c6cccc"
 dependencies = [
  "bitflags",
  "either",
@@ -2384,9 +2378,9 @@ dependencies = [
 
 [[package]]
 name = "swc_ecma_testing"
-version = "20.0.0"
+version = "24.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40134d12eabe326a97d10b19dfacf98fdc92d93e9c78008948d2992f6d3767b9"
+checksum = "b91988c76b96fa85b2fc1d0831baf9d0ac5b2ddd8db43217322e5ca284e49908"
 dependencies = [
  "anyhow",
  "hex",
@@ -2397,9 +2391,9 @@ dependencies = [
 
 [[package]]
 name = "swc_ecma_transforms_base"
-version = "38.0.0"
+version = "44.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a6bfa9bb82de047afae2eadef24e7ac4e4578fe11c977d8f61423131bdef9e4"
+checksum = "f6b7a16c57147fed92672f74a76a71dd39d3dd8ae557126ba5028bd23f3a1930"
 dependencies = [
  "better_scoped_tls",
  "indexmap",
@@ -2419,9 +2413,9 @@ dependencies = [
 
 [[package]]
 name = "swc_ecma_transforms_testing"
-version = "42.0.0"
+version = "48.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09c877d67f86dd26c85470df2d0db9f4008b5d4b9734950780cd200db5181c9b"
+checksum = "c379048fcf003e4afcefec58753f358992c622ab35b2fd075d7639cfc7c53e79"
 dependencies = [
  "ansi_term",
  "anyhow",
@@ -2445,9 +2439,9 @@ dependencies = [
 
 [[package]]
 name = "swc_ecma_utils"
-version = "27.0.0"
+version = "31.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c91e3ed13767ac74670e9cc9895d8c3502a9086fe69fe8a23295da08e6f7e02"
+checksum = "0d6dfe3d8deb3a2d399425996dddb2c421d268dbaf8132d2c1a859f6b9f7d8a2"
 dependencies = [
  "dragonbox_ecma",
  "indexmap",
@@ -2464,9 +2458,9 @@ dependencies = [
 
 [[package]]
 name = "swc_ecma_visit"
-version = "21.0.0"
+version = "25.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c1b3a04c999c14f09d81c959f8a84f71d594f2ad2456470eb38d78532e82dda"
+checksum = "1f9cb1e958e57fa6427c106674a12190c4578684beee783e3a0508f048d1b372"
 dependencies = [
  "new_debug_unreachable",
  "num-bigint",
@@ -2490,9 +2484,9 @@ dependencies = [
 
 [[package]]
 name = "swc_error_reporters"
-version = "21.0.0"
+version = "25.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2bce8f4474b6f874cc49d745b41d610342a3ea0e1dc57dbc4bf223162b196e7a"
+checksum = "ac58facadaaf3cc9084503feaa5adb6299f12332a5f82045086fedc006f2b9ed"
 dependencies = [
  "anyhow",
  "miette",
@@ -2534,16 +2528,15 @@ dependencies = [
 
 [[package]]
 name = "swc_plugin_proxy"
-version = "21.0.0"
+version = "26.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa426e25a63f653fd7efb19f5c684057e66572773ebbd176e8be38f3b7378e75"
+checksum = "083ac69beff14ed7f44f5ca710c79d8eef82f62489c8b8e0f1f3aa27b88268f9"
 dependencies = [
  "better_scoped_tls",
  "cbor4ii",
  "rustc-hash",
  "swc_common",
  "swc_ecma_ast",
- "swc_trace_macro",
  "tracing",
 ]
 
@@ -2567,20 +2560,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "swc_trace_macro"
-version = "2.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dfd2b4b0adb82e36f2ac688d00a6a67132c7f4170c772617516793a701be89e8"
-dependencies = [
- "quote",
- "syn",
-]
-
-[[package]]
 name = "swc_transform_common"
-version = "13.0.0"
+version = "17.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1874cae422d398137e9b7cb39ceb2d91068342ca152ab3137709dbc175cc965f"
+checksum = "1b4f1334cb6c6642de10080d9be47180f3536946968ee6f8ae8d0c2760111354"
 dependencies = [
  "better_scoped_tls",
  "rustc-hash",
@@ -2650,9 +2633,9 @@ dependencies = [
 
 [[package]]
 name = "testing"
-version = "20.0.0"
+version = "24.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "137ed830e8e9c80b84a2579039ab340f5bf3f1aa1c72e5e41d38fafef2c9d21d"
+checksum = "16937aa763ff6a4374024bbaa338c5867b687f3d1b84a79dbf71e0053a62b2eb"
 dependencies = [
  "cargo_metadata 0.18.1",
  "difference",
@@ -2849,7 +2832,7 @@ checksum = "141fb9f71ee586d956d7d6e4d5a9ef8e946061188520140f7591b668841d502e"
 [[package]]
 name = "tuple_list_ex"
 version = "0.16.0"
-source = "git+https://github.com/AFLplusplus/LibAFL?rev=b32557c8ae7e2300657de06382f2761f831c1963#b32557c8ae7e2300657de06382f2761f831c1963"
+source = "git+https://github.com/AFLplusplus/LibAFL?rev=73ee3e4fe9549ff0ce03c5b3a9d702871132a981#73ee3e4fe9549ff0ce03c5b3a9d702871132a981"
 dependencies = [
  "libafl_core",
  "ownedref",
@@ -3041,7 +3024,8 @@ name = "vitiate_engine"
 version = "0.3.0"
 dependencies = [
  "cc",
- "hashbrown 0.16.1",
+ "hashbrown 0.17.0",
+ "hex",
  "libafl",
  "libafl_bolts",
  "libc",

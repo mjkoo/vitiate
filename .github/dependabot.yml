@@ -12,6 +12,10 @@ updates:
       npm-all:
         patterns:
           - "*"
+    ignore:
+      # examples/flatted-vuln pins the vulnerable flatted 3.4.1 on purpose to
+      # fuzz the prototype-pollution bug; bumping it patches the bug away.
+      - dependency-name: "flatted-vulnerable"
 
   - package-ecosystem: "cargo"
     directory: "/"

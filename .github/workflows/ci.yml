@@ -22,13 +22,11 @@ jobs:
     name: Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-
-      - uses: Swatinem/rust-cache@v2
+      # Toolchain (channel, components, targets) is read from rust-toolchain.toml.
+      # This action also provides Rust build caching.
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
 
       - uses: EmbarkStudios/cargo-deny-action@v2
 
@@ -78,14 +76,11 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-          targets: wasm32-wasip1
-
-      - uses: Swatinem/rust-cache@v2
+      # Toolchain (channel, components, targets) is read from rust-toolchain.toml.
+      # This action also provides Rust build caching.
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
@@ -126,14 +121,11 @@ jobs:
     if: inputs.test-macos == true
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-          targets: wasm32-wasip1
-
-      - uses: Swatinem/rust-cache@v2
+      # Toolchain (channel, components, targets) is read from rust-toolchain.toml.
+      # This action also provides Rust build caching.
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
@@ -174,14 +166,11 @@ jobs:
       - name: Install system dependencies
         run: apk add --no-cache build-base python3 git curl bash libucontext-dev tar
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-          targets: wasm32-wasip1
-
-      - uses: Swatinem/rust-cache@v2
+      # Toolchain (channel, components, targets) is read from rust-toolchain.toml.
+      # This action also provides Rust build caching.
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
