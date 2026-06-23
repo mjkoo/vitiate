@@ -23,7 +23,10 @@ pre-commit:
 
     rust-deny:
       glob: "{*.rs,*.toml,Cargo.lock}"
-      run: cargo deny check
+      # Use --offline here: an online advisory-db fetch inside the pre-commit
+      # stash window collides with tree-building and aborts the commit. The db
+      # is refreshed by the pre-push hook below and by CI instead.
+      run: cargo deny --offline check
 
     rust-msrv:
       glob: "{*.rs,*.toml,Cargo.lock}"
@@ -51,6 +54,14 @@ pre-commit:
         git diff --exit-code -- Cargo.toml */Cargo.toml ||
         { git checkout -- Cargo.toml */Cargo.toml;
           echo "Run: cargo autoinherit --prefer-simple-dotted"; exit 1; }
+
+pre-push:
+  commands:
+    # Full online advisory check + advisory-db refresh. Runs at push time,
+    # outside the pre-commit stash window, so it stays current without the
+    # tree-building collision that an online fetch causes during a commit.
+    rust-deny:
+      run: cargo deny check
 
 commit-msg:
   commands:

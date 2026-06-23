@@ -380,9 +380,9 @@ describe("runSupervisor", () => {
     // The artifact is a real, zero-length reproducer.
     expect(readFileSync(artifactPath).length).toBe(0);
     const hashDir = hashTestPath(TEST_RELATIVE_PATH, testName);
-    expect(
-      existsSync(path.join(dir, "testdata", hashDir, "crashes")),
-    ).toBe(true);
+    expect(existsSync(path.join(dir, "testdata", hashDir, "crashes"))).toBe(
+      true,
+    );
   });
 
   it("writes a 0-byte timeout artifact for a genuine empty-input timeout", async () => {
