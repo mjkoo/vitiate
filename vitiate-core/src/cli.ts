@@ -38,7 +38,11 @@ import { runSync, type RunOptions } from "@optique/run";
 import escapeStringRegexp from "escape-string-regexp";
 import { ShmemHandle } from "@vitiate/engine";
 import { vitiatePlugin } from "./plugin.js";
-import { MAX_RESPAWNS, runSupervisor } from "./supervisor.js";
+import {
+  MAX_RESPAWNS,
+  runSupervisor,
+  type SupervisorResult,
+} from "./supervisor.js";
 import {
   DEFAULT_MAX_INPUT_LEN,
   isSupervisorChild,
@@ -512,11 +516,25 @@ async function runParentMode(
       }),
   });
 
-  if (result.crashed) {
-    process.exitCode = 1;
-  } else {
-    process.exitCode = result.exitCode ?? 0;
-  }
+  process.exitCode = supervisorExitCode(result);
+}
+
+/**
+ * Map a {@link SupervisorResult} to a process exit code for CLI parent modes.
+ *
+ * Distinguishes a found crash (1) from infrastructure failures so orchestrators
+ * and CI do not mistake an OOM/eviction or a startup failure for either a clean
+ * run or a confirmed crash:
+ * - crash found -> 1
+ * - SIGKILL / OOM -> 137 (even when reported as a signal, where exitCode is unset)
+ * - startup failure / engine panic -> the child's own non-zero exit code
+ * - otherwise -> the child's exit code (0 on clean completion)
+ */
+export function supervisorExitCode(result: SupervisorResult): number {
+  if (result.crashed) return 1;
+  if (result.oomKilled) return 137;
+  if (result.startupFailure || result.engineError) return result.exitCode ?? 1;
+  return result.exitCode ?? 0;
 }
 
 /**
@@ -572,7 +590,7 @@ async function runMergeParentMode(
     // Ignore - may not exist if merge had no entries
   }
 
-  process.exitCode = result.exitCode ?? 0;
+  process.exitCode = supervisorExitCode(result);
 }
 
 /**

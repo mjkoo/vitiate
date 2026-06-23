@@ -150,6 +150,23 @@ Discovers fuzz test files (`*.fuzz.ts`, `*.fuzz.js`, etc.), creates seed directo
 
 ---
 
+## Exit codes
+
+The `libfuzzer` subcommand runs your target under a supervisor process. The exit code distinguishes a real finding from an environmental or internal failure, so CI can react appropriately:
+
+| Code | Meaning |
+|------|---------|
+| `0` | Campaign completed with no crash (or a `regression`/`-merge` run succeeded). |
+| `1` | A crash was found. A `crash-*` artifact was written under the artifact prefix. |
+| `78` | vitiate's own fuzzing engine panicked - a bug in vitiate, **not** a crash in your target. No crash artifact is written. Please report it. |
+| `137` | The worker was killed by `SIGKILL` (128 + 9) - typically the OS OOM-killer, a container/cgroup memory limit, a Kubernetes eviction, or a CI step timeout. Treated as an **infrastructure failure**, not a crash. Any in-flight input is preserved under `ooms/` (or `<prefix>oom-*`) for investigation; vitiate does not respawn. |
+
+If the worker crashes repeatedly **at startup**, before it ever runs a fuzz input (for example a broken instrumentation step or a module-load error), vitiate stops early - rather than looping up to the respawn limit - and exits with the worker's non-zero exit code. The accompanying stderr message identifies it as a startup/setup failure rather than a target crash.
+
+**Reserved exit codes.** Codes `77` (watchdog timeout) and `78` (engine panic) are used internally to signal the supervisor, and `134` (`SIGABRT`) and `137` (`SIGKILL`/OOM) are interpreted as described above. Avoid having your fuzz target deliberately call `process.exit()` with these values, or the supervisor will interpret the exit specially.
+
+---
+
 ## Detectors syntax
 
 The `--detectors` (vitest subcommands) and `-detectors` (libfuzzer subcommand) flags share the same syntax. When specified, all default detectors are disabled and only the listed detectors are active.

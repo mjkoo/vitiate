@@ -11,7 +11,13 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { parseArgs, parseDetectorsFlag, main } from "./cli.js";
+import {
+  parseArgs,
+  parseDetectorsFlag,
+  main,
+  supervisorExitCode,
+} from "./cli.js";
+import type { SupervisorResult } from "./supervisor.js";
 import { getCliOptions } from "./config.js";
 
 vi.mock("node:child_process", async (importOriginal) => {
@@ -1030,5 +1036,70 @@ describe("passThrough forwarding", () => {
     const argsList = args as string[];
     expect(argsList).toContain("--test-name-pattern");
     expect(argsList).toContain("parses URLs");
+  });
+});
+
+describe("supervisorExitCode", () => {
+  it("maps a clean exit to 0", () => {
+    expect(supervisorExitCode({ crashed: false, exitCode: 0 })).toBe(0);
+  });
+
+  it("maps a found crash to 1 (even without an exit code)", () => {
+    expect(supervisorExitCode({ crashed: true, signal: "SIGSEGV" })).toBe(1);
+    expect(supervisorExitCode({ crashed: true, exitCode: 134 })).toBe(1);
+  });
+
+  it("maps an OOM via exit code 137 to 137", () => {
+    expect(
+      supervisorExitCode({ crashed: false, oomKilled: true, exitCode: 137 }),
+    ).toBe(137);
+  });
+
+  it("maps an OOM via SIGKILL signal (no exit code) to 137", () => {
+    // Regression guard: the signal form leaves exitCode undefined, which must
+    // NOT fall through to `exitCode ?? 0` and report success.
+    expect(
+      supervisorExitCode({
+        crashed: false,
+        oomKilled: true,
+        signal: "SIGKILL",
+      }),
+    ).toBe(137);
+  });
+
+  it("maps a startup failure to the child's non-zero exit code", () => {
+    expect(
+      supervisorExitCode({
+        crashed: false,
+        startupFailure: true,
+        exitCode: 134,
+      }),
+    ).toBe(134);
+  });
+
+  it("maps a startup failure with no exit code (signal death) to 1", () => {
+    expect(
+      supervisorExitCode({
+        crashed: false,
+        startupFailure: true,
+        signal: "SIGSEGV",
+      }),
+    ).toBe(1);
+  });
+
+  it("maps an engine panic to its reserved exit code (78)", () => {
+    expect(
+      supervisorExitCode({ crashed: false, engineError: true, exitCode: 78 }),
+    ).toBe(78);
+  });
+
+  it("prefers crash (1) over other flags if both were somehow set", () => {
+    // `crashed` is checked first; defends against an unexpected result shape.
+    const result: SupervisorResult = {
+      crashed: true,
+      oomKilled: true,
+      exitCode: 137,
+    };
+    expect(supervisorExitCode(result)).toBe(1);
   });
 });

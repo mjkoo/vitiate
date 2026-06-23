@@ -185,9 +185,14 @@ fn exit_with_input_capture(shared: &WatchdogShared) {
     // Read the current input from the shmem region using the generation-counter
     // consistency check. If shmem is not available (no supervisor), skip input
     // capture - the _exit still fires to terminate the hung process.
+    //
+    // `read_consistent` already returns None when no input was ever stashed
+    // (generation 0), so a Some(_) here - even a zero-length buffer - is a
+    // genuine stashed input. We deliberately do NOT filter empty inputs: an
+    // empty input can hang the target just like a non-empty one, and dropping it
+    // would lose a real timeout reproducer (symmetric with the crash path).
     if let Some(ref view) = shared.shmem_view
         && let Some(input) = view.read_consistent()
-        && !input.is_empty()
     {
         // Write timeout artifact
         let hash = crate::artifact_hash(&input);

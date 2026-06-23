@@ -17,20 +17,31 @@ import {
   WATCHDOG_EXIT_CODE,
   ENGINE_PANIC_EXIT_CODE,
   MAX_RESPAWNS,
+  MAX_STARTUP_FAILURES,
 } from "./supervisor.js";
 import { hashTestPath } from "./nix-base32.js";
 import { setDataDir, resetDataDir } from "./config.js";
 
 /**
- * Create a mock ShmemHandle for testing. The supervisor calls:
- * - readStashedInput(): returns the mocked input buffer
- * - resetGeneration(): tracked for call counting
+ * Create a mock ShmemHandle for testing. The supervisor recovers crashing
+ * inputs via `readConsistent()`, which returns:
+ * - `null` when no input was ever stashed (generation 0) or the write was torn
+ *   (the child crashed at startup before the fuzz loop reached its first stash);
+ * - a `Buffer` (possibly zero-length) for any valid stash.
+ *
+ * `consistentInput` models that return value. It may be a `Buffer | null`, or a
+ * function (called per read) to vary the result across respawns. `resetGeneration`
+ * is tracked for call counting.
  */
 function createMockShmem(
-  stashedInput: Buffer = Buffer.alloc(0),
+  consistentInput: Buffer | null | (() => Buffer | null) = null,
 ): ShmemHandle & { resetGenerationCount: number } {
+  const read = (): Buffer | null =>
+    typeof consistentInput === "function" ? consistentInput() : consistentInput;
   const mock = {
-    readStashedInput: () => stashedInput,
+    readConsistent: () => read(),
+    // Kept for type compatibility; the supervisor no longer calls it.
+    readStashedInput: () => read() ?? Buffer.alloc(0),
     resetGeneration: () => {
       mock.resetGenerationCount++;
     },
@@ -218,7 +229,7 @@ describe("runSupervisor", () => {
   });
 
   it.skipIf(process.platform === "win32")(
-    "respawns on signal death and eventually hits respawn limit",
+    "respawns on crash-signal death and eventually hits respawn limit",
     async () => {
       makeTmpDir();
       const shmem = createMockShmem(Buffer.from("crash-input"));
@@ -231,16 +242,17 @@ describe("runSupervisor", () => {
         maxRespawns: 2,
         spawnChild: () => {
           spawnCount++;
+          // SIGABRT is a crash signal (not SIGKILL, which is treated as OOM).
           return spawn(
             process.execPath,
-            ["-e", "process.kill(process.pid, 'SIGKILL')"],
+            ["-e", "process.kill(process.pid, 'SIGABRT')"],
             { stdio: "ignore" },
           );
         },
       });
 
       expect(result.crashed).toBe(true);
-      expect(result.signal).toBe("SIGKILL");
+      expect(result.signal).toBe("SIGABRT");
       expect(result.exitCode).toBeUndefined();
       expect(spawnCount).toBe(2);
       expect(shmem.resetGenerationCount).toBe(2);
@@ -318,9 +330,10 @@ describe("runSupervisor", () => {
     },
   );
 
-  it("writes no crash artifact when shmem has empty input", async () => {
+  it("writes no artifact when nothing was stashed (readConsistent null)", async () => {
     const dir = makeTmpDir();
-    const shmem = createMockShmem(Buffer.alloc(0));
+    // null = no input was ever stashed (gen 0) or torn write.
+    const shmem = createMockShmem(null);
     const testName = "test-empty";
 
     await runSupervisor({
@@ -334,10 +347,231 @@ describe("runSupervisor", () => {
         }),
     });
 
-    // No artifact directory should be created when shmem is empty
+    // No artifact directory should be created when no input was recovered.
     const hashDir = hashTestPath(TEST_RELATIVE_PATH, testName);
     const artifactDir = path.join(dir, "testdata", hashDir, "timeouts");
     expect(existsSync(artifactDir)).toBe(false);
+  });
+
+  it("writes a 0-byte crash artifact for a genuine empty-input crash", async () => {
+    const dir = makeTmpDir();
+    // A real empty (zero-length) input WAS stashed: readConsistent returns an
+    // empty Buffer (not null), so the crash must still be preserved.
+    const shmem = createMockShmem(Buffer.alloc(0));
+    const testName = "test-empty-crash";
+
+    const result = await runSupervisor({
+      shmem,
+      relativeTestFilePath: TEST_RELATIVE_PATH,
+      testName,
+      maxRespawns: 1,
+      // Exit 134 (SIGABRT-as-code) is a crash exit code - deterministic.
+      spawnChild: () =>
+        spawn(process.execPath, ["-e", "process.exit(134)"], {
+          stdio: "ignore",
+        }),
+    });
+
+    expect(result.crashed).toBe(true);
+    expect(result.crashArtifactPath).toBeDefined();
+    const artifactPath = result.crashArtifactPath!;
+    expect(path.basename(artifactPath)).toMatch(/^crash-[0-9a-f]{64}$/);
+    expect(existsSync(artifactPath)).toBe(true);
+    // The artifact is a real, zero-length reproducer.
+    expect(readFileSync(artifactPath).length).toBe(0);
+    const hashDir = hashTestPath(TEST_RELATIVE_PATH, testName);
+    expect(
+      existsSync(path.join(dir, "testdata", hashDir, "crashes")),
+    ).toBe(true);
+  });
+
+  it("writes a 0-byte timeout artifact for a genuine empty-input timeout", async () => {
+    const dir = makeTmpDir();
+    // Symmetry with crashes: an empty (zero-length) input that hangs must still
+    // be preserved as a 0-byte timeout reproducer, not dropped.
+    const shmem = createMockShmem(Buffer.alloc(0));
+    const testName = "test-empty-timeout";
+
+    const result = await runSupervisor({
+      shmem,
+      relativeTestFilePath: TEST_RELATIVE_PATH,
+      testName,
+      maxRespawns: 1,
+      spawnChild: () =>
+        spawn(process.execPath, ["-e", `process.exit(${WATCHDOG_EXIT_CODE})`], {
+          stdio: "ignore",
+        }),
+    });
+
+    expect(result.crashed).toBe(true);
+    expect(result.crashArtifactPath).toBeDefined();
+    const artifactPath = result.crashArtifactPath!;
+    expect(path.basename(artifactPath)).toMatch(/^timeout-[0-9a-f]{64}$/);
+    expect(readFileSync(artifactPath).length).toBe(0);
+    const hashDir = hashTestPath(TEST_RELATIVE_PATH, testName);
+    expect(existsSync(path.join(dir, "testdata", hashDir, "timeouts"))).toBe(
+      true,
+    );
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "treats SIGKILL (signal) as an OOM/infra error: no respawn, no crash",
+    async () => {
+      const dir = makeTmpDir();
+      const shmem = createMockShmem(null);
+      let spawnCount = 0;
+      const testName = "test-sigkill-signal";
+
+      const result = await runSupervisor({
+        shmem,
+        relativeTestFilePath: TEST_RELATIVE_PATH,
+        testName,
+        maxRespawns: 5,
+        spawnChild: () => {
+          spawnCount++;
+          return spawn(
+            process.execPath,
+            ["-e", "process.kill(process.pid, 'SIGKILL')"],
+            { stdio: "ignore" },
+          );
+        },
+      });
+
+      expect(result.oomKilled).toBe(true);
+      expect(result.crashed).toBe(false);
+      expect(result.signal).toBe("SIGKILL");
+      // No respawn storm, no fabricated crash.
+      expect(spawnCount).toBe(1);
+      expect(result.crashArtifactPath).toBeUndefined();
+      const hashDir = hashTestPath(TEST_RELATIVE_PATH, testName);
+      expect(existsSync(path.join(dir, "testdata", hashDir, "crashes"))).toBe(
+        false,
+      );
+    },
+  );
+
+  it("treats exit code 137 (OOM) as an infra error without respawn or crash", async () => {
+    const dir = makeTmpDir();
+    const shmem = createMockShmem(null);
+    let spawnCount = 0;
+    const testName = "test-oom-empty";
+
+    const result = await runSupervisor({
+      shmem,
+      relativeTestFilePath: TEST_RELATIVE_PATH,
+      testName,
+      maxRespawns: 5,
+      spawnChild: () => {
+        spawnCount++;
+        return spawn(process.execPath, ["-e", "process.exit(137)"], {
+          stdio: "ignore",
+        });
+      },
+    });
+
+    expect(result.oomKilled).toBe(true);
+    expect(result.crashed).toBe(false);
+    expect(result.exitCode).toBe(137);
+    expect(spawnCount).toBe(1);
+    expect(result.crashArtifactPath).toBeUndefined();
+    const hashDir = hashTestPath(TEST_RELATIVE_PATH, testName);
+    expect(existsSync(path.join(dir, "testdata", hashDir, "crashes"))).toBe(
+      false,
+    );
+  });
+
+  it("preserves the in-flight input in ooms/ on exit 137 with a stashed input", async () => {
+    const dir = makeTmpDir();
+    const shmem = createMockShmem(Buffer.from("oom-input"));
+    let spawnCount = 0;
+    const testName = "test-oom-input";
+
+    const result = await runSupervisor({
+      shmem,
+      relativeTestFilePath: TEST_RELATIVE_PATH,
+      testName,
+      maxRespawns: 5,
+      spawnChild: () => {
+        spawnCount++;
+        return spawn(process.execPath, ["-e", "process.exit(137)"], {
+          stdio: "ignore",
+        });
+      },
+    });
+
+    expect(result.oomKilled).toBe(true);
+    expect(result.crashed).toBe(false);
+    expect(spawnCount).toBe(1);
+    // Input preserved in the segregated ooms/ bucket, NOT crashes/.
+    expect(result.crashArtifactPath).toBeDefined();
+    const artifactPath = result.crashArtifactPath!;
+    expect(artifactPath).toContain(path.join("testdata") + path.sep);
+    expect(artifactPath).toContain(`${path.sep}ooms${path.sep}`);
+    expect(path.basename(artifactPath)).toMatch(/^oom-[0-9a-f]{64}$/);
+    expect(readFileSync(artifactPath).toString()).toBe("oom-input");
+    const hashDir = hashTestPath(TEST_RELATIVE_PATH, testName);
+    expect(existsSync(path.join(dir, "testdata", hashDir, "crashes"))).toBe(
+      false,
+    );
+  });
+
+  it("bails as a startupFailure after MAX_STARTUP_FAILURES no-input respawns", async () => {
+    const dir = makeTmpDir();
+    // Child always crashes (exit 134) but never stashes an input (null).
+    const shmem = createMockShmem(null);
+    let spawnCount = 0;
+    const testName = "test-startup-storm";
+
+    const result = await runSupervisor({
+      shmem,
+      relativeTestFilePath: TEST_RELATIVE_PATH,
+      testName,
+      // High respawn budget: the startup breaker must trip well before it.
+      maxRespawns: 100,
+      spawnChild: () => {
+        spawnCount++;
+        return spawn(process.execPath, ["-e", "process.exit(134)"], {
+          stdio: "ignore",
+        });
+      },
+    });
+
+    expect(result.startupFailure).toBe(true);
+    expect(result.crashed).toBe(false);
+    expect(spawnCount).toBe(MAX_STARTUP_FAILURES);
+    const hashDir = hashTestPath(TEST_RELATIVE_PATH, testName);
+    expect(existsSync(path.join(dir, "testdata", hashDir, "crashes"))).toBe(
+      false,
+    );
+  });
+
+  it("resets the startup-failure counter when an input is recovered", async () => {
+    makeTmpDir();
+    let spawnCount = 0;
+    // Recover an input only on the 2nd spawn; null otherwise. The single
+    // recovery resets the breaker, so it should not trip until later.
+    const shmem = createMockShmem(() =>
+      spawnCount === 2 ? Buffer.from("real-crash") : null,
+    );
+
+    const result = await runSupervisor({
+      shmem,
+      relativeTestFilePath: TEST_RELATIVE_PATH,
+      testName: "test-startup-reset",
+      maxRespawns: 100,
+      spawnChild: () => {
+        spawnCount++;
+        return spawn(process.execPath, ["-e", "process.exit(134)"], {
+          stdio: "ignore",
+        });
+      },
+    });
+
+    expect(result.startupFailure).toBe(true);
+    expect(result.crashed).toBe(false);
+    // Without the reset on spawn #2 the breaker would trip at spawn #3; the
+    // recovered input pushes the trip out to spawn #5.
+    expect(spawnCount).toBe(MAX_STARTUP_FAILURES + 2);
   });
 
   it("respawns correctly then returns clean exit", async () => {
@@ -437,6 +671,60 @@ describe("runSupervisor", () => {
           // Emit SIGINT on the parent to set sigintReceived flag.
           // Uses Node's EventEmitter (no OS signal delivery).
           process.emit("SIGINT");
+          // SIGHUP is a non-crash, non-SIGKILL signal, so it falls through to
+          // the SIGINT-shutdown check (SIGKILL would short-circuit to OOM).
+          return spawn(
+            process.execPath,
+            ["-e", "process.kill(process.pid, 'SIGHUP')"],
+            { stdio: "ignore" },
+          );
+        },
+      });
+      // With the SIGINT flag set, the child's signal death is a clean shutdown.
+      expect(result.crashed).toBe(false);
+      expect(result.oomKilled).toBeUndefined();
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "still reports a real crash signal even when SIGINT was received (does not swallow it)",
+    async () => {
+      makeTmpDir();
+      const shmem = createMockShmem(Buffer.from("crash-input"));
+      const result = await runSupervisor({
+        shmem,
+        relativeTestFilePath: TEST_RELATIVE_PATH,
+        testName: "test-crash-during-sigint",
+        maxRespawns: 1,
+        spawnChild: () => {
+          process.emit("SIGINT");
+          // SIGABRT is a real crash signal; it must be classified as a crash
+          // even though a shutdown was requested (crash check precedes shutdown).
+          return spawn(
+            process.execPath,
+            ["-e", "process.kill(process.pid, 'SIGABRT')"],
+            { stdio: "ignore" },
+          );
+        },
+      });
+
+      expect(result.crashed).toBe(true);
+      expect(result.signal).toBe("SIGABRT");
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "treats SIGKILL during SIGINT shutdown as a clean shutdown, not an OOM",
+    async () => {
+      makeTmpDir();
+      const shmem = createMockShmem(null);
+      const result = await runSupervisor({
+        shmem,
+        relativeTestFilePath: TEST_RELATIVE_PATH,
+        testName: "test-sigkill-during-sigint",
+        maxRespawns: 5,
+        spawnChild: () => {
+          process.emit("SIGINT");
           return spawn(
             process.execPath,
             ["-e", "process.kill(process.pid, 'SIGKILL')"],
@@ -444,8 +732,10 @@ describe("runSupervisor", () => {
           );
         },
       });
-      // Without SIGINT flag, SIGKILL death -> crash. With flag -> clean exit.
+
+      // Shutdown wins over the OOM classification: not a crash, not oomKilled.
       expect(result.crashed).toBe(false);
+      expect(result.oomKilled).toBeUndefined();
     },
   );
 });

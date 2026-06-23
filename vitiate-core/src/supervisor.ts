@@ -37,14 +37,37 @@ export const ENGINE_PANIC_EXIT_CODE = enginePanicExitCode();
  */
 export const MAX_RESPAWNS = 100;
 
+/**
+ * Maximum number of consecutive respawns that recover NO input before the
+ * parent concludes the child is failing at startup (before the fuzz loop ever
+ * stashes an input) - or is being killed externally - and bails with a
+ * diagnostic instead of storming all the way to {@link MAX_RESPAWNS}.
+ */
+export const MAX_STARTUP_FAILURES = 3;
+
 /** Signals that indicate a native crash (not user-initiated shutdown). */
 const CRASH_SIGNALS = new Set(["SIGSEGV", "SIGBUS", "SIGABRT", "SIGFPE"]);
 
-/** Exit codes that indicate crashes delivered as exit codes rather than signals. */
+/**
+ * Exit codes that indicate crashes delivered as exit codes rather than signals.
+ *
+ * Note: 137 (SIGKILL / OOM killer) is intentionally NOT here. SIGKILL is
+ * uncatchable and a JS/V8 target cannot raise it as a discovered bug, so it is
+ * almost always external (OOM-killer, container/cgroup memory limit, k8s
+ * eviction, CI timeout). It is handled separately as an infrastructure error
+ * rather than a confirmed crash - see the SIGKILL/137 branch in `runSupervisor`.
+ */
 const CRASH_EXIT_CODES = new Set([
   134, // SIGABRT (128 + 6)
-  137, // SIGKILL / OOM killer (128 + 9)
 ]);
+
+/**
+ * Exit code for a process killed by SIGKILL (128 + 9). Node usually reports a
+ * SIGKILL'd child with this exit code, and sometimes as a `SIGKILL` signal;
+ * both forms are handled. Treated as an infrastructure failure (OOM-killer,
+ * memory limit, eviction, CI timeout), not a target crash.
+ */
+const SIGKILL_EXIT_CODE = 137;
 
 export interface SupervisorOptions {
   shmem: ShmemHandle;
@@ -76,6 +99,23 @@ export interface SupervisorResult {
    * case; callers should surface it as an infrastructure failure.
    */
   engineError?: boolean;
+  /**
+   * True when the child was killed by SIGKILL (exit code 137). This is
+   * ambiguous between an environmental kill (OOM-killer, container/cgroup
+   * memory limit, k8s eviction, CI timeout) and a possible memory-exhaustion
+   * input, so it is surfaced as an infrastructure failure - NOT a confirmed
+   * target crash. Any in-flight input is preserved in a segregated `ooms/`
+   * bucket ({@link crashArtifactPath}); the supervisor does not respawn.
+   */
+  oomKilled?: boolean;
+  /**
+   * True when the child crashed {@link MAX_STARTUP_FAILURES} times in a row
+   * without ever stashing a recoverable input - i.e. it is failing at startup
+   * (module load, native addon init, vitest setup) before reaching the fuzz
+   * loop, or is being killed externally. Surfaced as an infrastructure failure
+   * with no crash artifact.
+   */
+  startupFailure?: boolean;
 }
 
 /**
@@ -158,6 +198,97 @@ export async function runSupervisor(
   const preExistingCrashes = new Set(listCrashArtifacts());
 
   let respawnCount = 0;
+  // Consecutive respawns that recovered no input. A child that fails at startup
+  // (or is killed externally) before the fuzz loop stashes anything trips this
+  // breaker, so we bail with a diagnostic instead of storming to MAX_RESPAWNS.
+  let consecutiveEmptyRespawns = 0;
+
+  /**
+   * Recover the crashing input + write its artifact, then decide what to do:
+   * respawn (return null) or terminate with a SupervisorResult. Maintains the
+   * startup-failure circuit breaker via `consecutiveEmptyRespawns`.
+   */
+  function respawnAfterRecovery(
+    kind: ArtifactKind,
+    identity: { signal?: string; exitCode?: number },
+  ): SupervisorResult | null {
+    const { crashArtifactPath, inputRecovered } = recoverInput(
+      shmem,
+      relativeTestFilePath,
+      testName,
+      kind,
+      artifactPrefix,
+    );
+
+    if (inputRecovered) {
+      consecutiveEmptyRespawns = 0;
+    } else {
+      consecutiveEmptyRespawns++;
+    }
+
+    // A run of crashes that never stash an input means the child is failing
+    // before the fuzz loop reaches its first stash (instrumentation, module
+    // load, or vitest setup) or is being killed externally. Diagnose that ahead
+    // of the generic respawn limit - it is the more actionable outcome.
+    if (consecutiveEmptyRespawns >= MAX_STARTUP_FAILURES) {
+      process.stderr.write(
+        `vitiate: child crashed ${consecutiveEmptyRespawns} times in a row ` +
+          `without producing any recoverable input. This usually means it is ` +
+          `failing at startup (module load, native addon init, or vitest ` +
+          `setup) before the fuzz loop runs, or is being killed externally. ` +
+          `Treating as an infrastructure failure, not a target crash.\n`,
+      );
+      // Spread identity first so the explicit result fields always win.
+      return { ...identity, crashed: false, startupFailure: true };
+    }
+
+    // Stop once maxRespawns child generations have run (the initial spawn plus
+    // maxRespawns-1 respawns); `respawnCount` counts respawns done so far.
+    if (respawnCount + 1 >= maxRespawns) {
+      process.stderr.write(
+        `vitiate: respawn limit (${maxRespawns}) exceeded, giving up\n`,
+      );
+      return { ...identity, crashed: true, crashArtifactPath };
+    }
+
+    respawnCount++;
+    process.stderr.write("vitiate: respawning child to continue fuzzing\n");
+    return null;
+  }
+
+  /**
+   * Handle a SIGKILL (exit code 137): preserve any in-flight input in the
+   * segregated `ooms/` bucket and surface an infrastructure failure WITHOUT
+   * respawning. SIGKILL is uncatchable and almost always external (OOM-killer,
+   * memory limit, eviction, CI timeout), so it is never a confirmed crash.
+   */
+  function handleOomKill(identity: {
+    signal?: string;
+    exitCode?: number;
+  }): SupervisorResult {
+    process.stderr.write(
+      `vitiate: child killed by SIGKILL (exit code ${SIGKILL_EXIT_CODE}). This ` +
+        `is typically the OS OOM-killer, a container/cgroup memory limit, a ` +
+        `k8s eviction, or a CI step timeout - not a confirmed crash in the ` +
+        `target under test. vitiate does not respawn or record this as a crash.\n`,
+    );
+    const { crashArtifactPath } = recoverInput(
+      shmem,
+      relativeTestFilePath,
+      testName,
+      "oom",
+      artifactPrefix,
+    );
+    if (crashArtifactPath !== undefined) {
+      process.stderr.write(
+        `vitiate: the in-flight input was preserved at ${crashArtifactPath} ` +
+          `in case this was a memory-exhaustion input; investigate before ` +
+          `treating it as a crash.\n`,
+      );
+    }
+    // Spread identity first so the explicit result fields always win.
+    return { ...identity, crashed: false, oomKilled: true, crashArtifactPath };
+  }
 
   try {
     while (true) {
@@ -172,28 +303,16 @@ export async function runSupervisor(
         // This prevents a concurrent SIGINT from swallowing a real crash.
         if (CRASH_SIGNALS.has(signal)) {
           process.stderr.write(`vitiate: child killed by signal ${signal}\n`);
-
-          const result = recoverAndRespawn(
-            shmem,
-            relativeTestFilePath,
-            testName,
-            "crash",
-            respawnCount,
-            maxRespawns,
-            artifactPrefix,
-          );
-          if (result.limitReached) {
-            return {
-              crashed: true,
-              crashArtifactPath: result.crashArtifactPath,
-              signal,
-            };
-          }
-          respawnCount++;
+          const outcome = respawnAfterRecovery("crash", { signal });
+          if (outcome !== null) return outcome;
           continue;
         }
 
-        // User-initiated shutdown signals
+        // User-initiated shutdown: a child dying after we were asked to stop is
+        // teardown collateral, not a finding. This intentionally comes before
+        // the SIGKILL/OOM check below so a SIGKILL delivered to the whole
+        // process group during Ctrl-C is not misreported as an OOM (mirrors the
+        // exit-code path, which checks these flags before code 137).
         if (sigintReceived) {
           return { crashed: false, exitCode: code ?? 130 };
         }
@@ -201,26 +320,18 @@ export async function runSupervisor(
           return { crashed: false, exitCode: code ?? 143 };
         }
 
+        // SIGKILL outside of shutdown is an uncatchable, almost-always-external
+        // kill (OOM-killer, memory limit, eviction, CI timeout) - surface as an
+        // infrastructure failure, not a crash. (Node usually also reports this
+        // as exit code SIGKILL_EXIT_CODE; that form is handled below.)
+        if (signal === "SIGKILL") {
+          return handleOomKill({ signal });
+        }
+
         // Other signal - treat as crash
         process.stderr.write(`vitiate: child killed by signal ${signal}\n`);
-
-        const result = recoverAndRespawn(
-          shmem,
-          relativeTestFilePath,
-          testName,
-          "crash",
-          respawnCount,
-          maxRespawns,
-          artifactPrefix,
-        );
-        if (result.limitReached) {
-          return {
-            crashed: true,
-            crashArtifactPath: result.crashArtifactPath,
-            signal,
-          };
-        }
-        respawnCount++;
+        const outcome = respawnAfterRecovery("crash", { signal });
+        if (outcome !== null) return outcome;
         continue;
       }
 
@@ -255,24 +366,10 @@ export async function runSupervisor(
       if (code === WATCHDOG_EXIT_CODE) {
         // Watchdog timeout - attempt backup recovery from shmem
         process.stderr.write("vitiate: child exited with watchdog timeout\n");
-
-        const result = recoverAndRespawn(
-          shmem,
-          relativeTestFilePath,
-          testName,
-          "timeout",
-          respawnCount,
-          maxRespawns,
-          artifactPrefix,
-        );
-        if (result.limitReached) {
-          return {
-            crashed: true,
-            crashArtifactPath: result.crashArtifactPath,
-            exitCode: WATCHDOG_EXIT_CODE,
-          };
-        }
-        respawnCount++;
+        const outcome = respawnAfterRecovery("timeout", {
+          exitCode: WATCHDOG_EXIT_CODE,
+        });
+        if (outcome !== null) return outcome;
         continue;
       }
 
@@ -290,29 +387,20 @@ export async function runSupervisor(
         return { crashed: false, engineError: true, exitCode: code };
       }
 
-      // Exit codes that indicate crashes (e.g., OOM kill, SIGABRT as exit code)
+      if (code === SIGKILL_EXIT_CODE) {
+        // SIGKILL surfaced as an exit code (the usual case on Node). Treat as
+        // an infrastructure kill (OOM / memory limit / eviction / CI timeout),
+        // not a confirmed target crash.
+        return handleOomKill({ exitCode: SIGKILL_EXIT_CODE });
+      }
+
+      // Exit codes that indicate crashes (e.g., SIGABRT as exit code)
       if (code !== null && CRASH_EXIT_CODES.has(code)) {
         process.stderr.write(
           `vitiate: child exited with crash exit code ${code}\n`,
         );
-
-        const result = recoverAndRespawn(
-          shmem,
-          relativeTestFilePath,
-          testName,
-          "crash",
-          respawnCount,
-          maxRespawns,
-          artifactPrefix,
-        );
-        if (result.limitReached) {
-          return {
-            crashed: true,
-            crashArtifactPath: result.crashArtifactPath,
-            exitCode: code,
-          };
-        }
-        respawnCount++;
+        const outcome = respawnAfterRecovery("crash", { exitCode: code });
+        if (outcome !== null) return outcome;
         continue;
       }
 
@@ -329,21 +417,27 @@ export async function runSupervisor(
 }
 
 /**
- * Recover the crashing input from shmem, write an artifact, reset the
- * generation counter, and check whether the respawn limit has been reached.
+ * Recover the in-flight input from shmem and, if one was stashed, write it as an
+ * artifact of the given kind. Always resets the generation counter afterwards so
+ * the next child starts from a clean slate.
+ *
+ * Uses the generation-aware `readConsistent` rather than `readStashedInput` so a
+ * genuine empty (zero-length) input crash is still preserved as a 0-byte
+ * artifact. `inputRecovered` is false only when nothing was stashed this run
+ * (generation 0 - the child died before the fuzz loop reached its first stash)
+ * or the write was torn; the supervisor uses that signal to detect a child that
+ * is crashing at startup.
  */
-function recoverAndRespawn(
+function recoverInput(
   shmem: ShmemHandle,
   relativeTestFilePath: string,
   testName: string,
   kind: ArtifactKind,
-  respawnCount: number,
-  maxRespawns: number,
   artifactPrefix?: string,
-): { crashArtifactPath: string | undefined; limitReached: boolean } {
+): { crashArtifactPath: string | undefined; inputRecovered: boolean } {
   let crashArtifactPath: string | undefined;
-  const input = shmem.readStashedInput();
-  if (input.length > 0) {
+  const input = shmem.readConsistent();
+  if (input !== null) {
     crashArtifactPath =
       artifactPrefix !== undefined
         ? writeArtifactWithPrefix(artifactPrefix, input, kind)
@@ -353,14 +447,5 @@ function recoverAndRespawn(
     );
   }
   shmem.resetGeneration();
-
-  if (respawnCount + 1 >= maxRespawns) {
-    process.stderr.write(
-      `vitiate: respawn limit (${maxRespawns}) exceeded, giving up\n`,
-    );
-    return { crashArtifactPath, limitReached: true };
-  }
-
-  process.stderr.write("vitiate: respawning child to continue fuzzing\n");
-  return { crashArtifactPath, limitReached: false };
+  return { crashArtifactPath, inputRecovered: input !== null };
 }
