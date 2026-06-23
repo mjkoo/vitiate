@@ -37,6 +37,10 @@ struct WatchdogState {
     armed: bool,
     /// Whether the watchdog thread should shut down.
     shutdown: bool,
+    /// Monotonic counter bumped on every `arm()`. Identifies the current arm so
+    /// a late fire from a previous arm (or a disarmed arm) can be rejected
+    /// before it terminates V8. See `handle_timeout`.
+    generation: u64,
 }
 
 /// Shared state between the main thread and the watchdog thread.
@@ -79,6 +83,10 @@ fn watchdog_thread(shared: Arc<WatchdogShared>) {
             Some(d) => d,
             None => continue, // Spurious wake without deadline
         };
+        // Snapshot the generation this wait is bound to. If a disarm + re-arm
+        // happens while we wait, the generation changes and we abandon this
+        // deadline rather than firing against the new arm.
+        let generation = state.generation;
         drop(state);
 
         // Wait loop: re-check after each condvar wake
@@ -86,7 +94,7 @@ fn watchdog_thread(shared: Arc<WatchdogShared>) {
             let now = Instant::now();
             if now >= deadline {
                 // Deadline expired - fire!
-                handle_timeout(&shared);
+                handle_timeout(&shared, generation);
                 break;
             }
 
@@ -99,8 +107,8 @@ fn watchdog_thread(shared: Arc<WatchdogShared>) {
                 // Disarmed while we were waiting
                 break;
             }
-            // Check if deadline changed (re-armed with different timeout)
-            if state.deadline != Some(deadline) {
+            // Check if re-armed (different generation) while we were waiting.
+            if state.generation != generation {
                 break;
             }
             let (_state, _timeout) = shared.condvar.wait_timeout(state, remaining).unwrap();
@@ -109,16 +117,35 @@ fn watchdog_thread(shared: Arc<WatchdogShared>) {
     }
 }
 
-/// Handle a timeout expiry.
-fn handle_timeout(shared: &WatchdogShared) {
-    if shared.v8_available {
+/// Handle a timeout expiry for the arm identified by `generation`.
+///
+/// The decision to fire is taken under the state lock, atomically with the
+/// `armed`/`generation` check, so it is mutually exclusive with `disarm` and
+/// with a re-arm. This closes the late-fire race where a fire landing just after
+/// the target returned (and after `disarm` already ran its `swap`+cancel) would
+/// otherwise latch V8's TerminateExecution bit into the *next* iteration.
+fn handle_timeout(shared: &WatchdogShared, generation: u64) {
+    {
+        // Take the fire decision under the lock. If this arm was disarmed or
+        // superseded by a re-arm, a stale/late fire must not set `fired` or
+        // call v8_terminate(). The `fired.store` + `v8_terminate()` must happen
+        // while still holding the lock: releasing between the check and the
+        // terminate would reopen the race against a concurrent disarm.
+        let state = shared.state.lock().unwrap();
+        if !state.armed || state.shutdown || state.generation != generation {
+            return;
+        }
         // Set `fired` BEFORE calling v8_terminate(). The C++ shim reads `fired`
         // to distinguish timeout from crash - if the main thread sees the V8
         // termination exception before `fired` is visible, it misclassifies the
         // timeout as a crash.
         shared.fired.store(true, Ordering::Release);
-        v8_shim::v8_terminate();
+        if shared.v8_available {
+            v8_shim::v8_terminate();
+        }
+    }
 
+    if shared.v8_available {
         // Wait for the _exit fallback deadline: (multiplier - 1) * timeout_ms
         // after TerminateExecution. This gives 4x more time for the termination
         // exception to propagate when V8 termination is available.
@@ -133,22 +160,20 @@ fn handle_timeout(shared: &WatchdogShared) {
                 break; // Fall through to _exit
             }
             let state = shared.state.lock().unwrap();
-            if !state.armed || state.shutdown {
-                return; // Disarmed or shutting down - termination was handled
+            if !state.armed || state.shutdown || state.generation != generation {
+                return; // Disarmed, shutting down, or re-armed - handled.
             }
             let remaining = exit_deadline - now;
             let _ = shared.condvar.wait_timeout(state, remaining).unwrap();
         }
 
-        // If still armed after extended deadline, fall through to _exit
+        // If still armed for this generation after the extended deadline, fall
+        // through to _exit.
         let state = shared.state.lock().unwrap();
-        if !state.armed || state.shutdown {
+        if !state.armed || state.shutdown || state.generation != generation {
             return;
         }
         drop(state);
-    } else {
-        // No V8 TerminateExecution - go straight to _exit
-        shared.fired.store(true, Ordering::Release);
     }
 
     // _exit path: capture input and terminate
@@ -242,6 +267,7 @@ impl Watchdog {
                 deadline: None,
                 armed: false,
                 shutdown: false,
+                generation: 0,
             }),
             condvar: Condvar::new(),
             fired: AtomicBool::new(false),
@@ -340,6 +366,7 @@ impl Watchdog {
                 deadline: None,
                 armed: false,
                 shutdown: true,
+                generation: 0,
             }),
             condvar: Condvar::new(),
             fired: AtomicBool::new(false),
@@ -375,6 +402,8 @@ pub(crate) fn arm_watchdog_shared(shared: &WatchdogShared, timeout_ms: f64) {
     let mut state = shared.state.lock().unwrap();
     state.deadline = Some(deadline);
     state.armed = true;
+    // Bump the generation so any in-flight fire from a previous arm is rejected.
+    state.generation = state.generation.wrapping_add(1);
     drop(state);
     shared.condvar.notify_one();
 }
@@ -389,8 +418,23 @@ pub(crate) fn disarm_watchdog_shared(shared: &WatchdogShared) {
     drop(state);
     shared.condvar.notify_one();
 
-    // If the watchdog fired TerminateExecution, cancel it to ensure V8
-    // state is clean before the next fuzz iteration.
+    // If the watchdog fired TerminateExecution, cancel it to ensure V8 state is
+    // clean before the next fuzz iteration.
+    //
+    // This swap is intentionally OUTSIDE the lock - it does not need to be under
+    // it, and keeping the FFI cancel out of the critical section avoids holding
+    // the mutex across a C++ call. The proof it cannot miss a fire:
+    //
+    // `handle_timeout` only sets `fired` (and calls v8_terminate) while holding
+    // `state` with `armed == true`. So whenever a terminate is issued, it is
+    // ordered before some release of `state`. Either:
+    //   (a) this disarm took the lock first: it set `armed = false`, so a later
+    //       `handle_timeout` sees `!armed` and never fires - no bit to cancel; or
+    //   (b) `handle_timeout` took the lock first: it fired and released `state`,
+    //       and our lock acquisition above (Acquire) synchronizes-with that
+    //       release, making the `fired = true` store visible to this swap.
+    // In both cases the swap observes any terminate that happened, so the cancel
+    // is never skipped. (See `handle_timeout` for the fire-side half.)
     if shared.fired.swap(false, Ordering::AcqRel) {
         v8_shim::v8_cancel_terminate();
     }
@@ -625,6 +669,7 @@ mod tests {
                 deadline: None,
                 armed: false,
                 shutdown: false,
+                generation: 0,
             }),
             condvar: Condvar::new(),
             fired: AtomicBool::new(false),
@@ -671,6 +716,57 @@ mod tests {
         handle.join().unwrap();
 
         assert!(!shared.fired.load(Ordering::Acquire));
+    }
+
+    /// Regression test for the B1 late-fire race: a fire that lands after the
+    /// arm was disarmed must NOT set `fired` or call v8_terminate(), so it
+    /// cannot latch V8 termination into the next iteration.
+    ///
+    /// Calls `handle_timeout` directly with the guard tripped. V8 is never
+    /// initialized in unit tests, so `v8_terminate`/`v8_cancel_terminate` are
+    /// harmless no-ops even with `v8_available = true`; the guard returns before
+    /// any `_exit` path, so the test is safe and deterministic (no sleeps).
+    #[test]
+    fn late_fire_after_disarm_does_not_fire() {
+        let (_buf, shared) = make_shared(true);
+        {
+            let mut state = shared.state.lock().unwrap();
+            state.deadline = Some(Instant::now());
+            state.armed = true;
+            state.generation = 5;
+            // Simulate disarm racing ahead of this fire.
+            state.armed = false;
+        }
+
+        handle_timeout(&shared, 5);
+
+        assert!(
+            !shared.fired.load(Ordering::Acquire),
+            "a fire after disarm must not set `fired`"
+        );
+    }
+
+    /// Regression test for the B1 re-arm window: a stale fire from generation N
+    /// must NOT fire against a re-armed generation N+1, even though that arm is
+    /// `armed == true`.
+    #[test]
+    fn stale_fire_after_rearm_does_not_fire() {
+        let (_buf, shared) = make_shared(true);
+        {
+            let mut state = shared.state.lock().unwrap();
+            // Re-armed at a newer generation than the stale fire below.
+            state.deadline = Some(Instant::now());
+            state.armed = true;
+            state.generation = 6;
+        }
+
+        // Stale fire for the previous generation (5).
+        handle_timeout(&shared, 5);
+
+        assert!(
+            !shared.fired.load(Ordering::Acquire),
+            "a stale fire for a superseded generation must not set `fired`"
+        );
     }
 
     #[test]
