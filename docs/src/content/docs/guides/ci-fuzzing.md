@@ -102,6 +102,10 @@ The cache key strategy in the example above ensures each CI run builds on previo
 
 For background on corpus locations and what gets cached, see [Corpus Locations](/concepts/corpus/#corpus-locations). For periodic cleanup of the cached corpus, see [Corpus Minimization](/concepts/corpus/#corpus-minimization).
 
+## Interpreting exit codes
+
+A fuzzing job's exit code tells your pipeline whether it found a real bug or hit an environmental problem. The most important distinction for CI: a crash (exit `1`) should fail the build, but an out-of-memory or external kill (exit `137`) usually means the runner needs more memory or a longer step timeout - not that your code is broken. Exit `78` indicates a bug in vitiate itself. See the full table in [CLI Flags - Exit codes](/reference/cli-flags/#exit-codes).
+
 ## Summary
 
 | CI context | What to run | Why |

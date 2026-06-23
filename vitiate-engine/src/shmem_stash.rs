@@ -418,6 +418,20 @@ impl ShmemHandle {
         Buffer::from(self.stash.view().read_stashed_input())
     }
 
+    /// Read the stashed input with a generation-consistency check.
+    ///
+    /// Used by the parent after the child dies to recover the crashing input.
+    /// Unlike `readStashedInput`, this distinguishes "no input was ever stashed"
+    /// from "an empty (zero-length) input was stashed": returns `null` when the
+    /// generation is 0 (never stashed - e.g. the child crashed at startup before
+    /// the fuzz loop ran) or the write was torn, and returns a `Buffer` (which
+    /// may be zero-length) for any valid stash. This lets the parent preserve a
+    /// genuine empty-input crash while still detecting startup failures.
+    #[napi]
+    pub fn read_consistent(&self) -> Option<Buffer> {
+        self.stash.view().read_consistent().map(Buffer::from)
+    }
+
     /// Reset the generation counter to zero.
     ///
     /// Called by the parent supervisor after reading a crash artifact and
@@ -614,5 +628,22 @@ mod tests {
         assert!(read.is_empty());
         // Generation still incremented (by 2 per stash via seqlock protocol)
         assert_eq!(view.generation().load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn read_consistent_distinguishes_empty_stash_from_never_stashed() {
+        // A genuine empty-input stash (generation 2, len 0) must return
+        // Some(empty), NOT None - otherwise the parent cannot distinguish a real
+        // zero-length crash from a child that never stashed anything (gen 0).
+        let (_buf, view) = make_test_view(1024);
+        view.stash_input(b"");
+        let read = view
+            .read_consistent()
+            .expect("empty stash with even generation should return Some");
+        assert!(read.is_empty());
+
+        // Contrast: after reset_generation (gen 0), read_consistent returns None.
+        view.reset_generation();
+        assert!(view.read_consistent().is_none());
     }
 }

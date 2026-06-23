@@ -149,6 +149,18 @@ export declare class ShmemHandle {
    */
   readStashedInput(): Buffer
   /**
+   * Read the stashed input with a generation-consistency check.
+   *
+   * Used by the parent after the child dies to recover the crashing input.
+   * Unlike `readStashedInput`, this distinguishes "no input was ever stashed"
+   * from "an empty (zero-length) input was stashed": returns `null` when the
+   * generation is 0 (never stashed - e.g. the child crashed at startup before
+   * the fuzz loop ran) or the write was torn, and returns a `Buffer` (which
+   * may be zero-length) for any valid stash. This lets the parent preserve a
+   * genuine empty-input crash while still detecting startup failures.
+   */
+  readConsistent(): Buffer | null
+  /**
    * Reset the generation counter to zero.
    *
    * Called by the parent supervisor after reading a crash artifact and

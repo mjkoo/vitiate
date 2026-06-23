@@ -132,6 +132,36 @@ function translateSupervisorResult(
     );
   }
 
+  if (result.oomKilled) {
+    // SIGKILL (exit 137): ambiguous between an environmental kill and a
+    // memory-exhaustion input. Surface as an infrastructure failure, distinct
+    // from a confirmed crash, and point at the preserved input if there is one.
+    const preserved = result.crashArtifactPath
+      ? ` The in-flight input was preserved at ${result.crashArtifactPath}.`
+      : "";
+    throw new Error(
+      `vitiate: child killed by SIGKILL (exit code 137). This is typically ` +
+        `the OS OOM-killer, a container/cgroup memory limit, a k8s eviction, ` +
+        `or a CI step timeout - not a confirmed crash in the code under test. ` +
+        `If you suspect a memory-exhaustion bug, investigate the input; ` +
+        `otherwise raise the available memory.${preserved}`,
+    );
+  }
+
+  if (result.startupFailure) {
+    // The child crashed repeatedly without ever stashing an input - it is
+    // failing before the fuzz loop runs (instrumentation/setup), or being
+    // killed externally. Not a crash in the code under test.
+    throw new Error(
+      `vitiate: the fuzz child crashed repeatedly at startup before any input ` +
+        `was run (exit code ${result.exitCode}${
+          result.signal ? `, signal ${result.signal}` : ""
+        }). This usually indicates an instrumentation, module-load, or setup ` +
+        `failure rather than a crash in the code under test. Check the output ` +
+        `above for details.`,
+    );
+  }
+
   if (!result.crashed) return;
 
   const artifactDir = getTestDataDir(relativeTestFilePath, testName);

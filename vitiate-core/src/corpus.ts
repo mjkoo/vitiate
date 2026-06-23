@@ -99,6 +99,11 @@ export function discoverDictionaries(
 /**
  * Load all testdata entries (seeds + crashes + timeouts) for regression and seeding.
  * Missing subdirectories are silently skipped.
+ *
+ * The `ooms/` bucket is intentionally excluded: a SIGKILL/OOM is ambiguous
+ * (environmental kill vs a real memory-exhaustion input) and is not a confirmed
+ * reproducer, so it must not gate the regression suite. Inspect those inputs by
+ * hand rather than replaying them here.
  */
 export function loadTestDataCorpus(
   relativeTestFilePath: string,
@@ -173,12 +178,22 @@ export function writeCorpusEntryToDir(dir: string, data: Buffer): string {
   return filePath;
 }
 
-export type ArtifactKind = "crash" | "timeout";
+export type ArtifactKind = "crash" | "timeout" | "oom";
+
+/** Subdirectory under the testdata dir for each artifact kind. */
+const SUBDIR_BY_KIND: Record<ArtifactKind, string> = {
+  crash: "crashes",
+  timeout: "timeouts",
+  oom: "ooms",
+};
 
 /**
- * Write a crash or timeout artifact to the testdata directory.
+ * Write a crash, timeout, or OOM artifact to the testdata directory.
  * Crashes go to `<dataDir>/testdata/<hashdir>/crashes/crash-<contenthash>`.
  * Timeouts go to `<dataDir>/testdata/<hashdir>/timeouts/timeout-<contenthash>`.
+ * OOM/SIGKILL inputs go to `<dataDir>/testdata/<hashdir>/ooms/oom-<contenthash>`;
+ * they are segregated because a SIGKILL is ambiguous (memory-exhaustion input vs
+ * environmental kill) and must not be treated as a confirmed crash.
  */
 export function writeArtifact(
   relativeTestFilePath: string,
@@ -187,7 +202,7 @@ export function writeArtifact(
   kind: ArtifactKind = "crash",
 ): string {
   const testDataDir = getTestDataDir(relativeTestFilePath, testName);
-  const subdir = kind === "timeout" ? "timeouts" : "crashes";
+  const subdir = SUBDIR_BY_KIND[kind];
   const dir = path.join(testDataDir, subdir);
   mkdirSync(dir, { recursive: true });
   const hash = contentHash(data);
