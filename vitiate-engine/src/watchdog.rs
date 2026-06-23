@@ -210,22 +210,9 @@ fn exit_with_input_capture(shared: &WatchdogShared) {
     }
 
     eprintln!("vitiate: watchdog forcing _exit due to timeout");
-    // Terminate the process immediately without running atexit handlers.
-    //
-    // Unix: libc::_exit bypasses CRT cleanup. SAFETY: _exit is safe to call
-    // from any thread.
-    //
-    // Windows: ExitProcess terminates all threads and skips CRT atexit handlers
-    // when called from a non-main thread (our watchdog thread). SAFETY:
-    // ExitProcess is safe to call from any thread.
-    #[cfg(unix)]
-    unsafe {
-        libc::_exit(WATCHDOG_EXIT_CODE);
-    }
-    #[cfg(windows)]
-    unsafe {
-        windows_sys::Win32::System::Threading::ExitProcess(WATCHDOG_EXIT_CODE as u32);
-    }
+    // Terminate immediately without running atexit handlers (safe from the
+    // watchdog thread). See `crate::exit_process`.
+    crate::exit_process(WATCHDOG_EXIT_CODE);
 }
 
 /// NAPI-exposed Watchdog class.
@@ -248,6 +235,9 @@ impl Watchdog {
     ///   fallback still fires but without writing a timeout artifact.
     #[napi(constructor)]
     pub fn new(artifact_prefix: String, shmem: Option<&ShmemHandle>) -> Self {
+        // Install the engine panic hook (idempotent); see crate::install_panic_hook.
+        crate::install_panic_hook();
+
         // Cache V8 init result to avoid redundant dlsym resolution on each
         // Watchdog::new(). OnceLock guarantees exactly one initialization.
         static V8_INIT_RESULT: OnceLock<bool> = OnceLock::new();

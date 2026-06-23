@@ -253,6 +253,9 @@ impl Fuzzer {
         watchdog: Option<&mut Watchdog>,
         shmem_handle: Option<&ShmemHandle>,
     ) -> Result<Self> {
+        // Install the engine panic hook (idempotent); see crate::install_panic_hook.
+        crate::install_panic_hook();
+
         let max_input_len = config
             .as_ref()
             .and_then(|c| c.max_input_len)

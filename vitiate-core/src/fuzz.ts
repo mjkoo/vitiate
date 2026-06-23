@@ -121,6 +121,17 @@ function translateSupervisorResult(
   relativeTestFilePath: string,
   testName: string,
 ): void {
+  if (result.engineError) {
+    // The fuzzing engine itself panicked - an infrastructure failure, not a
+    // crash in the code under test. Fail the test loudly rather than letting
+    // the `!result.crashed` early return pass it silently.
+    throw new Error(
+      `vitiate engine error (exit code ${result.exitCode}): the fuzzing ` +
+        `engine panicked. This is a bug in vitiate, not a crash in the code ` +
+        `under test. See the panic message in the output above.`,
+    );
+  }
+
   if (!result.crashed) return;
 
   const artifactDir = getTestDataDir(relativeTestFilePath, testName);

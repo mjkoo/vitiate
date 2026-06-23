@@ -33,9 +33,23 @@ tempfile = "3.27.0"
 [workspace.lints.clippy]
 all = "deny"
 
+# `panic = "abort"` is set on every profile that produces a running binary
+# (dev + release; `profiling` inherits release) so the debug-built addon and
+# e2e runs behave like the shipped artifact. A Rust panic must never unwind
+# across the napi/C++ FFI boundary, and a panic on the watchdog *thread* must
+# abort the process rather than silently kill only that thread (which would
+# stop timeouts firing). The engine also installs a panic hook (see
+# `install_panic_hook` in vitiate-engine) that exits with a dedicated code
+# *before* unwinding, so the supervisor can tell an engine panic apart from a
+# crash in the target under test. Cargo force-overrides `panic` back to
+# `unwind` for the test/bench harness, so `cargo test` is unaffected.
+[profile.dev]
+panic = "abort"
+
 [profile.release]
 lto = true
 strip = "symbols"
+panic = "abort"
 
 [profile.profiling]
 inherits = "release"

@@ -17,6 +17,72 @@ pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
+/// Exit code used by the engine's panic hook (see [`install_panic_hook`]) when a
+/// Rust panic is intercepted. Distinct from [`crate::watchdog::WATCHDOG_EXIT_CODE`]
+/// (77) so the supervisor can classify an internal engine panic as an infrastructure
+/// error rather than a crash in the target under test. Also exposed to
+/// JavaScript via the [`engine_panic_exit_code()`] napi getter.
+pub(crate) const ENGINE_PANIC_EXIT_CODE: i32 = 78;
+
+/// Returns the exit code the engine uses when its panic hook intercepts a Rust
+/// panic. Sourced by the supervisor as the single source of truth.
+#[napi]
+#[cfg_attr(test, allow(dead_code))]
+pub fn engine_panic_exit_code() -> i32 {
+    ENGINE_PANIC_EXIT_CODE
+}
+
+/// Terminate the process immediately with `code`, bypassing atexit/CRT cleanup.
+///
+/// Shared by the watchdog timeout fallback and the engine panic hook so both
+/// fatal paths exit identically.
+///
+/// SAFETY: `_exit` (Unix) and `ExitProcess` (Windows) are safe to call from any
+/// thread and skip CRT cleanup, avoiding deadlocks on static destructors.
+pub(crate) fn exit_process(code: i32) {
+    #[cfg(unix)]
+    unsafe {
+        libc::_exit(code);
+    }
+    #[cfg(windows)]
+    unsafe {
+        windows_sys::Win32::System::Threading::ExitProcess(code as u32);
+    }
+    #[cfg(not(any(unix, windows)))]
+    std::process::exit(code);
+}
+
+/// Install a process-wide panic hook that reports the panic and then terminates
+/// the process with [`ENGINE_PANIC_EXIT_CODE`] *before* the unwind can cross the
+/// napi/C++ FFI boundary.
+///
+/// The hook runs before unwinding begins, on whichever thread panicked
+/// (including the watchdog thread), so a Rust panic can never unwind through an
+/// `extern "C"` frame, and the supervisor receives an unambiguous death cause
+/// distinct from a crash in the target under test. Idempotent via
+/// [`std::sync::Once`]; safe to call from every napi constructor.
+///
+/// Gated to non-test builds: under `cargo test` the default unwinding hook must
+/// remain installed so libtest can catch panicking tests. (Integration/e2e
+/// builds load the compiled addon without `cfg(test)`, so they get the hook.)
+#[cfg(not(test))]
+pub(crate) fn install_panic_hook() {
+    static HOOK: std::sync::Once = std::sync::Once::new();
+    HOOK.call_once(|| {
+        let default_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            // Preserve the default message/backtrace output, then exit with the
+            // dedicated engine-panic code instead of unwinding.
+            default_hook(info);
+            exit_process(ENGINE_PANIC_EXIT_CODE);
+        }));
+    });
+}
+
+/// No-op under `cargo test`; see the non-test variant for rationale.
+#[cfg(test)]
+pub(crate) fn install_panic_hook() {}
+
 /// Returns `true` if the V8 C++ shim resolved all required symbols at runtime.
 ///
 /// Under Node.js on platforms where V8 symbols are visible (glibc Linux, macOS,

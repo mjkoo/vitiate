@@ -262,6 +262,12 @@ export declare function cmplogGetWritePointer(): Buffer
 
 export declare function createCoverageMap(size: number): Buffer
 
+/**
+ * Returns the exit code the engine uses when its panic hook intercepts a Rust
+ * panic. Sourced by the supervisor as the single source of truth.
+ */
+export declare function enginePanicExitCode(): number
+
 export declare const enum ExitKind {
   Ok = 0,
   Crash = 1,
