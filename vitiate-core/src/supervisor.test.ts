@@ -15,6 +15,7 @@ import {
   runSupervisor,
   waitForChild,
   WATCHDOG_EXIT_CODE,
+  ENGINE_PANIC_EXIT_CODE,
   MAX_RESPAWNS,
 } from "./supervisor.js";
 import { hashTestPath } from "./nix-base32.js";
@@ -243,6 +244,77 @@ describe("runSupervisor", () => {
       expect(result.exitCode).toBeUndefined();
       expect(spawnCount).toBe(2);
       expect(shmem.resetGenerationCount).toBe(2);
+    },
+  );
+
+  it("classifies engine panic exit (78) as engineError without artifact or respawn", async () => {
+    const dir = makeTmpDir();
+    const shmem = createMockShmem(Buffer.from("in-flight-input"));
+    let spawnCount = 0;
+    const testName = "test-engine-panic";
+
+    const spy = vi.spyOn(process.stderr, "write");
+
+    const result = await runSupervisor({
+      shmem,
+      relativeTestFilePath: TEST_RELATIVE_PATH,
+      testName,
+      maxRespawns: 5,
+      spawnChild: () => {
+        spawnCount++;
+        return spawn(
+          process.execPath,
+          ["-e", `process.exit(${ENGINE_PANIC_EXIT_CODE})`],
+          { stdio: "ignore" },
+        );
+      },
+    });
+
+    // Engine panic is an infrastructure error, not a target crash.
+    expect(result.engineError).toBe(true);
+    expect(result.crashed).toBe(false);
+    expect(result.exitCode).toBe(ENGINE_PANIC_EXIT_CODE);
+
+    // No respawn, no generation reset, no crash artifact fabricated.
+    expect(spawnCount).toBe(1);
+    expect(shmem.resetGenerationCount).toBe(0);
+    expect(result.crashArtifactPath).toBeUndefined();
+    const hashDir = hashTestPath(TEST_RELATIVE_PATH, testName);
+    expect(existsSync(path.join(dir, "testdata", hashDir, "crashes"))).toBe(
+      false,
+    );
+
+    expect(spy).toHaveBeenCalledWith(
+      expect.stringContaining("internal engine panic"),
+    );
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "still treats SIGABRT (134) with stashed input as a target crash",
+    async () => {
+      const dir = makeTmpDir();
+      const shmem = createMockShmem(Buffer.from("crash-input"));
+      const testName = "test-target-abort";
+
+      const result = await runSupervisor({
+        shmem,
+        relativeTestFilePath: TEST_RELATIVE_PATH,
+        testName,
+        maxRespawns: 1,
+        spawnChild: () =>
+          spawn(process.execPath, ["-e", "process.exit(134)"], {
+            stdio: "ignore",
+          }),
+      });
+
+      expect(result.engineError).toBeUndefined();
+      expect(result.crashed).toBe(true);
+      expect(result.exitCode).toBe(134);
+      expect(result.crashArtifactPath).toBeDefined();
+      const hashDir = hashTestPath(TEST_RELATIVE_PATH, testName);
+      expect(existsSync(path.join(dir, "testdata", hashDir, "crashes"))).toBe(
+        true,
+      );
     },
   );
 

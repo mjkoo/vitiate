@@ -8,7 +8,7 @@ import type { ChildProcess } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import type { ShmemHandle } from "@vitiate/engine";
-import { watchdogExitCode } from "@vitiate/engine";
+import { enginePanicExitCode, watchdogExitCode } from "@vitiate/engine";
 import {
   getTestDataDir,
   writeArtifact,
@@ -21,6 +21,15 @@ import {
  * Sourced from the Rust watchdog module via napi-rs (single source of truth).
  */
 export const WATCHDOG_EXIT_CODE = watchdogExitCode();
+
+/**
+ * Exit code the engine's panic hook uses when it intercepts a Rust panic.
+ * Sourced from the Rust engine via napi-rs (single source of truth). A child
+ * exiting with this code means vitiate's own engine panicked - an
+ * infrastructure error, NOT a crash in the target under test - so the
+ * supervisor does not write a crash artifact or respawn.
+ */
+export const ENGINE_PANIC_EXIT_CODE = enginePanicExitCode();
 
 /**
  * Maximum number of child respawns before the parent gives up.
@@ -59,6 +68,14 @@ export interface SupervisorResult {
   exitCode?: number;
   /** True when exit code 1 and the child wrote new crash artifacts this run. */
   newCrashArtifacts?: boolean;
+  /**
+   * True when the child died due to a panic in vitiate's own engine
+   * (intercepted by the engine panic hook and signalled via
+   * {@link ENGINE_PANIC_EXIT_CODE}), as opposed to a crash in the target under
+   * test. The supervisor does not write a crash artifact or respawn in this
+   * case; callers should surface it as an infrastructure failure.
+   */
+  engineError?: boolean;
 }
 
 /**
@@ -257,6 +274,20 @@ export async function runSupervisor(
         }
         respawnCount++;
         continue;
+      }
+
+      if (code === ENGINE_PANIC_EXIT_CODE) {
+        // The engine's panic hook intercepted a Rust panic and exited with a
+        // dedicated code. This is a bug in vitiate itself, not a crash in the
+        // target under test - do NOT fabricate a crash artifact or respawn
+        // (which would just panic again and burn the respawn budget).
+        process.stderr.write(
+          `vitiate: child exited due to an internal engine panic ` +
+            `(exit code ${code}); this is a vitiate bug, not a crash in the ` +
+            `target under test. See the panic message above. No crash ` +
+            `artifact written.\n`,
+        );
+        return { crashed: false, engineError: true, exitCode: code };
       }
 
       // Exit codes that indicate crashes (e.g., OOM kill, SIGABRT as exit code)
