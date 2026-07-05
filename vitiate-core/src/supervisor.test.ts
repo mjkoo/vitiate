@@ -144,6 +144,38 @@ describe("runSupervisor", () => {
     expect(result.newCrashArtifacts).toBe(true);
   });
 
+  it("exit code 1 with new timeout artifact sets newCrashArtifacts true", async () => {
+    const dir = makeTmpDir();
+    const shmem = createMockShmem();
+    const testName = "test-new-timeout-artifact";
+
+    // A timeout-only finding writes to timeouts/ (not crashes/) and exits 1;
+    // it must classify as a crash-with-artifact, not an infrastructure error.
+    const hashDir = hashTestPath(TEST_RELATIVE_PATH, testName);
+    const timeoutsDir = path.join(dir, "testdata", hashDir, "timeouts");
+
+    const result = await runSupervisor({
+      shmem,
+      relativeTestFilePath: TEST_RELATIVE_PATH,
+      testName,
+      spawnChild: () =>
+        spawn(
+          process.execPath,
+          [
+            "-e",
+            `require("fs").mkdirSync(${JSON.stringify(timeoutsDir)}, { recursive: true }); ` +
+              `require("fs").writeFileSync(require("path").join(${JSON.stringify(timeoutsDir)}, "timeout-abc123"), "data"); ` +
+              `process.exit(1)`,
+          ],
+          { stdio: "ignore" },
+        ),
+    });
+
+    expect(result.crashed).toBe(true);
+    expect(result.exitCode).toBe(1);
+    expect(result.newCrashArtifacts).toBe(true);
+  });
+
   it("exit code 1 without new crash artifact sets newCrashArtifacts false", async () => {
     const dir = makeTmpDir();
     const shmem = createMockShmem();
