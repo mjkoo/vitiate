@@ -83,6 +83,29 @@ pub(crate) fn install_panic_hook() {
 #[cfg(test)]
 pub(crate) fn install_panic_hook() {}
 
+/// Install the engine panic hook as soon as the addon is loaded, so panics in
+/// napi entries called before `Watchdog`/`Fuzzer` construction (e.g.
+/// [`createCoverageMap`](coverage::create_coverage_map),
+/// `ShmemHandle::allocate`/`attach`) still exit with [`ENGINE_PANIC_EXIT_CODE`]
+/// instead of aborting as SIGABRT and being misclassified by the supervisor as
+/// a crash in the target under test. The per-constructor installs remain as
+/// belt-and-suspenders; the hook itself is `Once`-guarded.
+#[cfg(not(test))]
+#[napi_derive::module_init]
+fn init_engine_panic_hook() {
+    install_panic_hook();
+}
+
+/// Internal test hook: panics immediately to exercise the engine panic hook
+/// installed at module load (must exit the process with the engine panic exit
+/// code without constructing `Watchdog` or `Fuzzer` first). Not part of the
+/// public API; do not call.
+#[napi(js_name = "__testEnginePanic")]
+#[cfg_attr(test, allow(dead_code))]
+pub fn test_engine_panic() {
+    panic!("__testEnginePanic: intentional test panic");
+}
+
 /// Returns `true` if the V8 C++ shim resolved all required symbols at runtime.
 ///
 /// Under Node.js on platforms where V8 symbols are visible (glibc Linux, macOS,
