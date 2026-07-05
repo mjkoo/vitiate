@@ -73,6 +73,11 @@ Each `fuzz()` call:
 
 This means every crash artifact and every interesting input the fuzzer has ever found is replayed as a test case. Crash artifacts are permanent regression guards - if someone reintroduces the bug, the test fails.
 
+When the test has a `timeoutMs` option, regression entries (including saved `timeout-*` artifacts) replay under the same native watchdog used in fuzzing mode: a hung entry - even a synchronous infinite loop that blocks the event loop - fails with a message naming the offending corpus file instead of hanging the worker. Vitest's own per-test timeout is disabled for that test since the watchdog bounds each entry individually. Two caveats:
+
+- An async target that hangs while idle (awaiting a promise that never settles) cannot be interrupted in-process; it is bounded only by the watchdog's fallback, which exits the whole worker.
+- Without `timeoutMs` configured, entries replay unprotected and Vitest's default test timeout applies to the whole replay loop.
+
 ## Crash Artifacts
 
 When the fuzzer finds a crashing input, it:
@@ -84,6 +89,8 @@ When the fuzzer finds a crashing input, it:
 Commit crash artifacts to version control. They are small, deterministic, and serve as documentation of bugs that were found and fixed.
 
 Timeout artifacts follow the same pattern: `.vitiate/testdata/<hashdir>/timeouts/timeout-<sha256>`.
+
+A crash artifact is written even when the crash did not reproduce on the fuzzer's immediate replay of the same input (the fuzz failure will say "crash not reproduced on replay"). Replay determinism is the target's responsibility - if your target depends on `Math.random()`, the clock, or accumulated state, pin those down (e.g. a seeded RNG) or the saved artifact may fail regression runs intermittently. A persistently flaky artifact should be inspected and, if the underlying bug is fixed or unreproducible, removed by hand.
 
 ## Corpus Minimization
 
@@ -103,6 +110,8 @@ Optimize mode works as follows for each `fuzz()` test:
 4. **Deletes non-surviving cached entries** in place from `.vitiate/corpus/`
 
 Seed corpus entries are never deleted - they serve as the coverage baseline. Only cached entries are subject to minimization.
+
+When the test has a `timeoutMs` option, optimize and merge replay each entry under the vitiate watchdog, like regression mode: a hanging entry is skipped with a warning instead of hanging the run.
 
 Minimize periodically, especially after long fuzzing sessions. A smaller corpus means faster regression test runs and faster seed evaluation at the start of the next fuzzing session.
 

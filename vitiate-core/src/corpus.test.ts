@@ -24,6 +24,7 @@ import {
   loadCorpusFromDirs,
   discoverDictionaries,
   loadTestDataCorpus,
+  loadTestDataCorpusWithPaths,
   getTestDataDir,
   getCorpusDir,
 } from "./corpus.js";
@@ -92,6 +93,51 @@ describe("corpus", () => {
       const result = loadTestDataCorpus("test.fuzz.ts", "withsubdir");
       expect(result).toHaveLength(1);
       expect(result[0]!.toString()).toBe("hello");
+    });
+
+    it("loads seeds, crashes, and timeouts but excludes ooms", () => {
+      const hashDir = hashTestPath("test.fuzz.ts", "buckets");
+      const base = path.join(tmpDir, "testdata", hashDir);
+      for (const [sub, content] of [
+        ["seeds", "seed-data"],
+        ["crashes", "crash-data"],
+        ["timeouts", "timeout-data"],
+        ["ooms", "oom-data"],
+      ] as const) {
+        mkdirSync(path.join(base, sub), { recursive: true });
+        writeFileSync(path.join(base, sub, "entry"), content);
+      }
+
+      const result = loadTestDataCorpus("test.fuzz.ts", "buckets");
+      const contents = result.map((b) => b.toString()).sort();
+      expect(contents).toEqual(["crash-data", "seed-data", "timeout-data"]);
+    });
+  });
+
+  describe("loadTestDataCorpusWithPaths", () => {
+    it("returns entries with their file paths, same buckets as loadTestDataCorpus", () => {
+      const hashDir = hashTestPath("test.fuzz.ts", "withpaths");
+      const base = path.join(tmpDir, "testdata", hashDir);
+      for (const [sub, content] of [
+        ["seeds", "seed-data"],
+        ["crashes", "crash-data"],
+        ["timeouts", "timeout-data"],
+        ["ooms", "oom-data"],
+      ] as const) {
+        mkdirSync(path.join(base, sub), { recursive: true });
+        writeFileSync(path.join(base, sub, "entry"), content);
+      }
+
+      const result = loadTestDataCorpusWithPaths("test.fuzz.ts", "withpaths");
+      expect(result).toHaveLength(3);
+      for (const entry of result) {
+        expect(existsSync(entry.path)).toBe(true);
+        expect(readFileSync(entry.path)).toEqual(entry.data);
+      }
+      const subdirs = result
+        .map((e) => path.basename(path.dirname(e.path)))
+        .sort();
+      expect(subdirs).toEqual(["crashes", "seeds", "timeouts"]);
     });
   });
 

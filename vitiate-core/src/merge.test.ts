@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
+import { Watchdog } from "@vitiate/engine";
 import {
   setCover,
   collectEdges,
@@ -18,6 +19,7 @@ import {
   runOptimizeMode,
 } from "./merge.js";
 import type { SetCoverEntry } from "./merge.js";
+import { asWatchdogRunner } from "./loop.js";
 
 function entry(path: string, data: string, edges: number[]): SetCoverEntry {
   return { path, data: Buffer.from(data), edges: new Set(edges) };
@@ -301,6 +303,44 @@ describe("runMergeMode", () => {
     expect(survivors).toHaveLength(1);
   });
 
+  it("skips entries that hang when a watchdog runner is provided", async () => {
+    const corpusDir = path.join(tmpDir, "corpus");
+    mkdirSync(corpusDir, { recursive: true });
+    writeFileSync(path.join(corpusDir, "good"), "good");
+    writeFileSync(path.join(corpusDir, "hang"), "hang");
+
+    const controlFile = path.join(tmpDir, "control.jsonl");
+    const coverageMap = new Uint8Array(65536);
+
+    const watchdog = new Watchdog(tmpDir + path.sep, null);
+    try {
+      await runMergeMode({
+        target: (data: Buffer) => {
+          if (data.toString() === "hang") {
+            // Write partial coverage, then busy-loop until the watchdog
+            // terminates V8 - the target cannot return.
+            coverageMap[10] = 1;
+            for (;;) {
+              // Busy-loop until watchdog termination.
+            }
+          }
+          coverageMap[20] = 1;
+        },
+        corpusDirs: [corpusDir],
+        controlFilePath: controlFile,
+        coverageMap,
+        runner: asWatchdogRunner(watchdog),
+        timeoutMs: 200,
+      });
+    } finally {
+      watchdog.shutdown();
+    }
+
+    // The hanging entry is skipped (never enters set cover); good survives.
+    const survivors = readdirSync(corpusDir);
+    expect(survivors).toHaveLength(1);
+  });
+
   it("cleans up temporary directories after successful merge", async () => {
     // Test the atomic swap recovery by making the output directory a symlink,
     // which will cause the second rename to fail on some platforms. Instead,
@@ -426,6 +466,79 @@ describe("runOptimizeMode", () => {
     // good survives, bad is deleted (it threw so never entered set cover)
     expect(existsSync(path1)).toBe(true);
     expect(existsSync(path2)).toBe(false);
+  });
+
+  it("skips cached entries that hang when a watchdog runner is provided", async () => {
+    const path1 = writeCachedEntry("good", "good");
+    const path2 = writeCachedEntry("hang", "hang");
+
+    const coverageMap = new Uint8Array(65536);
+
+    const watchdog = new Watchdog(tmpDir + path.sep, null);
+    try {
+      await runOptimizeMode({
+        target: (data: Buffer) => {
+          if (data.toString() === "hang") {
+            coverageMap[99] = 1;
+            for (;;) {
+              // Busy-loop until watchdog termination.
+            }
+          }
+          coverageMap[10] = 1;
+        },
+        testName: "test-skip-hang",
+        seedEntries: [],
+        cachedEntries: [
+          { path: path1, data: Buffer.from("good") },
+          { path: path2, data: Buffer.from("hang") },
+        ],
+        coverageMap,
+        runner: asWatchdogRunner(watchdog),
+        timeoutMs: 200,
+      });
+    } finally {
+      watchdog.shutdown();
+    }
+
+    // good survives, hang is deleted (timed out so never entered set cover)
+    expect(existsSync(path1)).toBe(true);
+    expect(existsSync(path2)).toBe(false);
+  });
+
+  it("hanging seed entries do not pollute pre-covered edges", async () => {
+    const cachedPath = writeCachedEntry("cached", "cached");
+
+    const coverageMap = new Uint8Array(65536);
+
+    const watchdog = new Watchdog(tmpDir + path.sep, null);
+    try {
+      await runOptimizeMode({
+        target: (data: Buffer) => {
+          if (data.toString() === "seed-hang") {
+            // Partial coverage on the same edge the cached entry covers;
+            // if it leaked into preCovered, the cached entry would be
+            // considered redundant and deleted.
+            coverageMap[10] = 1;
+            for (;;) {
+              // Busy-loop until watchdog termination.
+            }
+          }
+          coverageMap[10] = 1;
+        },
+        testName: "test-seed-hang",
+        seedEntries: [{ path: "seed-0", data: Buffer.from("seed-hang") }],
+        cachedEntries: [{ path: cachedPath, data: Buffer.from("cached") }],
+        coverageMap,
+        runner: asWatchdogRunner(watchdog),
+        timeoutMs: 200,
+      });
+    } finally {
+      watchdog.shutdown();
+    }
+
+    // The hanging seed contributed no pre-covered edges, so the cached
+    // entry uniquely covers edge 10 and must survive.
+    expect(existsSync(cachedPath)).toBe(true);
   });
 
   it("removes all cached when seeds cover everything", async () => {

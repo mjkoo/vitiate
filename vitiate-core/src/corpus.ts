@@ -97,21 +97,42 @@ export function discoverDictionaries(
 }
 
 /**
- * Load all testdata entries (seeds + crashes + timeouts) for regression and seeding.
- * Missing subdirectories are silently skipped.
+ * Testdata subdirectories loaded for regression and seeding.
  *
  * The `ooms/` bucket is intentionally excluded: a SIGKILL/OOM is ambiguous
  * (environmental kill vs a real memory-exhaustion input) and is not a confirmed
  * reproducer, so it must not gate the regression suite. Inspect those inputs by
  * hand rather than replaying them here.
  */
+const TESTDATA_CORPUS_SUBDIRS = ["seeds", "crashes", "timeouts"];
+
+/**
+ * Load all testdata entries (seeds + crashes + timeouts) for regression and seeding.
+ * Missing subdirectories are silently skipped. See {@link TESTDATA_CORPUS_SUBDIRS}
+ * for why `ooms/` is excluded.
+ */
 export function loadTestDataCorpus(
   relativeTestFilePath: string,
   testName: string,
 ): Buffer[] {
+  return loadTestDataCorpusWithPaths(relativeTestFilePath, testName).map(
+    (e) => e.data,
+  );
+}
+
+/**
+ * Load all testdata entries (seeds + crashes + timeouts) with their file paths,
+ * for regression replay attribution. Same subdirectories and exclusions as
+ * {@link loadTestDataCorpus}.
+ */
+export function loadTestDataCorpusWithPaths(
+  relativeTestFilePath: string,
+  testName: string,
+): CorpusEntryWithPath[] {
   const testDataDir = getTestDataDir(relativeTestFilePath, testName);
-  const subdirs = ["seeds", "crashes", "timeouts"];
-  return subdirs.flatMap((sub) => readCorpusDir(path.join(testDataDir, sub)));
+  return TESTDATA_CORPUS_SUBDIRS.flatMap((sub) =>
+    readCorpusDirWithPaths(path.join(testDataDir, sub)),
+  );
 }
 
 /**

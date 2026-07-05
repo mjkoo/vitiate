@@ -11,6 +11,7 @@ import {
   rmSync,
 } from "node:fs";
 import path from "node:path";
+import { ExitKind } from "@vitiate/engine";
 import type { FuzzOptions } from "./config.js";
 import {
   deleteCorpusEntry,
@@ -22,7 +23,9 @@ import {
   installDetectorModuleHooks,
   getDetectorManager,
   resetDetectorHooks,
+  type DetectorManager,
 } from "./detectors/manager.js";
+import { executeTarget, type WatchdogRunner } from "./loop.js";
 
 export interface SetCoverEntry {
   path: string;
@@ -179,6 +182,99 @@ export interface MergeModeOptions {
   controlFilePath: string;
   coverageMap: Uint8Array;
   detectorConfig?: FuzzOptions["detectors"];
+  /** Watchdog-backed runner for timeout-protected replay (null = bare). */
+  runner?: WatchdogRunner | null;
+  /** Per-entry timeout used with `runner`. */
+  timeoutMs?: number;
+}
+
+/**
+ * Run one corpus entry for merge/optimize replay, with optional watchdog
+ * protection, handling the detector lifecycle and skip logic shared by the
+ * replay loops. Returns true when the entry completed and its coverage
+ * should be collected; false when it should be skipped (threw or timed
+ * out - the coverage map has been cleared).
+ */
+async function runCorpusEntry(opts: {
+  target: FuzzTarget;
+  entry: CorpusEntryWithPath;
+  coverageMap: Uint8Array;
+  detectorManager: DetectorManager | null;
+  runner: WatchdogRunner | null;
+  timeoutMs: number | undefined;
+  /** Mode name for warning messages. */
+  mode: "merge" | "optimize";
+  /** Entry label for warning messages (e.g. the path, or `seed <path>`). */
+  entryLabel: string;
+  /** Warn on a throwing entry (merge does; optimize skips silently). */
+  warnOnException: boolean;
+}): Promise<boolean> {
+  const {
+    target,
+    entry,
+    coverageMap,
+    detectorManager,
+    runner,
+    timeoutMs,
+    mode,
+    entryLabel,
+    warnOnException,
+  } = opts;
+
+  detectorManager?.beforeIteration();
+  let targetCompletedOk = true;
+  let targetReturnValue: unknown;
+
+  try {
+    if (runner !== null) {
+      const res = await executeTarget(target, entry.data, runner, timeoutMs);
+      targetCompletedOk = res.exitKind === ExitKind.Ok;
+      targetReturnValue = res.result;
+      if (res.exitKind === ExitKind.Timeout) {
+        process.stderr.write(
+          `vitiate: ${mode}: warning: skipping ${entryLabel} (timed out after ${timeoutMs}ms)\n`,
+        );
+        coverageMap.fill(0);
+      } else if (!targetCompletedOk) {
+        if (warnOnException) {
+          process.stderr.write(
+            `vitiate: ${mode}: warning: skipping ${entryLabel} (JS exception)\n`,
+          );
+        }
+        coverageMap.fill(0);
+      }
+    } else {
+      try {
+        targetReturnValue = await target(entry.data);
+      } catch {
+        targetCompletedOk = false;
+        if (warnOnException) {
+          process.stderr.write(
+            `vitiate: ${mode}: warning: skipping ${entryLabel} (JS exception)\n`,
+          );
+        }
+        coverageMap.fill(0);
+      }
+    }
+  } catch (e) {
+    // executeTarget only throws on an engine-internal failure (NAPI marshaling
+    // or an unexpected exitKind), not on target exceptions. Balance the
+    // detector pair before letting it propagate and abort the mode.
+    detectorManager?.endIteration(false, undefined);
+    throw e;
+  }
+
+  const detectorError = detectorManager?.endIteration(
+    targetCompletedOk,
+    targetReturnValue,
+  );
+  if (detectorError) {
+    process.stderr.write(
+      `vitiate: ${mode}: warning: detector finding in ${entryLabel}: ${detectorError.message}\n`,
+    );
+  }
+
+  return targetCompletedOk;
 }
 
 /**
@@ -186,8 +282,15 @@ export interface MergeModeOptions {
  * run set cover, write survivors to the output directory (first corpus dir).
  */
 export async function runMergeMode(options: MergeModeOptions): Promise<void> {
-  const { target, corpusDirs, controlFilePath, coverageMap, detectorConfig } =
-    options;
+  const {
+    target,
+    corpusDirs,
+    controlFilePath,
+    coverageMap,
+    detectorConfig,
+    runner = null,
+    timeoutMs,
+  } = options;
   const outputDir = corpusDirs[0]!;
 
   // Load all entries from all corpus directories
@@ -239,30 +342,18 @@ export async function runMergeMode(options: MergeModeOptions): Promise<void> {
   const remaining = allEntries.filter((e) => !processedPaths.has(e.path));
   try {
     for (const entry of remaining) {
-      detectorManager?.beforeIteration();
-      let targetCompletedOk = true;
-      let targetReturnValue: unknown;
-      try {
-        targetReturnValue = await target(entry.data);
-      } catch {
-        targetCompletedOk = false;
-        process.stderr.write(
-          `vitiate: merge: warning: skipping ${entry.path} (JS exception)\n`,
-        );
-        coverageMap.fill(0);
-      }
-
-      const detectorError = detectorManager?.endIteration(
-        targetCompletedOk,
-        targetReturnValue,
-      );
-      if (detectorError) {
-        process.stderr.write(
-          `vitiate: merge: warning: detector finding in ${entry.path}: ${detectorError.message}\n`,
-        );
-      }
-
-      if (!targetCompletedOk) {
+      const ok = await runCorpusEntry({
+        target,
+        entry,
+        coverageMap,
+        detectorManager,
+        runner,
+        timeoutMs,
+        mode: "merge",
+        entryLabel: entry.path,
+        warnOnException: true,
+      });
+      if (!ok) {
         continue;
       }
 
@@ -328,6 +419,10 @@ export interface OptimizeModeOptions {
   cachedEntries: CorpusEntryWithPath[];
   coverageMap: Uint8Array;
   detectorConfig?: FuzzOptions["detectors"];
+  /** Watchdog-backed runner for timeout-protected replay (null = bare). */
+  runner?: WatchdogRunner | null;
+  /** Per-entry timeout used with `runner`. */
+  timeoutMs?: number;
 }
 
 /**
@@ -344,6 +439,8 @@ export async function runOptimizeMode(
     cachedEntries,
     coverageMap,
     detectorConfig,
+    runner = null,
+    timeoutMs,
   } = options;
 
   if (cachedEntries.length === 0) {
@@ -365,26 +462,19 @@ export async function runOptimizeMode(
   let replayedSeeds = 0;
   try {
     for (const entry of seedEntries) {
-      detectorManager?.beforeIteration();
-      let targetCompletedOk = true;
-      let seedReturnValue: unknown;
-      try {
-        seedReturnValue = await target(entry.data);
-      } catch {
-        targetCompletedOk = false;
-        // Seed entries might throw; clear partial coverage and skip
-        coverageMap.fill(0);
-      }
-      const detectorError = detectorManager?.endIteration(
-        targetCompletedOk,
-        seedReturnValue,
-      );
-      if (detectorError) {
-        process.stderr.write(
-          `vitiate: optimize: warning: detector finding in seed ${entry.path}: ${detectorError.message}\n`,
-        );
-      }
-      if (!targetCompletedOk) {
+      // Seed entries might throw; skip silently (coverage cleared by helper).
+      const ok = await runCorpusEntry({
+        target,
+        entry,
+        coverageMap,
+        detectorManager,
+        runner,
+        timeoutMs,
+        mode: "optimize",
+        entryLabel: `seed ${entry.path}`,
+        warnOnException: false,
+      });
+      if (!ok) {
         continue;
       }
       const edges = collectEdges(coverageMap);
@@ -397,26 +487,19 @@ export async function runOptimizeMode(
     // Replay cached entries to collect their edges
     const cachedSetCoverEntries: SetCoverEntry[] = [];
     for (const entry of cachedEntries) {
-      detectorManager?.beforeIteration();
-      let targetCompletedOk = true;
-      let cachedReturnValue: unknown;
-      try {
-        cachedReturnValue = await target(entry.data);
-      } catch {
-        targetCompletedOk = false;
-        // Skip entries that throw
-        coverageMap.fill(0);
-      }
-      const detectorError = detectorManager?.endIteration(
-        targetCompletedOk,
-        cachedReturnValue,
-      );
-      if (detectorError) {
-        process.stderr.write(
-          `vitiate: optimize: warning: detector finding in ${entry.path}: ${detectorError.message}\n`,
-        );
-      }
-      if (!targetCompletedOk) {
+      // Skip entries that throw (coverage cleared by helper).
+      const ok = await runCorpusEntry({
+        target,
+        entry,
+        coverageMap,
+        detectorManager,
+        runner,
+        timeoutMs,
+        mode: "optimize",
+        entryLabel: entry.path,
+        warnOnException: false,
+      });
+      if (!ok) {
         continue;
       }
       const edges = collectEdges(coverageMap);

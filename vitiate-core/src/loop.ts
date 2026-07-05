@@ -134,7 +134,7 @@ export interface FuzzLoopResult {
   calibrationExecs: number;
 }
 
-interface TargetExecutionResult {
+export interface TargetExecutionResult {
   exitKind: ExitKind;
   error?: Error;
   /** True when the target returned a Promise (async target). */
@@ -144,26 +144,60 @@ interface TargetExecutionResult {
 }
 
 /**
+ * The watchdog-execution surface shared by `Fuzzer` (which delegates to its
+ * owned `Watchdog`) and adapters over a standalone `Watchdog` (regression
+ * replay). Structural so `Fuzzer` satisfies it as-is.
+ */
+export interface WatchdogRunner {
+  runTarget(
+    target: (data: Buffer) => void | Promise<void>,
+    input: Buffer,
+    timeoutMs: number,
+  ): { exitKind: number; error?: Error; result?: unknown };
+  armWatchdog(timeoutMs: number): void;
+  disarmWatchdog(): void;
+  readonly didWatchdogFire: boolean;
+}
+
+/**
+ * Adapt a standalone `Watchdog` (shorter `arm`/`disarm`/`didFire` names) to
+ * the `WatchdogRunner` surface. `Fuzzer` already satisfies `WatchdogRunner`
+ * structurally, so only the standalone watchdog needs this shim.
+ */
+export function asWatchdogRunner(watchdog: Watchdog): WatchdogRunner {
+  return {
+    runTarget: (target, input, timeoutMs) =>
+      watchdog.runTarget(target, input, timeoutMs),
+    armWatchdog: (timeoutMs) => watchdog.arm(timeoutMs),
+    disarmWatchdog: () => watchdog.disarm(),
+    get didWatchdogFire() {
+      return watchdog.didFire;
+    },
+  };
+}
+
+/**
  * Run the fuzz target with optional watchdog timeout protection.
  *
- * Uses fuzzer.runTarget() which delegates to the owned Watchdog (or
- * calls directly if no Watchdog). Handles async targets via arm/disarm.
+ * Uses runner.runTarget(), which arms/disarms the underlying watchdog
+ * (Fuzzer-owned in the fuzz loop, standalone in regression/optimize/merge
+ * replay). Handles async targets via arm/disarm.
  */
-async function executeTarget(
+export async function executeTarget(
   target: (data: Buffer) => unknown | Promise<unknown>,
   input: Buffer,
-  fuzzer: Fuzzer,
+  runner: WatchdogRunner,
   timeoutMs: number | undefined,
 ): Promise<TargetExecutionResult> {
   const hasTimeout = timeoutMs !== undefined && timeoutMs > 0;
 
-  // fuzzer.runTarget: arms watchdog (if owned), calls target at the NAPI
+  // runner.runTarget: arms watchdog (if owned), calls target at the NAPI
   // C level, disarms. If no watchdog, calls directly without timeout.
   // Cast: the NAPI .d.ts declares void|Promise<void> because it is
   // auto-generated from Rust #[napi] annotations and not manually patched.
   // At runtime the callback's return value is captured in
   // targetResult.result regardless of the declared type.
-  const targetResult = fuzzer.runTarget(
+  const targetResult = runner.runTarget(
     target as (data: Buffer) => void | Promise<void>,
     input,
     timeoutMs ?? 0,
@@ -195,13 +229,13 @@ async function executeTarget(
   if (targetResult.result instanceof Promise) {
     // Async target returned a Promise - re-arm watchdog and await.
     if (hasTimeout) {
-      fuzzer.armWatchdog(timeoutMs);
+      runner.armWatchdog(timeoutMs);
     }
     let resolvedValue: unknown;
     try {
       resolvedValue = await targetResult.result;
     } catch (e) {
-      if (hasTimeout && fuzzer.didWatchdogFire) {
+      if (hasTimeout && runner.didWatchdogFire) {
         return {
           exitKind: ExitKind.Timeout,
           error: new Error("fuzz target timed out"),
@@ -215,7 +249,7 @@ async function executeTarget(
       };
     } finally {
       if (hasTimeout) {
-        fuzzer.disarmWatchdog();
+        runner.disarmWatchdog();
       }
     }
     return { exitKind: ExitKind.Ok, isAsync: true, result: resolvedValue };

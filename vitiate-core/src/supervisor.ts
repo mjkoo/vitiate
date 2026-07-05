@@ -177,22 +177,32 @@ export async function runSupervisor(
   process.on("SIGINT", sigintHandler);
   process.on("SIGTERM", sigtermHandler);
 
-  // Snapshot existing crash artifacts so we can detect new ones written by
-  // the child (exit code 1). Without this, pre-existing regression tests in
-  // the crashes dir would cause false positives.
+  // Snapshot existing crash/timeout artifacts so we can detect new ones
+  // written by the child (exit code 1). Without this, pre-existing regression
+  // tests in the artifact dirs would cause false positives.
   //
-  // When artifactPrefix is set (CLI mode), the child writes crash artifacts
-  // to <artifactPrefix>crash-<hash> (flat in the prefix directory). Otherwise
-  // the child writes to testdata/<hash>/crashes/crash-<hash>.
-  const crashesDir =
+  // When artifactPrefix is set (CLI mode), the child writes all artifact
+  // kinds to <artifactPrefix><kind>-<hash> (flat in the prefix directory).
+  // Otherwise the child writes to testdata/<hash>/crashes/crash-<hash> and
+  // testdata/<hash>/timeouts/timeout-<hash>. Timeout artifacts count: a
+  // timeout-only finding also exits the child with code 1 and must not be
+  // misclassified as an infrastructure failure.
+  const artifactDirs =
     artifactPrefix !== undefined
-      ? path.dirname(artifactPrefix + "crash-x")
-      : path.join(getTestDataDir(relativeTestFilePath, testName), "crashes");
+      ? [path.dirname(artifactPrefix + "crash-x")]
+      : [
+          path.join(getTestDataDir(relativeTestFilePath, testName), "crashes"),
+          path.join(getTestDataDir(relativeTestFilePath, testName), "timeouts"),
+        ];
 
-  /** List crash artifact filenames in the given directory. */
+  /** List crash/timeout artifact filenames across the artifact directories. */
   function listCrashArtifacts(): string[] {
-    if (!existsSync(crashesDir)) return [];
-    return readdirSync(crashesDir).filter((f) => f.startsWith("crash-"));
+    return artifactDirs.flatMap((dir) => {
+      if (!existsSync(dir)) return [];
+      return readdirSync(dir).filter(
+        (f) => f.startsWith("crash-") || f.startsWith("timeout-"),
+      );
+    });
   }
 
   const preExistingCrashes = new Set(listCrashArtifacts());

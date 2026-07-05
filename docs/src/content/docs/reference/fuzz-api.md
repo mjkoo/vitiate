@@ -50,6 +50,11 @@ All fields are optional. Unset fields inherit from plugin-level `fuzz` configura
 | `fuzzTimeMs` | `number` | `0` | Total fuzzing time limit in milliseconds (0 = unlimited) |
 | `fuzzExecs` | `number` | `0` | Maximum fuzzing iterations (0 = unlimited) |
 
+When `timeoutMs` is set, it also bounds each corpus entry during regression,
+optimize, and merge replay: a hung entry fails (regression) or is skipped with
+a warning (optimize/merge) instead of hanging the run, and Vitest's own test
+timeout is disabled for that test since entries are bounded individually.
+
 ### Crash Handling
 
 | Field | Type | Default | Description |
