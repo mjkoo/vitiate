@@ -480,6 +480,51 @@ fn test_calibrate_finish_without_calibrate_run() {
 }
 
 #[test]
+fn test_calibrate_finish_drains_cmplog_from_calibration_execs() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    let mut fuzzer = TestFuzzerBuilder::new(256).build();
+
+    // Add a seed and drive an interesting input into calibration.
+    let seed_tc = make_seed_testcase(b"seed");
+    let seed_id = fuzzer.state.corpus_mut().add(seed_tc).unwrap();
+    fuzzer.scheduler.on_add(&mut fuzzer.state, seed_id).unwrap();
+
+    fuzzer.last_input = Some(BytesInput::new(b"test".to_vec()));
+    fuzzer.last_corpus_id = Some(seed_id);
+    // SAFETY: index 10 is within 256-byte map bounds; no other observer is live.
+    unsafe {
+        *fuzzer.map_ptr.add(10) = 1;
+    }
+    let result = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
+    assert_eq!(result, IterationResult::Interesting);
+
+    // Simulate calibration execs that record comparisons.
+    for _ in 0..2 {
+        // SAFETY: index 10 is within bounds.
+        unsafe {
+            *fuzzer.map_ptr.add(10) = 1;
+        }
+        cmplog::push(
+            libafl::observers::cmp::CmpValues::U8((1, 2, false)),
+            0,
+            cmplog::CmpLogOperator::Equal,
+        );
+        let _ = fuzzer.calibrate_run(50_000.0).unwrap();
+    }
+
+    fuzzer.calibrate_finish().unwrap();
+
+    // Slots written during calibration must not leak into the next batch
+    // iteration when no stage runs afterwards.
+    let leaked = cmplog::drain();
+    assert!(
+        leaked.is_empty(),
+        "calibrate_finish should drain CmpLog entries from calibration execs, found {}",
+        leaked.len()
+    );
+}
+
+#[test]
 fn test_calibrate_finish_errors_without_pending_calibration() {
     let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let mut fuzzer = TestFuzzerBuilder::new(256).build();

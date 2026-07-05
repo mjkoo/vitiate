@@ -115,6 +115,13 @@ impl Fuzzer {
     /// to the preliminary `bitmap_size` from `report_result`), and the coverage
     /// map is zeroed regardless to prevent stale data.
     pub(super) fn calibrate_finish_impl(&mut self) -> Result<()> {
+        // Drain (discard) CmpLog slots written by calibration execs so they are
+        // not attributed to the next batch iteration's input when no stage runs
+        // afterwards (beginStage returning null skips advance_i2s's drain).
+        // First thing, before any early return: mirrors report_result's
+        // invariant that every exit path drains when nothing consumed CmpLog.
+        let _ = crate::cmplog::drain();
+
         let corpus_id = self.calibration.corpus_id.take().ok_or_else(|| {
             Error::from_reason("calibrateFinish called without pending calibration")
         })?;

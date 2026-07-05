@@ -590,6 +590,7 @@ module.exports = nativeBinding
 module.exports.Fuzzer = nativeBinding.Fuzzer
 module.exports.ShmemHandle = nativeBinding.ShmemHandle
 module.exports.Watchdog = nativeBinding.Watchdog
+module.exports.__testEnginePanic = nativeBinding.__testEnginePanic
 module.exports.cmplogGetSlotBuffer = nativeBinding.cmplogGetSlotBuffer
 module.exports.cmplogGetWritePointer = nativeBinding.cmplogGetWritePointer
 module.exports.createCoverageMap = nativeBinding.createCoverageMap

@@ -223,6 +223,14 @@ runTarget(target: (data: Buffer) => void | Promise<void>, input: Buffer, timeout
 }
 
 /**
+ * Internal test hook: panics immediately to exercise the engine panic hook
+ * installed at module load (must exit the process with the engine panic exit
+ * code without constructing `Watchdog` or `Fuzzer` first). Not part of the
+ * public API; do not call.
+ */
+export declare function __testEnginePanic(): void
+
+/**
  * Result of a batched fuzzing iteration loop.
  *
  * Returned by `Fuzzer.runBatch()`. The batch exits early on the first

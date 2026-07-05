@@ -414,11 +414,17 @@ export async function runSupervisor(
         continue;
       }
 
-      // Unknown exit code - treat as crash to avoid silently passing
+      // Unknown exit code - treat as crash to avoid silently passing, and
+      // attempt shmem input recovery like the known-crash paths (e.g. 139 =
+      // SIGSEGV surfaced as an exit code under some container/PID-1 setups).
+      // A child that repeatedly dies this way without stashing an input trips
+      // the startup-failure circuit breaker instead of looping forever.
       process.stderr.write(
         `vitiate: child exited with unexpected exit code ${code}\n`,
       );
-      return { crashed: true, exitCode: code ?? 1 };
+      const outcome = respawnAfterRecovery("crash", { exitCode: code ?? 1 });
+      if (outcome !== null) return outcome;
+      continue;
     }
   } finally {
     process.removeListener("SIGINT", sigintHandler);

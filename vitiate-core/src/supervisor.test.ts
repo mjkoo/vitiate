@@ -213,6 +213,7 @@ describe("runSupervisor", () => {
       shmem,
       relativeTestFilePath: TEST_RELATIVE_PATH,
       testName: "test-unknown",
+      maxRespawns: 1,
       spawnChild: () =>
         spawn(process.execPath, ["-e", "process.exit(42)"], {
           stdio: "ignore",
@@ -223,6 +224,73 @@ describe("runSupervisor", () => {
     expect(result.exitCode).toBe(42);
     expect(spy).toHaveBeenCalledWith(
       expect.stringContaining("child exited with unexpected exit code 42"),
+    );
+  });
+
+  it("recovers the in-flight input and respawns on an unknown exit code", async () => {
+    const dir = makeTmpDir();
+    // 139 = SIGSEGV surfaced as an exit code (some container/PID-1 setups).
+    const shmem = createMockShmem(Buffer.from("segv-input"));
+    let spawnCount = 0;
+    const testName = "test-unknown-recovery";
+
+    const result = await runSupervisor({
+      shmem,
+      relativeTestFilePath: TEST_RELATIVE_PATH,
+      testName,
+      maxRespawns: 2,
+      spawnChild: () => {
+        spawnCount++;
+        return spawn(process.execPath, ["-e", "process.exit(139)"], {
+          stdio: "ignore",
+        });
+      },
+    });
+
+    // One respawn happened before the limit was hit.
+    expect(spawnCount).toBe(2);
+    expect(result.crashed).toBe(true);
+    expect(result.exitCode).toBe(139);
+    expect(result.crashArtifactPath).toBeDefined();
+    expect(existsSync(result.crashArtifactPath!)).toBe(true);
+    expect(readFileSync(result.crashArtifactPath!).toString()).toBe(
+      "segv-input",
+    );
+    const hashDir = hashTestPath(TEST_RELATIVE_PATH, testName);
+    expect(existsSync(path.join(dir, "testdata", hashDir, "crashes"))).toBe(
+      true,
+    );
+    // Generation is reset before each respawned child (and on final exit).
+    expect(shmem.resetGenerationCount).toBe(2);
+  });
+
+  it("trips the startup-failure breaker on repeated unknown exits with no input", async () => {
+    const dir = makeTmpDir();
+    // Child always dies with an unknown code but never stashes an input.
+    const shmem = createMockShmem(null);
+    let spawnCount = 0;
+    const testName = "test-unknown-startup-storm";
+
+    const result = await runSupervisor({
+      shmem,
+      relativeTestFilePath: TEST_RELATIVE_PATH,
+      testName,
+      // High respawn budget: the startup breaker must trip well before it.
+      maxRespawns: 100,
+      spawnChild: () => {
+        spawnCount++;
+        return spawn(process.execPath, ["-e", "process.exit(42)"], {
+          stdio: "ignore",
+        });
+      },
+    });
+
+    expect(result.startupFailure).toBe(true);
+    expect(result.crashed).toBe(false);
+    expect(spawnCount).toBe(MAX_STARTUP_FAILURES);
+    const hashDir = hashTestPath(TEST_RELATIVE_PATH, testName);
+    expect(existsSync(path.join(dir, "testdata", hashDir, "crashes"))).toBe(
+      false,
     );
   });
 
