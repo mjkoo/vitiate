@@ -520,6 +520,102 @@ mod tests {
         assert_eq!(*values, CmpValues::U8((10, 20, false)));
     }
 
+    // === Slot-buffer leak regression tests (B3) ===
+
+    /// Write a single numeric (f64/f64) comparison slot directly into the
+    /// thread-local slot buffer at slot index `i`, mirroring what the JS
+    /// `__vitiate_cmplog_write()` function does for a number comparison. Uses
+    /// non-integer values so each slot deserializes to exactly one
+    /// `CmpValues::Bytes` entry (non-negative integers would also emit an
+    /// integer variant). Does not advance the write pointer; callers set it via
+    /// [`set_write_ptr_for_test`].
+    fn write_num_slot(i: usize, cmp_id: u32, left: f64, right: f64) {
+        CMPLOG_STATE.with(|s| {
+            let state = s.borrow_mut();
+            // SAFETY: single-threaded test; no JS executes concurrently, so the
+            // raw pointer JS would otherwise hold is not aliased here.
+            let buffer = unsafe { &mut *state.slot_buffer.get() };
+            let base = i * SLOT_SIZE;
+            buffer[base..base + 4].copy_from_slice(&cmp_id.to_le_bytes());
+            buffer[base + 4] = 0; // opId 0 => Equal
+            buffer[base + 5] = 1; // leftType = f64
+            buffer[base + 6] = 1; // rightType = f64
+            buffer[base + 8..base + 16].copy_from_slice(&left.to_le_bytes());
+            buffer[base + 41..base + 49].copy_from_slice(&right.to_le_bytes());
+        });
+    }
+
+    /// Set the thread-local write pointer, as JS does as it appends slots.
+    fn set_write_ptr_for_test(n: u32) {
+        CMPLOG_STATE.with(|s| s.borrow_mut().set_write_ptr(n));
+    }
+
+    fn assert_single_bytes_entry(entries: &[CmpLogEntry], left: &[u8], right: &[u8]) {
+        assert_eq!(entries.len(), 1, "expected exactly one entry");
+        match &entries[0].0 {
+            CmpValues::Bytes((l, r)) => {
+                assert_eq!(l.as_slice(), left);
+                assert_eq!(r.as_slice(), right);
+            }
+            other => panic!("expected CmpValues::Bytes, got {other:?}"),
+        }
+    }
+
+    /// The fix: when an iteration errors after the callback wrote CmpLog slots,
+    /// `run_batch` drain-discards before returning. The next iteration's drain
+    /// must then see only its own comparisons, never the failed iteration's.
+    #[test]
+    fn test_error_path_drain_prevents_stale_cmplog_leak() {
+        let _cleanup = reset();
+        enable();
+
+        // Iteration that fails: JS wrote one comparison slot before erroring.
+        write_num_slot(0, 7, 11.5, 22.5);
+        set_write_ptr_for_test(1);
+
+        // The error-path fix discards the failed iteration's CmpLog.
+        let _ = drain();
+
+        // Next iteration: JS writes its own comparison from slot 0 (write_ptr
+        // was reset to 0 by the discard).
+        write_num_slot(0, 9, 33.5, 44.5);
+        set_write_ptr_for_test(1);
+
+        // Only the next iteration's comparison is attributed to it.
+        let entries = drain();
+        assert_single_bytes_entry(&entries, b"33.5", b"44.5");
+    }
+
+    /// Documents the pre-fix leak mechanism this guards against: without the
+    /// drain-discard, the failed iteration's slots remain and the next
+    /// iteration's JS appends after them, so the next drain mixes both inputs.
+    #[test]
+    fn test_undrained_slots_leak_into_next_drain() {
+        let _cleanup = reset();
+        enable();
+
+        // Failed iteration wrote a slot but was NOT drained (the bug).
+        write_num_slot(0, 7, 11.5, 22.5);
+        set_write_ptr_for_test(1);
+
+        // Next iteration's JS appends at the un-reset write pointer (slot 1).
+        write_num_slot(1, 9, 33.5, 44.5);
+        set_write_ptr_for_test(2);
+
+        // drain() now mixes the failed iteration's comparison into the next.
+        let entries = drain();
+        assert_eq!(entries.len(), 2, "stale slot leaked into the next drain");
+        match (&entries[0].0, &entries[1].0) {
+            (CmpValues::Bytes((l0, r0)), CmpValues::Bytes((l1, r1))) => {
+                assert_eq!(l0.as_slice(), b"11.5");
+                assert_eq!(r0.as_slice(), b"22.5");
+                assert_eq!(l1.as_slice(), b"33.5");
+                assert_eq!(r1.as_slice(), b"44.5");
+            }
+            other => panic!("expected two CmpValues::Bytes, got {other:?}"),
+        }
+    }
+
     // === Serialization tests (Task 2.2) ===
 
     #[test]
