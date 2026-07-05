@@ -88,9 +88,18 @@ const FuzzOptionsSchema = v.object({
    * Enforced by the native watchdog thread for both sync and async targets.
    */
   timeoutMs: v.optional(NonNegativeInteger),
-  /** Total fuzzing time limit in milliseconds. */
+  /**
+   * Total fuzzing time limit in milliseconds. 0 means unlimited.
+   * Bounds the whole campaign including calibration, mutation stages, and
+   * crash minimization; an in-flight target execution is only bounded by
+   * `timeoutMs`.
+   */
   fuzzTimeMs: v.optional(NonNegativeInteger),
-  /** Maximum number of fuzzing iterations. 0 means unlimited. */
+  /**
+   * Maximum number of fuzzing iterations. 0 means unlimited.
+   * Counts main-loop executions only; calibration and stage executions do
+   * not count toward this limit.
+   */
   fuzzExecs: v.optional(NonNegativeInteger),
   /** RNG seed for reproducible fuzzing. */
   seed: v.optional(AnyInteger),

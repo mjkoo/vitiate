@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import {
   runFuzzLoop,
   checkDedupPolicy,
+  clampBatchSizeToDeadline,
   computeBatchSize,
   makeBatchCallback,
 } from "./loop.js";
@@ -553,6 +554,172 @@ describe("fuzz loop", () => {
     expect(result.crashed).toBe(true);
     expect(result.error!.message).toBe("found the bug!");
     expect(result.totalExecs).toBeGreaterThan(0);
+  });
+
+  describe("fuzz time deadline propagation (B9)", () => {
+    // These tests drive the loop's injectable clock from inside the target,
+    // so deadline crossings happen at exact, deterministic points.
+
+    it("skips calibration when the deadline passes during the main-loop execution", async () => {
+      await setupFuzzingMode();
+      let fakeTime = 0;
+      let callCount = 0;
+      const target = (data: Buffer): void => {
+        simulateCoverage(data);
+        callCount++;
+        // First execution is interesting (novel coverage) and consumes the
+        // whole time budget: calibration must not re-run the target.
+        fakeTime = 20_000;
+      };
+
+      const result = await runFuzzLoop(
+        target,
+        "deadline-calibration",
+        "test.fuzz.ts",
+        {
+          fuzzTimeMs: 10_000,
+          grimoire: false,
+          unicode: false,
+          redqueen: false,
+          jsonMutations: false,
+        },
+        { clock: () => fakeTime },
+      );
+
+      expect(result.crashed).toBe(false);
+      expect(callCount).toBe(1);
+      expect(result.calibrationExecs).toBe(0);
+      expect(result.totalExecs).toBe(1);
+    });
+
+    it("skips the stage when the deadline passes during calibration", async () => {
+      await setupFuzzingMode();
+      let fakeTime = 0;
+      let callCount = 0;
+      const covMap = globalThis.__vitiate_cov as Buffer;
+      const target = (data: Buffer): void => {
+        simulateCoverage(data);
+        callCount++;
+        if (data.length > 0) {
+          covMap[data[0]!] = 1;
+        }
+        // CmpLog data would trigger the I2S stage after calibration.
+        globalThis.__vitiate_cmplog_write(
+          data.toString(),
+          "target_value",
+          0,
+          0,
+        );
+        // Calibration is 1 main-loop run + 3 stable re-runs. Consume the
+        // budget during the final calibration re-run: calibration completes
+        // normally, but no stage may begin afterwards.
+        if (callCount === 4) {
+          fakeTime = 20_000;
+        }
+      };
+
+      const result = await runFuzzLoop(
+        target,
+        "deadline-stage-skip",
+        "test.fuzz.ts",
+        {
+          fuzzTimeMs: 10_000,
+          seed: 42,
+          grimoire: false,
+          unicode: false,
+          redqueen: false,
+          jsonMutations: false,
+        },
+        { clock: () => fakeTime },
+      );
+
+      expect(result.crashed).toBe(false);
+      // 1 main-loop execution + 3 calibration re-runs, no stage executions.
+      expect(callCount).toBe(4);
+      expect(result.calibrationExecs).toBe(3);
+      expect(result.totalExecs).toBe(1);
+    });
+
+    it("aborts a running stage when the deadline passes mid-stage", async () => {
+      await setupFuzzingMode();
+      let fakeTime = 0;
+      let callCount = 0;
+      const covMap = globalThis.__vitiate_cov as Buffer;
+      const target = (data: Buffer): void => {
+        simulateCoverage(data);
+        callCount++;
+        if (data.length > 0) {
+          covMap[data[0]!] = 1;
+        }
+        globalThis.__vitiate_cmplog_write(
+          data.toString(),
+          "target_value",
+          0,
+          0,
+        );
+        // Call 5 is the first I2S stage execution (after 1 main-loop run and
+        // 3 calibration re-runs). Consume the budget during it: the stage
+        // must stop before executing another candidate.
+        if (callCount === 5) {
+          fakeTime = 20_000;
+        }
+      };
+
+      const result = await runFuzzLoop(
+        target,
+        "deadline-stage-abort",
+        "test.fuzz.ts",
+        {
+          fuzzTimeMs: 10_000,
+          seed: 42,
+          grimoire: false,
+          unicode: false,
+          redqueen: false,
+          jsonMutations: false,
+        },
+        { clock: () => fakeTime },
+      );
+
+      expect(result.crashed).toBe(false);
+      // 1 main-loop + 3 calibration + exactly 1 stage execution.
+      expect(callCount).toBe(5);
+      // Main-loop execution + the one stage execution; the abandoned stage
+      // candidate is not counted (abortStage with Ok exit kind).
+      expect(result.totalExecs).toBe(2);
+    });
+
+    it("skips crash minimization when the deadline has passed", async () => {
+      await setupFuzzingMode();
+      let fakeTime = 0;
+      let callCount = 0;
+      const target = (data: Buffer): void => {
+        simulateCoverage(data);
+        callCount++;
+        fakeTime = 20_000;
+        throw new Error("crash at the deadline");
+      };
+
+      const result = await runFuzzLoop(
+        target,
+        "deadline-minimize-skip",
+        "test.fuzz.ts",
+        {
+          fuzzTimeMs: 10_000,
+          grimoire: false,
+          unicode: false,
+          redqueen: false,
+          jsonMutations: false,
+        },
+        { clock: () => fakeTime },
+      );
+
+      expect(result.crashed).toBe(true);
+      expect(result.error!.message).toBe("crash at the deadline");
+      // The crash artifact is written, but no minimization executions ran.
+      expect(callCount).toBe(1);
+      expect(result.crashArtifactPath).toBeDefined();
+      expect(existsSync(result.crashArtifactPath!)).toBe(true);
+    });
   });
 
   describe("I2S stage execution", () => {
@@ -1763,6 +1930,37 @@ describe("computeBatchSize", () => {
   it("moderate target gets proportional batch size", () => {
     // 100 exec/s * 3 seconds = 300
     expect(computeBatchSize(100)).toBe(300);
+  });
+});
+
+describe("clampBatchSizeToDeadline", () => {
+  it("passes through when the time budget is unlimited", () => {
+    expect(clampBatchSizeToDeadline(1024, 500, Infinity)).toBe(1024);
+  });
+
+  it("passes through when no throughput estimate is available", () => {
+    expect(clampBatchSizeToDeadline(1024, 0, 100)).toBe(1024);
+    expect(clampBatchSizeToDeadline(1024, -5, 100)).toBe(1024);
+  });
+
+  it("clamps to the executions that fit in the remaining budget", () => {
+    // 500 exec/s * 0.1s = 50 execs until the deadline
+    expect(clampBatchSizeToDeadline(1024, 500, 100)).toBe(50);
+  });
+
+  it("keeps the batch size when the budget fits more executions", () => {
+    // 500 exec/s * 10s = 5000 execs until the deadline
+    expect(clampBatchSizeToDeadline(1024, 500, 10_000)).toBe(1024);
+  });
+
+  it("floors at 1 when the budget is exhausted", () => {
+    expect(clampBatchSizeToDeadline(1024, 500, 0)).toBe(1);
+    expect(clampBatchSizeToDeadline(1024, 500, -100)).toBe(1);
+  });
+
+  it("rounds partial executions up", () => {
+    // 100 exec/s * 0.015s = 1.5 -> 2 execs
+    expect(clampBatchSizeToDeadline(1024, 100, 15)).toBe(2);
   });
 });
 
