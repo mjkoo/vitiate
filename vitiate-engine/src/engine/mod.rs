@@ -622,7 +622,12 @@ impl Fuzzer {
     ///
     /// If the exit kind is Crash or Timeout, the current stage input is recorded
     /// as a solution (crash artifact writing is handled by JS, but this ensures
-    /// `solution_count` and `FuzzerStats` reflect stage-found crashes).
+    /// `solution_count` and `FuzzerStats` reflect stage-found crashes) and the
+    /// aborted execution is counted as a target invocation.
+    ///
+    /// An Ok exit kind abandons the stage without executing the pending
+    /// candidate (e.g. the fuzz-time budget expired): no solution is recorded
+    /// and no execution is counted.
     ///
     /// Errors if the internal solutions corpus fails to accept the entry.
     #[napi]

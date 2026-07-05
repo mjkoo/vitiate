@@ -340,9 +340,13 @@ impl Fuzzer {
             std::ptr::write_bytes(self.map_ptr, 0, self.map_len);
         }
 
-        // The aborted execution counts as a target invocation.
-        self.total_execs += 1;
-        *self.state.executions_mut() += 1;
+        // Crash/Timeout aborts follow an execution that actually ran the
+        // pending candidate; Ok aborts abandon the stage (e.g. fuzz-time
+        // deadline) before the candidate executes, so nothing is counted.
+        if !matches!(exit_kind, ExitKind::Ok) {
+            self.total_execs += 1;
+            *self.state.executions_mut() += 1;
+        }
 
         // Record crash/timeout as a solution. This is the only fallible
         // operation - all cleanup is already done above.

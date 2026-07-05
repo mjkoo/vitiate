@@ -55,6 +55,14 @@ optimize, and merge replay: a hung entry fails (regression) or is skipped with
 a warning (optimize/merge) instead of hanging the run, and Vitest's own test
 timeout is disabled for that test since entries are bounded individually.
 
+`fuzzTimeMs` bounds the whole campaign, including the calibration, mutation
+stage, and crash-minimization phases that run after an interesting input or
+crash: those phases stop (and minimization is skipped) once the budget is
+exhausted, and batch sizes shrink as the deadline approaches. A target
+execution already in flight is not interrupted - only `timeoutMs` bounds a
+single execution. `fuzzExecs` counts main-loop executions only; calibration
+and stage executions do not count toward it.
+
 ### Crash Handling
 
 | Field | Type | Default | Description |

@@ -49,7 +49,7 @@ import {
   printSummary,
   writeResultsFile,
 } from "./reporter.js";
-import { minimize } from "./minimize.js";
+import { DEFAULT_TIME_LIMIT_MS, minimize } from "./minimize.js";
 
 /** Seconds between periodic status line updates printed to stderr. */
 const REPORT_INTERVAL_SECONDS = 3;
@@ -73,6 +73,22 @@ export function computeBatchSize(execsPerSec: number): number {
     MIN_BATCH_SIZE,
     Math.min(MAX_BATCH_SIZE, Math.floor(execsPerSec * REPORT_INTERVAL_SECONDS)),
   );
+}
+
+/**
+ * Clamp a batch size to the executions that fit in the remaining time budget,
+ * estimated from recent throughput. Returns the batch size unchanged when the
+ * budget is unlimited or no throughput estimate is available yet; otherwise
+ * clamps to at least 1 so the loop-top deadline check remains the terminator.
+ */
+export function clampBatchSizeToDeadline(
+  batchSize: number,
+  execsPerSec: number,
+  remainingMs: number,
+): number {
+  if (remainingMs === Infinity || execsPerSec <= 0) return batchSize;
+  const execsUntilDeadline = Math.ceil((execsPerSec * remainingMs) / 1000);
+  return Math.max(1, Math.min(batchSize, execsUntilDeadline));
 }
 
 /**
@@ -312,9 +328,12 @@ async function runCalibration(
   fuzzer: Fuzzer,
   timeoutMs: number | undefined,
   detectorManager: DetectorManager,
+  pastDeadline: () => boolean,
 ): Promise<CalibrationResult> {
   let needsMore = true;
-  while (needsMore) {
+  // Stopping early on deadline is safe: calibrateFinish() (called
+  // unconditionally by the caller) handles incomplete calibration.
+  while (needsMore && !pastDeadline()) {
     const calibrationStartNs = process.hrtime.bigint();
 
     beginIteration(detectorManager);
@@ -358,13 +377,30 @@ async function runCalibration(
     );
     needsMore = fuzzer.calibrateRun(calibrationTimeNs);
   }
-  return { completed: true };
+  // A deadline exit leaves needsMore true: report the calibration as
+  // incomplete so the caller does not treat the entry as fully calibrated.
+  return { completed: !needsMore };
 }
 
 interface StageCrash {
   input: Buffer;
   exitKind: ExitKind;
   error: Error | undefined;
+}
+
+/**
+ * Abort the active stage, tolerating failure. abortStage failure is
+ * non-fatal: any artifact will be written by the caller, and internal
+ * stats bookkeeping is best-effort.
+ */
+function abortStageQuietly(fuzzer: Fuzzer, exitKind: ExitKind): void {
+  try {
+    fuzzer.abortStage(exitKind);
+  } catch (abortError) {
+    process.stderr.write(
+      `vitiate: warning: abortStage failed: ${abortError instanceof Error ? abortError.message : String(abortError)}\n`,
+    );
+  }
 }
 
 /**
@@ -377,10 +413,24 @@ async function runStage(
   fuzzer: Fuzzer,
   timeoutMs: number | undefined,
   detectorManager: DetectorManager,
+  pastDeadline: () => boolean,
 ): Promise<StageCrash | null> {
+  // Don't begin a stage past the deadline - the main loop is about to exit.
+  if (pastDeadline()) {
+    return null;
+  }
+
   let stageResult = fuzzer.beginStage();
 
   while (stageResult !== null) {
+    if (pastDeadline()) {
+      // Abandon the stage without executing the pending candidate.
+      // abortStage(Ok) resets stage state without recording a solution
+      // or counting an execution.
+      abortStageQuietly(fuzzer, ExitKind.Ok);
+      return null;
+    }
+
     const stageInput = Buffer.from(stageResult);
     fuzzer.stashInput(stageInput);
 
@@ -404,16 +454,7 @@ async function runStage(
     }
 
     if (stageExitKind !== ExitKind.Ok) {
-      try {
-        fuzzer.abortStage(stageExitKind);
-      } catch (abortError) {
-        // abortStage failure is non-fatal: artifact will be written by the
-        // caller. Internal stats bookkeeping is best-effort.
-        process.stderr.write(
-          `vitiate: warning: abortStage failed: ${abortError instanceof Error ? abortError.message : String(abortError)}\n`,
-        );
-      }
-
+      abortStageQuietly(fuzzer, stageExitKind);
       return {
         input: stageInput,
         exitKind: stageExitKind,
@@ -466,6 +507,8 @@ export interface FuzzLoopOptions {
   libfuzzerCompat?: boolean;
   stopOnCrash?: boolean;
   maxCrashes?: number;
+  /** Clock function for wall-clock budget checks. Useful for deterministic testing. Default: Date.now. */
+  clock?: () => number;
 }
 
 export async function runFuzzLoop(
@@ -482,6 +525,7 @@ export async function runFuzzLoop(
     libfuzzerCompat,
     stopOnCrash = true,
     maxCrashes = 1000,
+    clock: now = Date.now,
   } = corpusOptions ?? {};
   const coverageMap = globalThis.__vitiate_cov;
   if (!coverageMap) {
@@ -640,10 +684,18 @@ export async function runFuzzLoop(
   const reporter = createReporter(quiet);
   startReporting(reporter, () => fuzzer.stats);
 
-  const startTime = Date.now();
+  const startTime = now();
   // `|| Infinity`: 0 means "unlimited" for both fields, matching libFuzzer convention.
   const maxTime = options.fuzzTimeMs || Infinity;
   const maxRuns = options.fuzzExecs || Infinity;
+  // Absolute wall-clock deadline for the whole campaign. Propagated into
+  // calibration, stages, batching, and minimization so those phases cannot
+  // overshoot the time budget (an in-flight target execution is still only
+  // bounded by the per-execution watchdog timeout).
+  const deadline = maxTime === Infinity ? Infinity : startTime + maxTime;
+  const pastDeadline = (): boolean => now() >= deadline;
+  const remainingBudgetMs = (): number =>
+    deadline === Infinity ? Infinity : deadline - now();
   let iteration = 0;
 
   // Multi-crash accumulation state
@@ -775,6 +827,7 @@ export async function runFuzzLoop(
       fuzzer,
       timeoutMs,
       detectorManager,
+      pastDeadline,
     );
     fuzzer.calibrateFinish();
 
@@ -796,6 +849,7 @@ export async function runFuzzLoop(
         fuzzer,
         timeoutMs,
         detectorManager,
+        pastDeadline,
       );
       if (stageCrash) {
         if (
@@ -872,6 +926,7 @@ export async function runFuzzLoop(
         replayError instanceof VulnerabilityError
           ? replayError.vulnerabilityType
           : undefined,
+        { remainingMs: remainingBudgetMs(), clock: now },
       );
     }
 
@@ -884,11 +939,7 @@ export async function runFuzzLoop(
     // subsequent iterations.
     let isAsyncTarget = false;
     let shouldStop = false;
-    if (
-      !interrupted &&
-      iteration < maxRuns &&
-      Date.now() - startTime < maxTime
-    ) {
+    if (!interrupted && iteration < maxRuns && !pastDeadline()) {
       const rawInput = getNextInputOrThrow(fuzzer);
       const input = Buffer.from(rawInput);
       fuzzer.stashInput(input);
@@ -928,6 +979,7 @@ export async function runFuzzLoop(
             caughtError instanceof VulnerabilityError
               ? caughtError.vulnerabilityType
               : undefined,
+            { remainingMs: remainingBudgetMs(), clock: now },
           );
         }
         if (handleCrash(crashData, exitKind, caughtError)) {
@@ -950,7 +1002,7 @@ export async function runFuzzLoop(
       // Per-iteration fallback for async targets.
       while (!interrupted && !shouldStop) {
         if (iteration >= maxRuns) break;
-        if (Date.now() - startTime >= maxTime) break;
+        if (pastDeadline()) break;
 
         const rawInput = getNextInputOrThrow(fuzzer);
         const input = Buffer.from(rawInput);
@@ -992,6 +1044,7 @@ export async function runFuzzLoop(
               caughtError instanceof VulnerabilityError
                 ? caughtError.vulnerabilityType
                 : undefined,
+              { remainingMs: remainingBudgetMs(), clock: now },
             );
           }
           if (handleCrash(crashData, exitKind, caughtError)) break;
@@ -1020,7 +1073,7 @@ export async function runFuzzLoop(
       // Batched path for synchronous targets.
       while (!interrupted && !shouldStop) {
         if (iteration >= maxRuns) break;
-        if (Date.now() - startTime >= maxTime) break;
+        if (pastDeadline()) break;
 
         // Adaptive batch size: target approximately 3 seconds per batch
         // for responsive stats reporting.
@@ -1032,6 +1085,17 @@ export async function runFuzzLoop(
         if (remainingRuns < batchSize) {
           batchSize = Math.max(1, remainingRuns);
         }
+
+        // Clamp to the remaining time budget so a ~3s batch cannot run
+        // long past a deadline that is only a fraction of that away.
+        // Note: execsPerSec is computed by the Rust engine from real
+        // elapsed time, while remainingBudgetMs uses the injectable clock;
+        // under a fake clock (tests) this estimate is meaningless.
+        batchSize = clampBatchSizeToDeadline(
+          batchSize,
+          stats.execsPerSec,
+          remainingBudgetMs(),
+        );
 
         const batchResult = fuzzer.runBatch(
           batchCallback,
@@ -1078,7 +1142,7 @@ export async function runFuzzLoop(
           coverageEdges: finalStats.coverageEdges,
           coverageFeatures: finalStats.coverageFeatures,
           execsPerSec: finalStats.execsPerSec,
-          elapsedMs: Date.now() - startTime,
+          elapsedMs: now() - startTime,
           error: firstCrashError?.message,
         });
       } catch (writeError) {
@@ -1120,7 +1184,16 @@ async function minimizeCrashInput(
   options: FuzzOptions,
   detectorManager: DetectorManager,
   originalVulnerabilityType: string | undefined,
+  budget: { remainingMs: number; clock: () => number },
 ): Promise<Buffer> {
+  const { remainingMs, clock } = budget;
+  if (remainingMs <= 0) {
+    process.stderr.write(
+      "vitiate: skipping crash minimization: fuzz time budget exhausted\n",
+    );
+    return input;
+  }
+
   const testCandidate = async (candidate: Buffer): Promise<boolean> => {
     fuzzer.stashInput(candidate);
     beginIteration(detectorManager);
@@ -1148,8 +1221,25 @@ async function minimizeCrashInput(
     );
   };
 
+  // Cap the minimization time limit by the remaining fuzz-time budget.
+  // A configured 0 means "unlimited", so the cap is just the remaining budget.
+  const configuredLimitMs =
+    options.minimizeTimeLimitMs ?? DEFAULT_TIME_LIMIT_MS;
+  let timeLimitMs: number;
+  if (remainingMs === Infinity) {
+    timeLimitMs = configuredLimitMs;
+  } else if (configuredLimitMs === 0) {
+    timeLimitMs = Math.max(1, Math.ceil(remainingMs));
+  } else {
+    timeLimitMs = Math.max(
+      1,
+      Math.min(configuredLimitMs, Math.ceil(remainingMs)),
+    );
+  }
+
   return minimize(input, testCandidate, {
     maxIterations: options.minimizeBudget,
-    timeLimitMs: options.minimizeTimeLimitMs,
+    timeLimitMs,
+    clock,
   });
 }

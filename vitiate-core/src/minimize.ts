@@ -15,7 +15,8 @@ export interface MinimizeOptions {
 }
 
 const DEFAULT_MAX_ITERATIONS = 10_000;
-const DEFAULT_TIME_LIMIT_MS = 5_000;
+/** Default wall-clock budget for a minimization pass, exported so callers can cap it. */
+export const DEFAULT_TIME_LIMIT_MS = 5_000;
 
 /**
  * Minimize a crashing input to the smallest byte sequence that still triggers
