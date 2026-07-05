@@ -504,9 +504,17 @@ impl Fuzzer {
         exit_kind: ExitKind,
         exec_time_ns: f64,
     ) -> Result<IterationResult> {
-        let input = self.last_input.take().ok_or_else(|| {
-            Error::from_reason("reportResult called without a prior getNextInput")
-        })?;
+        // Invariant (mirrors run_batch): any path below that returns without
+        // calling process_cmplog_and_tokens() must drain-and-discard CmpLog
+        // first. All error exits here are terminal (the thrown exception
+        // aborts the run), so this is defense-in-depth for consistency with
+        // run_batch rather than a reachable leak.
+        let Some(input) = self.last_input.take() else {
+            let _ = crate::cmplog::drain();
+            return Err(Error::from_reason(
+                "reportResult called without a prior getNextInput",
+            ));
+        };
 
         let libafl_exit_kind = match exit_kind {
             ExitKind::Ok => LibaflExitKind::Ok,
@@ -516,19 +524,25 @@ impl Fuzzer {
 
         // Seeds set last_corpus_id = None (they aren't in the corpus yet).
         // Mutated inputs always have Some(corpus_id) from the scheduler.
-        let eval = self.evaluate_coverage(
+        let eval = match self.evaluate_coverage(
             input.as_ref(),
             exec_time_ns,
             libafl_exit_kind,
             self.last_corpus_id,
-        )?;
+        ) {
+            Ok(eval) => eval,
+            Err(e) => {
+                let _ = crate::cmplog::drain();
+                return Err(e);
+            }
+        };
 
         let result = if eval.is_solution {
             let testcase = Testcase::new(input);
-            self.state
-                .solutions_mut()
-                .add(testcase)
-                .map_err(|e| Error::from_reason(format!("Failed to add solution: {e}")))?;
+            if let Err(e) = self.state.solutions_mut().add(testcase) {
+                let _ = crate::cmplog::drain();
+                return Err(Error::from_reason(format!("Failed to add solution: {e}")));
+            }
             self.solution_count += 1;
             IterationResult::Solution
         } else if eval.is_interesting {
@@ -819,15 +833,22 @@ impl Fuzzer {
         let has_shmem = self.shmem_view.is_some();
 
         for iteration in 0..batch_size {
+            // Invariant: any path below that returns or continues without calling
+            // process_cmplog_and_tokens() must drain-and-discard CmpLog first, or
+            // the next iteration mixes this iteration's stale comparison slots into
+            // its own (the failed callback's slots remain, and the next callback's
+            // JS writes append after them).
+            //
             // Generate next input (seed or mutation).
             let generated = match self.generate_input() {
                 Ok(g) => g,
                 Err(_) => {
                     // Infrastructure error (e.g., empty corpus with no seeds).
-                    // Zero coverage map and return error.
+                    // Zero coverage map and discard CmpLog, then return error.
                     unsafe {
                         std::ptr::write_bytes(self.map_ptr, 0, self.map_len);
                     }
+                    let _ = crate::cmplog::drain();
                     return Ok(BatchResult {
                         executions_completed: iteration,
                         exit_reason: BATCH_EXIT_ERROR.to_owned(),
@@ -884,6 +905,7 @@ impl Fuzzer {
                     }
                     disarm_watchdog_shared(shared);
                 }
+                let _ = crate::cmplog::drain();
                 return Err(Error::new(
                     Status::GenericFailure,
                     "napi_create_double failed in run_batch",
@@ -952,10 +974,13 @@ impl Fuzzer {
                     LibaflExitKind::Timeout
                 } else {
                     // Infrastructure-level error (not a normal callback return).
-                    // Zero coverage map and return error.
+                    // The callback ran and may have written CmpLog slots before
+                    // failing. Zero coverage map and discard CmpLog (otherwise the
+                    // next iteration drains these stale slots), then return error.
                     unsafe {
                         std::ptr::write_bytes(self.map_ptr, 0, self.map_len);
                     }
+                    let _ = crate::cmplog::drain();
                     return Ok(BatchResult {
                         executions_completed: iteration + 1,
                         exit_reason: BATCH_EXIT_ERROR.to_owned(),
@@ -964,10 +989,12 @@ impl Fuzzer {
                     });
                 }
             } else {
-                // NAPI failure (not an exception). Unrecoverable.
+                // NAPI failure (not an exception). Unrecoverable. The callback ran
+                // and may have written CmpLog slots; discard them alongside the map.
                 unsafe {
                     std::ptr::write_bytes(self.map_ptr, 0, self.map_len);
                 }
+                let _ = crate::cmplog::drain();
                 return Ok(BatchResult {
                     executions_completed: iteration + 1,
                     exit_reason: BATCH_EXIT_ERROR.to_owned(),
@@ -976,13 +1003,21 @@ impl Fuzzer {
                 });
             };
 
-            // Evaluate coverage.
-            let eval = self.evaluate_coverage(
+            // Evaluate coverage. The callback already ran and may have written
+            // CmpLog slots, so on error drain-and-discard before propagating
+            // (honors the per-iteration invariant above).
+            let eval = match self.evaluate_coverage(
                 &generated.bytes,
                 exec_time_ns,
                 exit_kind,
                 parent_corpus_id,
-            )?;
+            ) {
+                Ok(eval) => eval,
+                Err(e) => {
+                    let _ = crate::cmplog::drain();
+                    return Err(e);
+                }
+            };
 
             // Process CmpLog entries.
             self.process_cmplog_and_tokens();
