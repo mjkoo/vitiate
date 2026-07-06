@@ -287,6 +287,7 @@ impl Watchdog {
 
     /// Arm the watchdog with a timeout in milliseconds.
     /// Wakes the watchdog thread to start timing.
+    /// A non-finite or non-positive timeout is a no-op (no timeout enforcement).
     #[napi]
     pub fn arm(&mut self, timeout_ms: f64) {
         arm_watchdog_shared(&self.shared, timeout_ms);
@@ -379,17 +380,24 @@ impl Watchdog {
 /// Arm a watchdog using its shared state directly.
 ///
 /// Used by Fuzzer when it owns the watchdog's shared state.
+///
+/// This is the single choke point for every timeout that arrives from JS as
+/// an arbitrary f64 (`Watchdog.arm`/`.runTarget`, `Fuzzer.armWatchdog`/
+/// `.runTarget`/`.runBatch`), so it is validated here rather than asserted:
+/// a non-finite or non-positive value means "no timeout enforcement" and the
+/// arm is a no-op. The JS side only constructs/uses a watchdog when
+/// `timeoutMs > 0`, so this path is defensive. The timeout is also capped so
+/// the deadline arithmetic cannot overflow `Instant + Duration` (which
+/// panics, and `panic = "abort"` would take down the process).
 pub(crate) fn arm_watchdog_shared(shared: &WatchdogShared, timeout_ms: f64) {
-    debug_assert!(
-        timeout_ms.is_finite() && timeout_ms > 0.0,
-        "arm() timeout must be finite and positive, got {timeout_ms}"
-    );
-    let clamped = if timeout_ms.is_finite() && timeout_ms > 0.0 {
-        timeout_ms
-    } else {
-        1.0
-    };
-    let ms = clamped as u64;
+    if !(timeout_ms.is_finite() && timeout_ms > 0.0) {
+        return;
+    }
+    /// Cap a single arm at ~10 years - far beyond any real campaign, small
+    /// enough that neither `Instant + Duration` here nor the exit-fallback
+    /// wait's `Instant + ms * multiplier` in `watchdog_thread` can overflow.
+    const MAX_TIMEOUT_MS: f64 = 315_360_000_000.0;
+    let ms = timeout_ms.min(MAX_TIMEOUT_MS) as u64;
     shared.timeout_ms.store(ms, Ordering::Release);
 
     let deadline = Instant::now() + Duration::from_millis(ms);
@@ -802,6 +810,34 @@ mod tests {
         }
         shared.condvar.notify_one();
         handle.join().unwrap();
+    }
+
+    /// B10 hardening: `timeout_ms` arrives from JS as an arbitrary f64, and
+    /// with `panic = "abort"` a `debug_assert!` here would be process-fatal
+    /// in debug builds. Invalid values must be a validated no-op instead.
+    #[test]
+    fn arm_with_invalid_timeout_is_a_no_op() {
+        let (_buf, shared) = make_shared(false);
+        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            arm_watchdog_shared(&shared, bad);
+            let state = shared.state.lock().unwrap();
+            assert!(!state.armed, "arm({bad}) must not arm the watchdog");
+            assert!(
+                state.deadline.is_none(),
+                "arm({bad}) must not set a deadline"
+            );
+        }
+    }
+
+    /// An absurdly large (but finite) timeout must be capped, not overflow
+    /// the `Instant + Duration` deadline arithmetic (which panics).
+    #[test]
+    fn arm_with_huge_timeout_caps_instead_of_overflowing() {
+        let (_buf, shared) = make_shared(false);
+        arm_watchdog_shared(&shared, f64::MAX);
+        let state = shared.state.lock().unwrap();
+        assert!(state.armed);
+        assert!(state.deadline.is_some());
     }
 
     #[test]

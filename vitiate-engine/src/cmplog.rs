@@ -9,6 +9,15 @@
 //! CmpLog is enabled explicitly via [`enable()`] (called by `Fuzzer::new()`) and
 //! disabled via [`disable()`] (called by `Fuzzer::shutdown()`). `Fuzzer::drop()`
 //! does not touch CmpLog, so non-deterministic GC timing is irrelevant.
+//!
+//! Residual exposure (accepted): the one-Fuzzer-per-thread contract is not
+//! enforced in code. A callback leaked from a previous Fuzzer's run (e.g. a
+//! timer that outlives its target) can still hit the instrumented write
+//! function while a later Fuzzer is active on the same thread. Because
+//! `enable()` clears entries and resets the write pointer and `disable()`
+//! sets the overflow sentinel between Fuzzers, such stale writes can only mix
+//! comparison entries into the active run - degrading I2S mutation guidance
+//! for that input, never crash detection or coverage correctness.
 
 use std::cell::{RefCell, UnsafeCell};
 

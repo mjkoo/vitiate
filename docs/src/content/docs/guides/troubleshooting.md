@@ -61,6 +61,17 @@ npx vitiate optimize
 
 See [Corpus and Regression Testing](/concepts/corpus/#corpus-minimization) for details.
 
+## Worker Exits Unexpectedly During Regression Replay
+
+**Symptoms:** A plain `vitest run` (regression replay, no fuzzing) fails with Vitest's generic "worker exited unexpectedly" error instead of a named test failure. The worker's exit code is `77` or `78`.
+
+In fuzzing mode these exits are interpreted by the supervisor process, which recovers the in-flight input and reports what happened (see [Exit codes](/reference/cli-flags/#exit-codes)). Outside the supervisor - most commonly during regression replay - there is no parent to interpret them, so Vitest only reports that the worker died:
+
+- **Exit code `77` - watchdog timeout fallback.** A corpus entry hung in a way V8 termination cannot interrupt (typically an async target awaiting something that never resolves), so the watchdog force-exited the process. Synchronous hangs (e.g. ReDoS) do not take this path when the test has a `timeoutMs` - they are terminated and reported as an ordinary test failure naming the corpus file.
+- **Exit code `78` - engine panic.** Vitiate's own engine hit an internal bug. This is not a problem with your target or corpus - please report it.
+
+**Fix:** For exit `77`, identify the hanging entry by bisection (temporarily move entries out of the test's `.vitiate/testdata/` and `.vitiate/corpus/` directories) and fix the hang or remove the entry. Note that timeout artifacts (`timeout-*` files capturing the hanging input) can only be written in fuzzing mode, where the supervisor's shared memory holds the in-flight input - regression replay cannot capture it on this path.
+
 ## Debug Mode
 
 Set `VITIATE_DEBUG=1` to enable verbose diagnostic output:
