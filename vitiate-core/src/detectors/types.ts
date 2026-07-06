@@ -45,7 +45,10 @@ export interface Detector {
   /**
    * Called after every iteration regardless of exit kind.
    * Restores any per-iteration state captured by beforeIteration().
-   * Must not throw.
+   * Must not throw: implementations must catch restore failures
+   * internally and warn on stderr instead. DetectorManager additionally
+   * guards violations defensively (logs and continues) so a throwing
+   * reset can never clobber a finding or skip other detectors' resets.
    */
   resetIteration(): void;
   /** Called after fuzzing ends. Restore patched modules. */

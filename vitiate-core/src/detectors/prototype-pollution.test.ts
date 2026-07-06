@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { VulnerabilityError } from "./types.js";
 import {
   PrototypePollutionDetector,
@@ -420,5 +420,138 @@ describe("PrototypePollutionDetector.afterIteration with return value", () => {
     detector.setup();
     detector.beforeIteration();
     expect(() => detector.afterIteration()).not.toThrow();
+  });
+});
+
+// ── resetIteration restore failure ──────────────────────────────────────
+//
+// These tests plant non-configurable properties on Object.prototype, which
+// cannot be removed for the lifetime of this worker. That is safe here:
+// vitest isolates test files in separate workers, and within this file
+// every later beforeIteration() absorbs the residue into its baseline
+// snapshot (restore of an identical descriptor on a non-configurable
+// property is a legal no-op). Kept at the end of the file regardless.
+
+describe("PrototypePollutionDetector resetIteration restore failure", () => {
+  function spyStderr() {
+    return vi.spyOn(process.stderr, "write").mockReturnValue(true);
+  }
+
+  function output(spy: ReturnType<typeof spyStderr>): string {
+    return spy.mock.calls.map((c) => String(c[0])).join("");
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    // Safety net: if a restore assertion fails, don't leak enumerable
+    // pollution into later tests. The non-configurable keys are permanent
+    // by design (see the comment above this describe).
+    delete (Object.prototype as Record<string, unknown>)["__vitiate_test_ok"];
+    delete (Array.prototype as unknown as Record<string, unknown>)[
+      "__vitiate_test_arr"
+    ];
+  });
+
+  it("non-configurable added property does not throw and warns with residue", () => {
+    const detector = new PrototypePollutionDetector();
+    detector.setup();
+    detector.beforeIteration();
+
+    Object.defineProperty(Object.prototype, "__vitiate_test_nc1", {
+      value: 1,
+      configurable: false,
+    });
+
+    const spy = spyStderr();
+    expect(() => detector.resetIteration()).not.toThrow();
+
+    expect(output(spy)).toContain("__vitiate_test_nc1");
+    expect(output(spy)).toContain("unreliable");
+    // Residue: the property cannot be removed and is still present.
+    expect(
+      Object.getOwnPropertyDescriptor(Object.prototype, "__vitiate_test_nc1"),
+    ).toBeDefined();
+  });
+
+  it("restore continues past a failing property", () => {
+    const detector = new PrototypePollutionDetector();
+    detector.setup();
+    detector.beforeIteration();
+
+    Object.defineProperty(Object.prototype, "__vitiate_test_nc2", {
+      value: 1,
+      configurable: false,
+    });
+    (Object.prototype as Record<string, unknown>)["__vitiate_test_ok"] = 1;
+    (Array.prototype as unknown as Record<string, unknown>)[
+      "__vitiate_test_arr"
+    ] = 1;
+
+    const spy = spyStderr();
+    expect(() => detector.resetIteration()).not.toThrow();
+
+    // Restorable pollution is removed despite the failing key.
+    expect(
+      Object.prototype.hasOwnProperty.call(
+        Object.prototype,
+        "__vitiate_test_ok",
+      ),
+    ).toBe(false);
+    expect(
+      Object.prototype.hasOwnProperty.call(
+        Array.prototype,
+        "__vitiate_test_arr",
+      ),
+    ).toBe(false);
+    // Warning only for the non-restorable key.
+    expect(output(spy)).toContain("__vitiate_test_nc2");
+    expect(output(spy)).not.toContain("__vitiate_test_ok");
+    expect(output(spy)).not.toContain("__vitiate_test_arr");
+  });
+
+  it("snapshotted property redefined non-configurable warns instead of throwing", () => {
+    // Snapshotted as configurable...
+    Object.defineProperty(Object.prototype, "__vitiate_test_flip", {
+      value: 1,
+      writable: true,
+      configurable: true,
+      enumerable: false,
+    });
+
+    const detector = new PrototypePollutionDetector();
+    detector.setup();
+    detector.beforeIteration();
+
+    // ...then the "target" flips it non-configurable, so restore's
+    // defineProperty (configurable back to true) throws TypeError.
+    Object.defineProperty(Object.prototype, "__vitiate_test_flip", {
+      value: 2,
+      configurable: false,
+    });
+
+    const spy = spyStderr();
+    expect(() => detector.resetIteration()).not.toThrow();
+    expect(output(spy)).toContain("__vitiate_test_flip");
+    expect(output(spy)).toContain("unreliable");
+  });
+
+  it("dedupes the residue warning per key across repeated resets", () => {
+    const detector = new PrototypePollutionDetector();
+    detector.setup();
+    detector.beforeIteration();
+
+    Object.defineProperty(Object.prototype, "__vitiate_test_nc4", {
+      value: 1,
+      configurable: false,
+    });
+
+    const spy = spyStderr();
+    detector.resetIteration();
+    detector.resetIteration();
+
+    const mentions = spy.mock.calls.filter((c) =>
+      String(c[0]).includes("__vitiate_test_nc4"),
+    );
+    expect(mentions).toHaveLength(1);
   });
 });

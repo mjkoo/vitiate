@@ -158,6 +158,10 @@ export class PrototypePollutionDetector implements Detector {
 
   private snapshots: PrototypeSnapshot[] = [];
   private dirty = true;
+  // Dedup for residue warnings. Symbol keys render via formatKey as
+  // "Symbol(desc)", so distinct symbols with equal descriptions share a
+  // dedup key - acceptable for spam prevention.
+  private warnedResidueKeys = new Set<string>();
 
   getTokens(): Uint8Array[] {
     return TOKENS.map((t) => ENCODER.encode(t));
@@ -271,9 +275,19 @@ export class PrototypePollutionDetector implements Detector {
     this.snapshots = [];
   }
 
-  /** Restore a prototype to its snapshot state. */
+  /**
+   * Restore a prototype to its snapshot state.
+   *
+   * Restore is per-property resilient: a property that cannot be restored
+   * (e.g. the target redefined it as non-configurable) is reported via
+   * warnResidue and skipped, so one bad property never blocks restoration
+   * of the rest. Failure capture at the mutation site is complete for the
+   * built-in prototypes (all ordinary objects): defineProperty either
+   * applies fully or throws, and deleteProperty either deletes or returns
+   * false - no post-restore re-diff is needed.
+   */
   private restorePrototype(snapshot: PrototypeSnapshot): void {
-    const { proto, properties } = snapshot;
+    const { name, proto, properties } = snapshot;
 
     // Remove added non-function properties.
     for (const key of Reflect.ownKeys(proto)) {
@@ -282,8 +296,12 @@ export class PrototypePollutionDetector implements Detector {
       if ("value" in descriptor && typeof descriptor.value === "function") {
         continue;
       }
-      if (!properties.has(key)) {
-        Reflect.deleteProperty(proto, key);
+      if (!properties.has(key) && !Reflect.deleteProperty(proto, key)) {
+        this.warnResidue(
+          name,
+          key,
+          "property is non-configurable and cannot be deleted",
+        );
       }
     }
 
@@ -291,7 +309,30 @@ export class PrototypePollutionDetector implements Detector {
     // defineProperty with the original descriptor is idempotent for
     // unchanged properties.
     for (const [key, descriptor] of properties) {
-      Object.defineProperty(proto, key, descriptor);
+      try {
+        Object.defineProperty(proto, key, descriptor);
+      } catch (e) {
+        this.warnResidue(name, key, e instanceof Error ? e.message : String(e));
+      }
     }
+  }
+
+  /**
+   * Warn (once per key per detector instance) that a prototype property
+   * could not be restored to its snapshot state.
+   */
+  private warnResidue(
+    protoName: string,
+    key: string | symbol,
+    reason: string,
+  ): void {
+    const dedupKey = `${protoName}.${formatKey(key)}`;
+    if (this.warnedResidueKeys.has(dedupKey)) return;
+    this.warnedResidueKeys.add(dedupKey);
+    process.stderr.write(
+      `vitiate: warning: prototype-pollution: failed to restore ${dedupKey} ` +
+        `(${reason}); prototype state remains polluted and subsequent ` +
+        `results in this process may be unreliable\n`,
+    );
   }
 }

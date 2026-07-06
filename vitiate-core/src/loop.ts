@@ -132,6 +132,9 @@ export function makeBatchCallback(
       // Error is intentionally discarded: the batch callback returns a numeric
       // ExitKind to Rust and cannot carry error context. handleSolution replays
       // the crash to recover the error for the artifact.
+      // endIteration(false) is throw-free by construction (no afterIteration,
+      // resets are guarded by the manager), so reaching here after a throwing
+      // endIteration(true) makes this second call a safe state balance.
       detectorManager.endIteration(false);
       return 1; // ExitKind.Crash (all target exceptions are crashes)
     }
