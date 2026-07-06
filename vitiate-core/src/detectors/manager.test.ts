@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { type Detector, VulnerabilityError } from "./types.js";
 import {
   DetectorManager,
@@ -539,6 +539,181 @@ describe("DetectorManager.endIteration stash integration", () => {
     expect(() => manager.endIteration(true)).toThrow(TypeError);
     expect(resetCalled).toHaveLength(1);
     expect(isDetectorActive()).toBe(false);
+  });
+});
+
+// ── endIteration reset failure tests ────────────────────────────────────
+
+describe("DetectorManager.endIteration reset failures", () => {
+  function createManager(detectors: Detector[]): DetectorManager {
+    const manager = new DetectorManager({
+      prototypePollution: false,
+      commandInjection: false,
+      pathTraversal: false,
+    });
+    // Guard: fail explicitly if the private field is renamed
+    expect(manager).toHaveProperty("detectors");
+    Object.defineProperty(manager, "detectors", { value: detectors });
+    return manager;
+  }
+
+  function spyStderr() {
+    return vi.spyOn(process.stderr, "write").mockReturnValue(true);
+  }
+
+  function output(spy: ReturnType<typeof spyStderr>): string {
+    return spy.mock.calls.map((c) => String(c[0])).join("");
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    drainStashedVulnerabilityError();
+    setDetectorActive(false);
+  });
+
+  it("finding survives a throwing resetIteration", () => {
+    const vuln = new VulnerabilityError("test", "Test", {});
+    const manager = createManager([
+      noopDetector({
+        afterIteration: () => {
+          throw vuln;
+        },
+        resetIteration: () => {
+          throw new TypeError("restore failed");
+        },
+      }),
+    ]);
+    manager.beforeIteration();
+
+    const spy = spyStderr();
+    const result = manager.endIteration(true);
+
+    expect(result).toBe(vuln);
+    expect(output(spy)).toContain(
+      'detector "noop" threw from resetIteration()',
+    );
+    expect(isDetectorActive()).toBe(false);
+  });
+
+  it("remaining detectors still reset after one throws", () => {
+    const resets: string[] = [];
+    const manager = createManager([
+      noopDetector({
+        name: "a",
+        resetIteration: () => {
+          throw new Error("boom");
+        },
+      }),
+      noopDetector({
+        name: "b",
+        resetIteration: () => {
+          resets.push("b");
+        },
+      }),
+    ]);
+    manager.beforeIteration();
+
+    const spy = spyStderr();
+    const result = manager.endIteration(true);
+
+    expect(result).toBeUndefined();
+    expect(resets).toEqual(["b"]);
+    expect(output(spy)).toContain('detector "a" threw from resetIteration()');
+    expect(isDetectorActive()).toBe(false);
+  });
+
+  it("stashed finding survives a throwing reset on non-Ok path", () => {
+    const stashed = new VulnerabilityError("hook", "Stashed", {});
+    const hook = installHook("path", "join", () => {
+      throw stashed;
+    });
+    setDetectorActive(true);
+
+    try {
+      path.join("a", "b");
+    } catch {
+      // Target swallows
+    }
+
+    const manager = createManager([
+      noopDetector({
+        resetIteration: () => {
+          throw new Error("boom");
+        },
+      }),
+    ]);
+
+    const spy = spyStderr();
+    const result = manager.endIteration(false);
+
+    expect(result).toBe(stashed);
+    expect(output(spy)).toContain("threw from resetIteration()");
+    expect(isDetectorActive()).toBe(false);
+
+    hook.restore();
+  });
+
+  it("afterIteration detector-bug rethrow still works with throwing reset", () => {
+    const manager = createManager([
+      noopDetector({
+        afterIteration: () => {
+          throw new TypeError("detector bug");
+        },
+        resetIteration: () => {
+          throw new Error("reset boom");
+        },
+      }),
+    ]);
+    manager.beforeIteration();
+
+    const spy = spyStderr();
+    expect(() => manager.endIteration(true)).toThrow("detector bug");
+    expect(output(spy)).toContain("threw from resetIteration()");
+    expect(isDetectorActive()).toBe(false);
+  });
+
+  it("reset-failure warning is deduped per detector across iterations", () => {
+    const manager = createManager([
+      noopDetector({
+        resetIteration: () => {
+          throw new Error("boom");
+        },
+      }),
+    ]);
+
+    const spy = spyStderr();
+    manager.beforeIteration();
+    manager.endIteration(true);
+    manager.beforeIteration();
+    manager.endIteration(true);
+
+    const mentions = spy.mock.calls.filter((c) =>
+      String(c[0]).includes("threw from resetIteration()"),
+    );
+    expect(mentions).toHaveLength(1);
+  });
+
+  it("teardown continues past a throwing detector teardown", () => {
+    const tornDown: string[] = [];
+    const manager = createManager([
+      noopDetector({
+        name: "a",
+        teardown: () => {
+          throw new Error("teardown boom");
+        },
+      }),
+      noopDetector({
+        name: "b",
+        teardown: () => {
+          tornDown.push("b");
+        },
+      }),
+    ]);
+
+    const spy = spyStderr();
+    expect(() => manager.teardown()).not.toThrow();
+    expect(tornDown).toEqual(["b"]);
+    expect(output(spy)).toContain('detector "a" threw from teardown()');
   });
 });
 
