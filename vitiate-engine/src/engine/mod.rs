@@ -713,7 +713,8 @@ impl Fuzzer {
 
     /// Arm the owned watchdog with a timeout in milliseconds.
     ///
-    /// No-op if no Watchdog was provided at construction. Used by the
+    /// No-op if no Watchdog was provided at construction, or if the timeout
+    /// is non-finite or non-positive (no timeout enforcement). Used by the
     /// per-iteration fallback path for async targets that need to re-arm
     /// the watchdog before awaiting a Promise.
     #[napi]

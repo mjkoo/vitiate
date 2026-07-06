@@ -209,6 +209,16 @@ impl ShmemView {
     /// - The generation is zero (no input ever stashed)
     /// - The generation is odd (write in progress - seqlock protocol)
     /// - The generation changed between the two reads (torn read)
+    ///
+    /// The check is deliberately single-shot - no retry loop (wontfix by
+    /// design). Every caller runs when the writer cannot be mid-stash: the
+    /// in-process callers (the watchdog thread before `_exit(77)`, the
+    /// Windows exception handler) only run while the JS thread is hung
+    /// inside the target or crashing, and `stash_input` runs on that same JS
+    /// thread *before* the target executes; the supervisor-side caller
+    /// (`readConsistent` in `supervisor.ts`) runs after the child has been
+    /// reaped. An odd or mismatched generation here therefore means the
+    /// writer died mid-stash - a permanent state retrying cannot resolve.
     pub fn read_consistent(&self) -> Option<Vec<u8>> {
         let gen_before = self.generation().load(Ordering::Acquire);
 
