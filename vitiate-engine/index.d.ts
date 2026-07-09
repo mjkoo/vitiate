@@ -347,12 +347,21 @@ export interface FuzzerConfig {
 }
 
 export interface FuzzerStats {
+  /**
+   * Target executions from the main fuzz loop and mutation stages
+   * (colorization, REDQUEEN, generalization, I2S). Excludes calibration.
+   */
   totalExecs: number
+  /** Target executions performed during corpus-entry calibration. */
   calibrationExecs: number
   corpusSize: number
   solutionCount: number
   coverageEdges: number
   coverageFeatures: number
+  /**
+   * Rate of all target executions per second, including calibration
+   * (`(total_execs + calibration_execs) / elapsed`).
+   */
   execsPerSec: number
 }
 

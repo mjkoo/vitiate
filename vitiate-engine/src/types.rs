@@ -58,12 +58,17 @@ pub enum IterationResult {
 
 #[napi(object)]
 pub struct FuzzerStats {
+    /// Target executions from the main fuzz loop and mutation stages
+    /// (colorization, REDQUEEN, generalization, I2S). Excludes calibration.
     pub total_execs: i64,
+    /// Target executions performed during corpus-entry calibration.
     pub calibration_execs: i64,
     pub corpus_size: u32,
     pub solution_count: u32,
     pub coverage_edges: u32,
     pub coverage_features: u32,
+    /// Rate of all target executions per second, including calibration
+    /// (`(total_execs + calibration_execs) / elapsed`).
     pub execs_per_sec: f64,
 }
 

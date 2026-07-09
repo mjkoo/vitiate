@@ -1,0 +1,38 @@
+{
+  "source": "~/Projects/xword-parser",
+  "testdata": "~/Projects/xword-parser-testdata",
+  "harnesses": {
+    "jazzer": {
+      "branch": "jazzer-benchmark",
+      "sha": "670dfcc372a651b2ccc71cb1d193966c18e361c0",
+      "overlay": {
+        "dir": "~/Projects/xword-parser-jazzer",
+        "files": [
+          "fuzz/ipuz.fuzz.ts",
+          "fuzz/jpz.fuzz.ts",
+          "fuzz/parse.fuzz.ts",
+          "fuzz/puz.fuzz.ts",
+          "fuzz/xd.fuzz.ts",
+          "fuzz/targets/ipuz.cjs",
+          "fuzz/targets/jpz.cjs",
+          "fuzz/targets/parse.cjs",
+          "fuzz/targets/puz.cjs",
+          "fuzz/targets/xd.cjs",
+          "scripts/fuzz-benchmark.js"
+        ]
+      },
+      "overrides": {
+        "fast-xml-parser": "5.5.9"
+      }
+    },
+    "vitiate": {
+      "branch": "vitiate-migration",
+      "sha": "5bd91cb272dd8f669a25eb2fdb59fe69c9961139",
+      "overlay": null
+    }
+  },
+  "modes": {
+    "smoke": { "duration": 30, "runs": 1 },
+    "full": { "duration": 300, "runs": 2 }
+  }
+}

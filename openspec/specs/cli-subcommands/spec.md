@@ -141,9 +141,9 @@ Arguments after `libfuzzer` SHALL be parsed using the existing `@optique`-based 
 - **WHEN** `npx vitiate libfuzzer ./test.fuzz.ts -merge=1 ./corpus/` is executed
 - **THEN** corpus merge mode SHALL execute using the existing merge implementation
 
-#### Scenario: OSS-Fuzz compatibility
+#### Scenario: Fuzzing platform compatibility
 
-- **WHEN** an OSS-Fuzz build script invokes `npx vitiate libfuzzer ./target.fuzz.ts ./corpus/ -max_total_time=600`
+- **WHEN** a fuzzing platform build script invokes `npx vitiate libfuzzer ./target.fuzz.ts ./corpus/ -max_total_time=600`
 - **THEN** the fuzzer SHALL behave identically to the current `npx vitiate` invocation
 
 ### Requirement: Vitest wrapper execution

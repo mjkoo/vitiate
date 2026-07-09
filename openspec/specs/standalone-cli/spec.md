@@ -49,7 +49,7 @@ The CLI SHALL accept a `-test=<name>` flag that selects exactly one fuzz test by
 
 In CLI mode, the test name does NOT determine the artifact path - artifact paths are determined by the resolved artifact prefix (see `cli-artifact-prefix` capability). The `testName` is still passed to `SupervisorOptions` for log messages and as a fallback when `artifactPrefix` is not set.
 
-When `-test` is not provided, all fuzz tests in the file enter the fuzz loop. The parent SHALL derive `testName` from the filename (current behavior), which is correct for the single-test-per-file convention used in libFuzzer/OSS-Fuzz.
+When `-test` is not provided, all fuzz tests in the file enter the fuzz loop. The parent SHALL derive `testName` from the filename (current behavior), which is correct for the single-test-per-file convention used by libFuzzer.
 
 #### Scenario: Filter to specific test in multi-test file
 

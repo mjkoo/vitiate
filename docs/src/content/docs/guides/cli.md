@@ -105,7 +105,7 @@ The output includes a manifest of discovered tests with their hash directories, 
 
 ## libFuzzer compatibility
 
-The `libfuzzer` subcommand provides a libFuzzer-compatible interface for integration with fuzzing platforms like OSS-Fuzz and CI services that expect libFuzzer-style flags and conventions. Unlike the other subcommands, it targets a single test file and accepts positional corpus directories.
+The `libfuzzer` subcommand provides a libFuzzer-compatible interface for integration with fuzzing platforms and CI services that expect libFuzzer-style flags and conventions. Unlike the other subcommands, it targets a single test file and accepts positional corpus directories.
 
 ```bash
 npx vitiate libfuzzer test/parser.fuzz.ts
@@ -186,15 +186,17 @@ See the [CLI Flags Reference](/reference/cli-flags/) for the complete list of li
 The fuzzer prints periodic status lines during execution:
 
 ```
-fuzz: elapsed: 3s, execs: 1024 (3412/sec), corpus: 23 (5 new), edges: 142
+fuzz: elapsed: 3s, execs: 1024 (3412/sec), cal: 96, corpus: 23 (5 new), edges: 142, ft: 198
 ```
 
 | Field | Meaning |
 |-------|---------|
 | `elapsed` | Time since fuzzing started |
-| `execs` | Total executions so far (with per-second rate) |
+| `execs` | Fuzz-loop executions so far. The per-second rate covers all target executions, including calibration |
+| `cal` | Executions spent calibrating new corpus entries (counted separately from `execs`) |
 | `corpus` | Corpus size, with number of new entries since last status |
 | `edges` | Unique coverage edges discovered |
+| `ft` | Coverage features (edge and hit-count bucket combinations) discovered |
 
 ## Environment variables
 

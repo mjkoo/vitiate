@@ -643,14 +643,19 @@ impl Fuzzer {
             .map_or(0, |m| m.list.len() as u32)
     }
 
-    #[napi(getter)]
-    pub fn stats(&self) -> FuzzerStats {
-        let elapsed = self.start_time.elapsed().as_secs_f64();
-        let execs_per_sec = if elapsed > 0.0 {
-            self.total_execs as f64 / elapsed
+    /// Execution rate over all target executions (main loop, stages, and
+    /// calibration) for the given elapsed seconds.
+    fn execs_per_sec_at(&self, elapsed: f64) -> f64 {
+        if elapsed > 0.0 {
+            (self.total_execs + self.calibration_execs) as f64 / elapsed
         } else {
             0.0
-        };
+        }
+    }
+
+    #[napi(getter)]
+    pub fn stats(&self) -> FuzzerStats {
+        let execs_per_sec = self.execs_per_sec_at(self.start_time.elapsed().as_secs_f64());
 
         let (coverage_edges, coverage_features) = self
             .state

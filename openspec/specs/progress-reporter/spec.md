@@ -5,7 +5,7 @@
 Report progress periodically to stderr (not Vitest normal output). Status line includes:
 - Elapsed time (seconds)
 - Total executions
-- Executions per second
+- Executions per second (covers all target executions, including calibration)
 - Calibration executions
 - Corpus size (total and new interesting since last report)
 - Coverage edge count

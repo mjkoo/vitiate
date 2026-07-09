@@ -90,6 +90,39 @@ fn calibrate_run_does_not_increment_total_execs() {
 }
 
 #[test]
+fn execs_per_sec_includes_calibration_execs() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    let mut fuzzer = TestFuzzerBuilder::new(256).build();
+
+    let seed_tc = make_seed_testcase(b"seed");
+    let seed_id = fuzzer.state.corpus_mut().add(seed_tc).unwrap();
+    fuzzer.scheduler.on_add(&mut fuzzer.state, seed_id).unwrap();
+
+    fuzzer.last_input = Some(BytesInput::new(b"test".to_vec()));
+    fuzzer.last_corpus_id = Some(seed_id);
+    // SAFETY: index 10 is within bounds.
+    unsafe {
+        *fuzzer.map_ptr.add(10) = 1;
+    }
+    let _ = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
+
+    for _ in 0..3 {
+        // SAFETY: index 10 is within bounds.
+        unsafe {
+            *fuzzer.map_ptr.add(10) = 1;
+        }
+        let _ = fuzzer.calibrate_run(50_000.0).unwrap();
+    }
+    fuzzer.calibrate_finish().unwrap();
+
+    // 1 main-loop exec + 3 calibration execs over a fixed 2-second window.
+    assert_eq!(fuzzer.stats().total_execs, 1);
+    assert_eq!(fuzzer.stats().calibration_execs, 3);
+    assert_eq!(fuzzer.execs_per_sec_at(2.0), 2.0);
+    assert_eq!(fuzzer.execs_per_sec_at(0.0), 0.0);
+}
+
+#[test]
 fn calibration_execs_accumulate_across_entries() {
     let _cmplog_cleanup = cmplog::TestCleanupGuard;
     let mut fuzzer = TestFuzzerBuilder::new(256).build();

@@ -157,7 +157,7 @@ export const libfuzzerParser = object({
       ],
     }),
   ),
-  // libFuzzer-compatible flags: accepted for OSS-Fuzz compatibility
+  // libFuzzer-compatible flags: accepted for fuzzing-platform compatibility
   fork: optional(
     option("-fork", integer({ min: 0 }), {
       description: [
@@ -497,7 +497,7 @@ async function runParentMode(
 
   // When -test is provided, use it as the test name for artifact paths.
   // Otherwise, fall back to deriving from the filename (correct for the
-  // single-test-per-file convention used in libFuzzer/OSS-Fuzz).
+  // single-test-per-file convention used by libFuzzer-based platforms).
   const resolvedTestName =
     testName ?? path.basename(testFile, path.extname(testFile));
 
