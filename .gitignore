@@ -30,3 +30,6 @@ lefthook-local.yml
 
 # OS
 .DS_Store
+# Benchmark harness vendored checkouts and results (see benchmarks/README.md)
+benchmarks/vendor/
+benchmarks/results/

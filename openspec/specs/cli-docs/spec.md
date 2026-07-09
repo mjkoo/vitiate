@@ -30,7 +30,7 @@ The `vitiate fuzz` section SHALL be the most prominent, with examples showing `-
 #### Scenario: libFuzzer section covers motivation
 
 - **WHEN** a user reads the libFuzzer compatibility section
-- **THEN** the section SHALL explain that `vitiate libfuzzer` exists for OSS-Fuzz and platform integration
+- **THEN** the section SHALL explain that `vitiate libfuzzer` exists for fuzzing platform integration
 - **AND** the section SHALL document all libFuzzer-compatible flags
 - **AND** the section SHALL cover corpus directories, merge mode, and the supervisor architecture
 

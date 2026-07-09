@@ -78,7 +78,7 @@ Sets `VITIATE_OPTIMIZE=1` and spawns `vitest run` filtered to fuzz test files (`
 npx vitiate libfuzzer <test-file> [corpus-dirs...] [flags]
 ```
 
-Runs in libFuzzer-compatible mode. Instruments JS/TS source with edge coverage counters via SWC and drives mutation-based fuzzing via LibAFL. Accepts libFuzzer-compatible flags. This is the mode used by OSS-Fuzz.
+Runs in libFuzzer-compatible mode. Instruments JS/TS source with edge coverage counters via SWC and drives mutation-based fuzzing via LibAFL. Accepts libFuzzer-compatible flags. This is the mode intended for fuzzing platform integration.
 
 ### Positional arguments
 
@@ -131,7 +131,7 @@ Runs in libFuzzer-compatible mode. Instruments JS/TS source with edge coverage c
 
 ### Compatibility flags
 
-These flags are parsed for libFuzzer/OSS-Fuzz compatibility but ignored:
+These flags are parsed for libFuzzer compatibility but ignored:
 
 | Flag | Behavior |
 |------|----------|
