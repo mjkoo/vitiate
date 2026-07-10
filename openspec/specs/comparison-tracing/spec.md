@@ -1,5 +1,11 @@
-## Requirements
+# Comparison Tracing
 
+## Purpose
+
+Defines how the SWC instrumentation plugin wraps comparison operators to report their operands
+to the CmpLog pipeline, enabling input-to-state (I2S) and REDQUEEN-style mutations that bypass
+magic-value and length checks without changing program semantics.
+## Requirements
 ### Requirement: Comparison operator wrapping
 
 The plugin SHALL instrument binary comparison expressions by emitting an immediately invoked arrow function (IIFE) that: (1) receives both operands as function arguments (evaluated exactly once, left-to-right), (2) calls the record-only tracing function with the parameters, comparison site ID, and a numeric operator ID, (3) evaluates the original comparison using the parameters and returns the result.
@@ -81,8 +87,11 @@ The instrumented comparison expression SHALL evaluate to the same boolean value 
 
 ### Requirement: Comparison IDs are deterministic
 
-Comparison IDs SHALL be computed using the same hash scheme as edge coverage IDs:
-`hash(file_path, span.lo, span.hi) % coverage_map_size`.
+Comparison IDs SHALL be computed using the same hash scheme as edge coverage IDs (see the
+`edge-coverage` capability): `finalize(hash(file_path, span.lo, span.hi, edge_kind)) %
+coverage_map_size`, using the comparison-site edge kind so a comparison ID does not alias a
+coverage counter at the same span. Comparison IDs SHALL be deterministic (same inputs always
+produce the same output).
 
 #### Scenario: Same comparison produces same ID across compilations
 
@@ -124,8 +133,9 @@ tracing instrumentation is skipped entirely. Default: `true`.
 
 ### Requirement: Non-comparison binary operators are not traced
 
-Arithmetic (`+`, `-`, `*`, `/`, `%`, `**`), bitwise (`&`, `|`, `^`, `<<`, `>>`, `>>>`),
-and `in` / `instanceof` operators SHALL NOT be wrapped with comparison tracing.
+The plugin SHALL NOT wrap non-comparison binary operators with comparison tracing: arithmetic
+(`+`, `-`, `*`, `/`, `%`, `**`), bitwise (`&`, `|`, `^`, `<<`, `>>`, `>>>`), and `in` /
+`instanceof`.
 
 #### Scenario: Arithmetic operator
 
@@ -169,3 +179,4 @@ Nested comparisons and re-entrant comparisons (via same-module function calls) S
 - **AND** `g()` is evaluated as the second IIFE argument, and any instrumented comparisons inside `g()` execute in their own IIFE stack frames
 - **AND** the outer IIFE's `l` parameter holds `f()`'s return value and `r` holds `g()`'s return value
 - **AND** the outer comparison `l < r` evaluates `f()'s return < g()'s return`, which is semantically correct
+

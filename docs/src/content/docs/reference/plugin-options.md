@@ -97,6 +97,8 @@ coverageMapSize?: number  // default: 65536
 
 Larger maps reduce hash collisions (where different edges map to the same slot) but use more memory. The default is suitable for most projects. Increase it for very large codebases.
 
+Vitiate prints a one-time warning at the start of a campaign if the number of instrumented edges is large relative to the map size (roughly 2% or more), since collisions then start to silently merge edges and coarsen coverage feedback. If you see this warning, raise `coverageMapSize` to the next power of two.
+
 ## Setup File
 
 The plugin automatically adds `@vitiate/core/setup` to Vitest's `setupFiles` via its `config()` hook. This initializes the coverage map and comparison tracing globals at runtime. No manual configuration is needed.

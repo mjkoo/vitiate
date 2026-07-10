@@ -6,6 +6,11 @@ use swc_core::ecma::{
 };
 use swc_core::plugin::{plugin_transform, proxies::TransformPluginProgramMetadata};
 
+/// Global the plugin accumulates per-file coverage-counter counts into, read by
+/// the runtime to estimate coverage-map load. Must match the name the runtime
+/// reads in `vitiate-core/src/globals.ts`.
+const EDGE_COUNT_GLOBAL_NAME: &str = "__vitiate_edge_count";
+
 // Task 1.1: Plugin configuration
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -27,10 +32,42 @@ impl Default for PluginConfig {
     }
 }
 
+/// Discriminates the kind of edge an id is computed for. Folded into the edge
+/// hash so that edges sharing a source span (e.g. a loop's body-entry counter
+/// and its synthesized loop-exit counter, or an if-consequent and its
+/// synthesized not-taken else) never alias to the same coverage-map slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EdgeKind {
+    /// A taken-path block-entry counter (the default for all existing probes).
+    Block,
+    /// The synthesized not-taken edge of an `if` with no `else`.
+    ElseNotTaken,
+    /// The synthesized fall-through edge past a loop.
+    LoopExit,
+    /// A comparison site recorded for CmpLog (indexes the cmplog buffer, not
+    /// the coverage map).
+    Cmp,
+}
+
+impl EdgeKind {
+    fn discriminant(self) -> u64 {
+        match self {
+            EdgeKind::Block => 0,
+            EdgeKind::ElseNotTaken => 1,
+            EdgeKind::LoopExit => 2,
+            EdgeKind::Cmp => 3,
+        }
+    }
+}
+
 // Task 1.2: TransformVisitor with config and file path
 pub struct TransformVisitor {
     config: PluginConfig,
     file_path: String,
+    /// Count of coverage-map counters emitted for this file. Injected into the
+    /// preamble so the runtime can estimate coverage-map load (collision
+    /// pressure). CmpLog sites are not counted (they index a separate buffer).
+    edge_count: std::cell::Cell<u32>,
 }
 
 impl TransformVisitor {
@@ -38,7 +75,11 @@ impl TransformVisitor {
         if config.coverage_map_size == 0 {
             config.coverage_map_size = PluginConfig::default().coverage_map_size;
         }
-        Self { config, file_path }
+        Self {
+            config,
+            file_path,
+            edge_count: std::cell::Cell::new(0),
+        }
     }
 
     #[cfg(test)]
@@ -46,35 +87,51 @@ impl TransformVisitor {
         Self::new(PluginConfig::default(), "test.js".to_string())
     }
 
-    // Task 1.3: Deterministic edge ID from file path + source span (FNV-1a)
-    fn edge_id(&self, span: Span) -> u32 {
-        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-        for &byte in self.file_path.as_bytes() {
-            hash ^= byte as u64;
-            hash = hash.wrapping_mul(0x0100_0000_01b3);
-        }
-        for &byte in &span.lo.0.to_le_bytes() {
-            hash ^= byte as u64;
-            hash = hash.wrapping_mul(0x0100_0000_01b3);
-        }
-        for &byte in &span.hi.0.to_le_bytes() {
-            hash ^= byte as u64;
-            hash = hash.wrapping_mul(0x0100_0000_01b3);
-        }
-        (hash as u32) % self.config.coverage_map_size
+    // Task 1.3: Deterministic edge ID from file path + source span + edge kind.
+    //
+    // FNV-1a over (file_path, span.lo, span.hi, kind) followed by a murmur3
+    // fmix64 avalanche finalizer. The finalizer matters because the map size is
+    // typically a power of two, so the reduction `% size` keeps only the low
+    // bits - and FNV-1a's low bits are weakly mixed. Avalanching first spreads
+    // every input bit across the low bits, minimizing collisions (C5).
+    fn edge_id(&self, span: Span, kind: EdgeKind) -> u32 {
+        const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+        const FNV_PRIME: u64 = 0x0100_0000_01b3;
+
+        let mut hash: u64 = FNV_OFFSET;
+        let mut fold = |bytes: &[u8]| {
+            for &byte in bytes {
+                hash ^= byte as u64;
+                hash = hash.wrapping_mul(FNV_PRIME);
+            }
+        };
+        fold(self.file_path.as_bytes());
+        fold(&span.lo.0.to_le_bytes());
+        fold(&span.hi.0.to_le_bytes());
+        fold(&kind.discriminant().to_le_bytes());
+
+        // murmur3 fmix64 finalizer
+        hash ^= hash >> 33;
+        hash = hash.wrapping_mul(0xff51_afd7_ed55_8ccd);
+        hash ^= hash >> 33;
+        hash = hash.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
+        hash ^= hash >> 33;
+
+        (hash % self.config.coverage_map_size as u64) as u32
     }
 
     // Task 3.1: Build `__vitiate_cov[ID]++` as a statement
-    fn make_counter_stmt(&self, span: Span) -> Stmt {
+    fn make_counter_stmt(&self, span: Span, kind: EdgeKind) -> Stmt {
         Stmt::Expr(ExprStmt {
             span: DUMMY_SP,
-            expr: Box::new(self.make_counter_expr(span)),
+            expr: Box::new(self.make_counter_expr(span, kind)),
         })
     }
 
     // Build `__vitiate_cov[ID]++` as an expression
-    fn make_counter_expr(&self, span: Span) -> Expr {
-        let edge_id = self.edge_id(span);
+    fn make_counter_expr(&self, span: Span, kind: EdgeKind) -> Expr {
+        let edge_id = self.edge_id(span, kind);
+        self.edge_count.set(self.edge_count.get() + 1);
         Expr::Update(UpdateExpr {
             span: DUMMY_SP,
             op: UpdateOp::PlusPlus,
@@ -103,7 +160,10 @@ impl TransformVisitor {
     fn wrap_with_counter(&self, span: Span, expr: Box<Expr>) -> Box<Expr> {
         Box::new(Expr::Seq(SeqExpr {
             span: DUMMY_SP,
-            exprs: vec![Box::new(self.make_counter_expr(span)), expr],
+            exprs: vec![
+                Box::new(self.make_counter_expr(span, EdgeKind::Block)),
+                expr,
+            ],
         }))
     }
 
@@ -119,9 +179,56 @@ impl TransformVisitor {
         }
     }
 
-    // Prepend counter to a block statement
+    // Prepend a block-entry counter to a block statement
     fn prepend_counter_to_block(&self, block: &mut BlockStmt, span: Span) {
-        block.stmts.insert(0, self.make_counter_stmt(span));
+        block
+            .stmts
+            .insert(0, self.make_counter_stmt(span, EdgeKind::Block));
+    }
+
+    /// If `stmt` is a loop (possibly wrapped in one or more labels), return the
+    /// underlying loop's span; otherwise `None`. Used to place a loop-exit
+    /// counter as the statement immediately after the loop. Peeling through
+    /// `Stmt::Labeled` (rather than wrapping the loop) keeps labeled
+    /// `continue`/`break` valid - wrapping a labeled loop in a block would make
+    /// `continue label` target a non-iteration label (a syntax error).
+    fn loop_exit_span(stmt: &Stmt) -> Option<Span> {
+        let mut s = stmt;
+        loop {
+            match s {
+                Stmt::For(l) => return Some(l.span),
+                Stmt::While(l) => return Some(l.span),
+                Stmt::DoWhile(l) => return Some(l.span),
+                Stmt::ForIn(l) => return Some(l.span),
+                Stmt::ForOf(l) => return Some(l.span),
+                Stmt::Labeled(l) => s = &l.body,
+                _ => return None,
+            }
+        }
+    }
+
+    /// Insert a loop-exit counter after each loop statement in a statement
+    /// list. Shared by `visit_mut_stmts` (block/function/switch/script bodies)
+    /// and `visit_mut_module_items` (module top level). The exit counter fires
+    /// on normal fall-through past the loop, distinguishing "reached the loop
+    /// but ran zero iterations / exited" from "never reached the loop".
+    fn insert_loop_exit_counters<T>(
+        &self,
+        items: &mut Vec<T>,
+        as_stmt: impl Fn(&T) -> Option<&Stmt>,
+        wrap: impl Fn(Stmt) -> T,
+    ) {
+        let mut i = 0;
+        while i < items.len() {
+            let exit_span = as_stmt(&items[i]).and_then(Self::loop_exit_span);
+            if let Some(span) = exit_span {
+                let counter = self.make_counter_stmt(span, EdgeKind::LoopExit);
+                items.insert(i + 1, wrap(counter));
+                i += 2; // skip the counter we just inserted
+            } else {
+                i += 1;
+            }
+        }
     }
 
     // Build preamble var declaration: `var <local> = globalThis.<global>;`
@@ -169,7 +276,7 @@ impl TransformVisitor {
         span: Span,
         op: BinaryOp,
     ) -> Expr {
-        let cmp_id = self.edge_id(span);
+        let cmp_id = self.edge_id(span, EdgeKind::Cmp);
         let op_id = Self::comparison_op_id(op);
 
         // Parameters: (l, r)
@@ -339,6 +446,65 @@ impl TransformVisitor {
             BinaryOp::LogicalAnd | BinaryOp::LogicalOr | BinaryOp::NullishCoalescing
         )
     }
+
+    /// Build `globalThis.__vitiate_edge_count = (globalThis.__vitiate_edge_count | 0) + N;`
+    /// where N is the number of coverage counters emitted for this file. The
+    /// `| 0` coerces the (possibly `undefined`) first-load value to 0. Summed
+    /// across all loaded instrumented modules, this lets the runtime estimate
+    /// coverage-map load (collision pressure) and warn if it is high (C5).
+    fn make_edge_count_stmt(&self, count: u32) -> Stmt {
+        let member = || MemberExpr {
+            span: DUMMY_SP,
+            obj: Box::new(Expr::Ident(Ident {
+                span: DUMMY_SP,
+                ctxt: SyntaxContext::empty(),
+                sym: "globalThis".into(),
+                optional: false,
+            })),
+            prop: MemberProp::Ident(IdentName {
+                span: DUMMY_SP,
+                sym: EDGE_COUNT_GLOBAL_NAME.into(),
+            }),
+        };
+        let zero = || {
+            Box::new(Expr::Lit(Lit::Num(Number {
+                span: DUMMY_SP,
+                value: 0.0,
+                raw: None,
+            })))
+        };
+        // (globalThis.__vitiate_edge_count | 0) - explicitly parenthesized so
+        // it binds before the `+` (bitwise-or has lower precedence than `+`).
+        let coerced = Expr::Paren(ParenExpr {
+            span: DUMMY_SP,
+            expr: Box::new(Expr::Bin(BinExpr {
+                span: DUMMY_SP,
+                op: BinaryOp::BitOr,
+                left: Box::new(Expr::Member(member())),
+                right: zero(),
+            })),
+        });
+        // (... | 0) + N
+        let sum = Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            op: BinaryOp::Add,
+            left: Box::new(coerced),
+            right: Box::new(Expr::Lit(Lit::Num(Number {
+                span: DUMMY_SP,
+                value: count as f64,
+                raw: None,
+            }))),
+        });
+        Stmt::Expr(ExprStmt {
+            span: DUMMY_SP,
+            expr: Box::new(Expr::Assign(AssignExpr {
+                span: DUMMY_SP,
+                op: AssignOp::Assign,
+                left: AssignTarget::Simple(SimpleAssignTarget::Member(member())),
+                right: Box::new(sum),
+            })),
+        })
+    }
 }
 
 impl VisitMut for TransformVisitor {
@@ -359,6 +525,29 @@ impl VisitMut for TransformVisitor {
             ));
             module.body.insert(1, trace_var);
         }
+
+        // C5: record this file's coverage-counter count for the runtime's
+        // collision-pressure estimate.
+        let count = self.edge_count.get();
+        if count > 0 {
+            module
+                .body
+                .insert(0, ModuleItem::Stmt(self.make_edge_count_stmt(count)));
+        }
+    }
+
+    // Module top-level loops live in `Vec<ModuleItem>`, which does NOT route
+    // through visit_mut_stmts. Insert their loop-exit counters here.
+    fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
+        items.visit_mut_children_with(self);
+        self.insert_loop_exit_counters(
+            items,
+            |item| match item {
+                ModuleItem::Stmt(s) => Some(s),
+                _ => None,
+            },
+            ModuleItem::Stmt,
+        );
     }
 
     // Task 2.1: Script preamble (same as module, for non-module JS)
@@ -378,6 +567,19 @@ impl VisitMut for TransformVisitor {
             );
             script.body.insert(1, trace_var);
         }
+
+        let count = self.edge_count.get();
+        if count > 0 {
+            script.body.insert(0, self.make_edge_count_stmt(count));
+        }
+    }
+
+    // Insert loop-exit counters after loops in every statement list (block,
+    // function, switch-case, and script bodies). Module top level is handled by
+    // visit_mut_module_items.
+    fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
+        stmts.visit_mut_children_with(self);
+        self.insert_loop_exit_counters(stmts, |s| Some(s), |s| s);
     }
 
     // Tasks 5.1, 6.2: Binary expression - logical operators get edge counters
@@ -422,20 +624,43 @@ impl VisitMut for TransformVisitor {
 
     // Task 3.3: If statement instrumentation
     fn visit_mut_if_stmt(&mut self, n: &mut IfStmt) {
+        // Capture the original arm spans BEFORE ensure_block: it replaces a
+        // braceless arm with a DUMMY_SP-spanned block, which would collide all
+        // braceless branch counters at id(file, 0, 0).
+        let cons_span = n.cons.span();
+        let alt_span = n.alt.as_deref().map(|alt| alt.span());
+
+        // Pre-order normalization: wrap arms into blocks BEFORE descending so a
+        // braceless loop arm (`if (x) for (;;) f();`) lands in a real Vec<Stmt>
+        // that visit_mut_stmts will traverse and give a loop-exit counter.
+        Self::ensure_block(&mut n.cons);
+        if let Some(ref mut alt) = n.alt {
+            Self::ensure_block(alt);
+        }
+
         n.visit_mut_children_with(self);
 
-        Self::ensure_block(&mut n.cons);
-        let cons_span = n.cons.span();
         if let Stmt::Block(ref mut block) = *n.cons {
             self.prepend_counter_to_block(block, cons_span);
         }
 
-        if let Some(ref mut alt) = n.alt {
-            Self::ensure_block(alt);
-            let alt_span = alt.span();
-            if let Stmt::Block(ref mut block) = **alt {
-                self.prepend_counter_to_block(block, alt_span);
+        match (&mut n.alt, alt_span) {
+            (Some(alt), Some(alt_span)) => {
+                if let Stmt::Block(ref mut block) = **alt {
+                    self.prepend_counter_to_block(block, alt_span);
+                }
             }
+            (None, _) => {
+                // else-less if: synthesize the not-taken edge as `else { c++ }`
+                // so "reached the branch, condition false" is distinguishable
+                // from "never reached the branch".
+                n.alt = Some(Box::new(Stmt::Block(BlockStmt {
+                    span: DUMMY_SP,
+                    ctxt: SyntaxContext::empty(),
+                    stmts: vec![self.make_counter_stmt(cons_span, EdgeKind::ElseNotTaken)],
+                })));
+            }
+            _ => {}
         }
     }
 
@@ -460,14 +685,15 @@ impl VisitMut for TransformVisitor {
     // Task 3.9: Switch case instrumentation
     fn visit_mut_switch_case(&mut self, n: &mut SwitchCase) {
         n.visit_mut_children_with(self);
-        n.cons.insert(0, self.make_counter_stmt(n.span));
+        n.cons
+            .insert(0, self.make_counter_stmt(n.span, EdgeKind::Block));
     }
 
     // Task 4.1: For loop
     fn visit_mut_for_stmt(&mut self, n: &mut ForStmt) {
-        n.visit_mut_children_with(self);
-        Self::ensure_block(&mut n.body);
         let body_span = n.body.span();
+        Self::ensure_block(&mut n.body);
+        n.visit_mut_children_with(self);
         if let Stmt::Block(ref mut block) = *n.body {
             self.prepend_counter_to_block(block, body_span);
         }
@@ -475,9 +701,9 @@ impl VisitMut for TransformVisitor {
 
     // Task 4.2: While loop
     fn visit_mut_while_stmt(&mut self, n: &mut WhileStmt) {
-        n.visit_mut_children_with(self);
-        Self::ensure_block(&mut n.body);
         let body_span = n.body.span();
+        Self::ensure_block(&mut n.body);
+        n.visit_mut_children_with(self);
         if let Stmt::Block(ref mut block) = *n.body {
             self.prepend_counter_to_block(block, body_span);
         }
@@ -485,9 +711,9 @@ impl VisitMut for TransformVisitor {
 
     // Task 4.3: Do-while loop
     fn visit_mut_do_while_stmt(&mut self, n: &mut DoWhileStmt) {
-        n.visit_mut_children_with(self);
-        Self::ensure_block(&mut n.body);
         let body_span = n.body.span();
+        Self::ensure_block(&mut n.body);
+        n.visit_mut_children_with(self);
         if let Stmt::Block(ref mut block) = *n.body {
             self.prepend_counter_to_block(block, body_span);
         }
@@ -495,9 +721,9 @@ impl VisitMut for TransformVisitor {
 
     // Task 4.4: For-in loop
     fn visit_mut_for_in_stmt(&mut self, n: &mut ForInStmt) {
-        n.visit_mut_children_with(self);
-        Self::ensure_block(&mut n.body);
         let body_span = n.body.span();
+        Self::ensure_block(&mut n.body);
+        n.visit_mut_children_with(self);
         if let Stmt::Block(ref mut block) = *n.body {
             self.prepend_counter_to_block(block, body_span);
         }
@@ -505,9 +731,9 @@ impl VisitMut for TransformVisitor {
 
     // Task 4.5: For-of loop
     fn visit_mut_for_of_stmt(&mut self, n: &mut ForOfStmt) {
-        n.visit_mut_children_with(self);
-        Self::ensure_block(&mut n.body);
         let body_span = n.body.span();
+        Self::ensure_block(&mut n.body);
+        n.visit_mut_children_with(self);
         if let Stmt::Block(ref mut block) = *n.body {
             self.prepend_counter_to_block(block, body_span);
         }
@@ -696,11 +922,11 @@ var __vitiate_cmplog_write = globalThis.__vitiate_cmplog_write;"#
         let out = transform_no_trace_cmp(r#"if (c) { a(); } else { b(); }"#);
         // Verify counters in both consequent and alternate
         assert!(
-            out.contains("__vitiate_cov[61710]++;\n    a();"),
+            out.contains("__vitiate_cov[14991]++;\n    a();"),
             "missing counter in consequent: {out}"
         );
         assert!(
-            out.contains("__vitiate_cov[9022]++;\n    b();"),
+            out.contains("__vitiate_cov[10582]++;\n    b();"),
             "missing counter in alternate: {out}"
         );
         assert_eq!(
@@ -710,12 +936,22 @@ var __vitiate_cmplog_write = globalThis.__vitiate_cmplog_write;"#
         );
     }
 
-    // Task 3.5: if without else - consequent gets counter, no alternate synthesized
+    // Task 3.5 / C1: if without else - consequent gets a counter AND a not-taken
+    // else counter is synthesized so "condition false" is distinguishable from
+    // "branch not reached".
     #[test]
     fn if_no_else() {
         let out = transform_no_trace_cmp(r#"if (c) { a(); }"#);
-        assert!(out.contains("__vitiate_cov["), "missing counter: {out}");
-        assert!(!out.contains("else"), "should not synthesize else: {out}");
+        // A synthetic `else { __vitiate_cov[..]++ }` is now emitted.
+        assert!(
+            out.contains("else"),
+            "should synthesize not-taken else: {out}"
+        );
+        assert_eq!(
+            out.matches("__vitiate_cov[").count(),
+            2,
+            "expected consequent + synthesized not-taken counter: {out}"
+        );
     }
 
     // Task 3.6: if without braces - consequent wrapped in block
@@ -736,11 +972,11 @@ var __vitiate_cmplog_write = globalThis.__vitiate_cmplog_write;"#
         let out = transform_no_trace_cmp(r#"var x = c ? a : b;"#);
         // Verify comma expression wrapping shape: counter++, originalExpr
         assert!(
-            out.contains("__vitiate_cov[28757]++, a"),
+            out.contains("__vitiate_cov[9790]++, a"),
             "missing comma-wrapped consequent: {out}"
         );
         assert!(
-            out.contains("__vitiate_cov[52981]++, b"),
+            out.contains("__vitiate_cov[17503]++, b"),
             "missing comma-wrapped alternate: {out}"
         );
         assert_eq!(
@@ -1328,6 +1564,158 @@ var __vitiate_cmplog_write = globalThis.__vitiate_cmplog_write;"#
         assert!(
             out.contains("l === r"),
             "missing l === r in IIFE body: {out}"
+        );
+    }
+
+    // ===== C1: not-taken / loop-exit edges; C5: hash mixing =====
+
+    // Edge-kind discriminant: the same span with different kinds yields distinct
+    // ids, so a loop's body-entry and loop-exit counters never alias in the map.
+    #[test]
+    fn edge_kind_discriminates_ids() {
+        let v = test_visitor();
+        let block = v.edge_id(DUMMY_SP, EdgeKind::Block);
+        let else_nt = v.edge_id(DUMMY_SP, EdgeKind::ElseNotTaken);
+        let loop_exit = v.edge_id(DUMMY_SP, EdgeKind::LoopExit);
+        let cmp = v.edge_id(DUMMY_SP, EdgeKind::Cmp);
+        assert_ne!(block, else_nt);
+        assert_ne!(block, loop_exit);
+        assert_ne!(block, cmp);
+        assert_ne!(else_nt, loop_exit);
+        assert_ne!(else_nt, cmp);
+        assert_ne!(loop_exit, cmp);
+    }
+
+    // Each loop kind gets a loop-exit counter after the loop (body-entry + exit).
+    #[test]
+    fn for_loop_exit_counter() {
+        let out = transform_no_trace_cmp(r#"for (let i = 0; i < n; i++) { a(); }"#);
+        assert_eq!(
+            out.matches("__vitiate_cov[").count(),
+            2,
+            "expected body-entry + loop-exit counter: {out}"
+        );
+    }
+
+    #[test]
+    fn while_loop_exit_counter() {
+        let out = transform_no_trace_cmp(r#"while (c) { a(); }"#);
+        assert_eq!(out.matches("__vitiate_cov[").count(), 2, "{out}");
+    }
+
+    #[test]
+    fn do_while_loop_exit_counter() {
+        let out = transform_no_trace_cmp(r#"do { a(); } while (c);"#);
+        assert_eq!(out.matches("__vitiate_cov[").count(), 2, "{out}");
+    }
+
+    #[test]
+    fn for_of_loop_exit_counter() {
+        let out = transform_no_trace_cmp(r#"for (const x of xs) { a(); }"#);
+        assert_eq!(out.matches("__vitiate_cov[").count(), 2, "{out}");
+    }
+
+    #[test]
+    fn for_in_loop_exit_counter() {
+        let out = transform_no_trace_cmp(r#"for (const k in o) { a(); }"#);
+        assert_eq!(out.matches("__vitiate_cov[").count(), 2, "{out}");
+    }
+
+    // Labeled loop: `continue`/`break` to the label stay valid (the loop is not
+    // wrapped in a block) and exactly one loop-exit counter is inserted.
+    #[test]
+    fn labeled_loop_exit_counter() {
+        let out = transform_no_trace_cmp(r#"outer: for(;;){ continue outer; }"#);
+        assert!(
+            out.contains("continue outer"),
+            "labeled continue must be preserved: {out}"
+        );
+        assert_eq!(
+            out.matches("__vitiate_cov[").count(),
+            2,
+            "expected body-entry + one loop-exit counter: {out}"
+        );
+    }
+
+    // Nested braceless loops: BOTH inner and outer get body-entry + loop-exit
+    // counters (the inner loop must not escape instrumentation).
+    #[test]
+    fn nested_braceless_loops_exit_counters() {
+        let out = transform_no_trace_cmp(r#"for(;;) for(;;) a();"#);
+        assert_eq!(
+            out.matches("__vitiate_cov[").count(),
+            4,
+            "expected body-entry + loop-exit for both nested loops: {out}"
+        );
+    }
+
+    // Module top-level loop lives in Vec<ModuleItem>, not Vec<Stmt> - it must
+    // still get a loop-exit counter (via visit_mut_module_items).
+    #[test]
+    fn module_top_level_loop_exit_counter() {
+        // `export` forces Module parsing.
+        let out = transform_no_trace_cmp(r#"export const z = 1; for (const y of ys) { a(); }"#);
+        assert_eq!(
+            out.matches("__vitiate_cov[").count(),
+            2,
+            "module top-level loop missing exit counter: {out}"
+        );
+    }
+
+    // C5: per-file edge-count accumulator injected, correctly parenthesized so
+    // `(x | 0) + N` binds as intended (not `x | (0 + N)`).
+    #[test]
+    fn edge_count_accumulator_injected() {
+        // if consequent + synthesized not-taken else = 2 counters.
+        let out = transform_no_trace_cmp(r#"if (c) { a(); }"#);
+        assert!(
+            out.contains("(globalThis.__vitiate_edge_count | 0) + 2"),
+            "edge-count accumulator missing or mis-parenthesized: {out}"
+        );
+    }
+
+    // No coverage counters -> no edge-count accumulator.
+    #[test]
+    fn edge_count_not_injected_when_uninstrumented() {
+        let out = transform_no_trace_cmp(r#"var x = 1;"#);
+        assert!(
+            !out.contains("__vitiate_edge_count"),
+            "should not inject accumulator for uninstrumented file: {out}"
+        );
+    }
+
+    // Infinite loop still emits a (dead but harmless) loop-exit counter without
+    // breaking codegen.
+    #[test]
+    fn infinite_loop_exit_counter_harmless() {
+        let out = transform_no_trace_cmp(r#"while(true){ a(); }"#);
+        assert_eq!(out.matches("__vitiate_cov[").count(), 2, "{out}");
+    }
+
+    // A loop inside a switch case still gets a loop-exit counter (the case's
+    // statement list routes through visit_mut_stmts).
+    #[test]
+    fn loop_in_switch_case_exit_counter() {
+        let out = transform_no_trace_cmp(r#"switch(x){ case 1: while(c){ a(); } break; }"#);
+        // case entry + while body-entry + while loop-exit = 3
+        assert_eq!(
+            out.matches("__vitiate_cov[").count(),
+            3,
+            "loop in switch case missing exit counter: {out}"
+        );
+    }
+
+    // Loops inside try / catch / finally blocks each get a loop-exit counter.
+    #[test]
+    fn loop_in_try_blocks_exit_counters() {
+        let out = transform_no_trace_cmp(
+            r#"try { for(;;){ a(); } } catch(e) { while(c){ b(); } } finally { do { d(); } while(c); }"#,
+        );
+        // 3 loops x (body-entry + loop-exit) = 6, plus catch-entry + finally-entry = 8
+        assert_eq!(
+            out.matches("__vitiate_cov[").count(),
+            8,
+            "loops in try blocks missing exit counters: {out}"
         );
     }
 }

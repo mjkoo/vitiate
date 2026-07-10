@@ -45,6 +45,7 @@ import {
   startReporting,
   stopReporting,
   printBanner,
+  warnOnCoverageMapLoad,
   printCrash,
   printSummary,
   writeResultsFile,
@@ -682,6 +683,11 @@ export async function runFuzzLoop(
       detectors: activeDetectors.length > 0 ? activeDetectors : undefined,
     });
   }
+
+  // One-shot collision-pressure diagnostic: the target's statically-imported
+  // instrumented modules have loaded by now, so __vitiate_edge_count reflects
+  // them. Independent of quiet (it is a correctness warning, not status).
+  warnOnCoverageMapLoad(getCoverageMapSize());
 
   const resultsFilePath = getResultsFilePath();
   const reporter = createReporter(quiet);

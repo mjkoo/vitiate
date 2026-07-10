@@ -3,6 +3,15 @@
  */
 import { writeFileSync } from "node:fs";
 import type { FuzzerStats } from "@vitiate/engine";
+import { getInstrumentedEdgeCount } from "./globals.js";
+
+/**
+ * Coverage-map load fraction above which we warn about likely hash collisions.
+ * At load L, the expected fraction of edges that share a slot with another edge
+ * is roughly L (birthday approximation), so 0.02 corresponds to ~2% of edges
+ * silently merging - the point where the granularity loss starts to matter.
+ */
+const COLLISION_PRESSURE_THRESHOLD = 0.02;
 
 export interface ReporterState {
   startTime: number;
@@ -23,6 +32,28 @@ export interface BannerInfo {
 
 export function printBanner(info: BannerInfo): void {
   process.stderr.write(`vitiate: ${JSON.stringify(info)}\n`);
+}
+
+/**
+ * Warn once if the number of instrumented edges is large relative to the
+ * coverage-map size, which makes hash collisions (silently merged edges) likely
+ * and coarsens coverage feedback. Call after the target modules have loaded so
+ * `getInstrumentedEdgeCount()` reflects them. Emitting is independent of quiet
+ * mode: it is a one-shot correctness diagnostic, not periodic status.
+ *
+ * :param mapSize: the configured coverage-map size (slot count).
+ */
+export function warnOnCoverageMapLoad(mapSize: number): void {
+  const edgeCount = getInstrumentedEdgeCount();
+  if (edgeCount <= 0 || mapSize <= 0) return;
+  const load = edgeCount / mapSize;
+  if (load < COLLISION_PRESSURE_THRESHOLD) return;
+  const pct = (load * 100).toFixed(1);
+  process.stderr.write(
+    `vitiate: warning: ~${edgeCount} instrumented edges in a coverage map of ${mapSize} ` +
+      `slots (${pct}% load); hash collisions may silently merge edges and coarsen ` +
+      `coverage. Raise coverageMapSize to reduce collisions.\n`,
+  );
 }
 
 export function createReporter(quiet: boolean): ReporterState {
