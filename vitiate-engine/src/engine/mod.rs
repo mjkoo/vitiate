@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -104,6 +104,13 @@ const STAGE_MAX_ITERATIONS: usize = 128;
 /// Maximum input size for generalization. Inputs exceeding this are skipped.
 const MAX_GENERALIZED_LEN: usize = 8192;
 
+/// Maximum number of target executions the generalization stage may spend on a
+/// single corpus entry before it is finalized early. Bounds the previously
+/// uncapped Offset/Delimiter/Bracket sweep (design review C2) to the same
+/// magnitude as the REDQUEEN candidate cap, so a large input cannot monopolize
+/// the fuzz loop with generalization execs.
+const MAX_GENERALIZATION_EXECS: u32 = 2048;
+
 // Concrete LibAFL type aliases.
 type CovObserver = StdMapObserver<'static, u8, false>;
 /// CovObserver with index tracking enabled, needed by `MinimizerScheduler`.
@@ -178,8 +185,15 @@ pub struct Fuzzer {
     last_corpus_id: Option<CorpusId>,
     /// Calibration lifecycle state (populated between calibrate_run / calibrate_finish).
     calibration: CalibrationState,
-    /// Coverage map indices observed to differ between calibration runs (grows monotonically).
+    /// Coverage map indices masked from feedback because they have proven flaky
+    /// across multiple corpus entries (grows monotonically). Populated only once
+    /// an edge crosses `UNSTABLE_ENTRY_THRESHOLD` in `edge_flaky_entries`.
     unstable_entries: HashSet<usize>,
+    /// Per-edge count of distinct corpus entries whose calibration found the edge
+    /// flaky. An edge is added to `unstable_entries` only after this reaches
+    /// `UNSTABLE_ENTRY_THRESHOLD`, so a single entry's nondeterminism never masks
+    /// an edge on its own (design review C4).
+    edge_flaky_entries: HashMap<usize, u32>,
     /// CmpLog token candidate tracking and promotion into the mutation dictionary.
     token_tracker: TokenTracker,
     /// Tracks the lifecycle of the current multi-execution stage (I2S, etc.).
@@ -197,6 +211,14 @@ pub struct Fuzzer {
     redqueen_mutator: AflppRedQueen,
     /// Whether REDQUEEN ran for the current corpus entry (used to skip I2S).
     redqueen_ran_for_entry: bool,
+    /// Target executions spent by the generalization stage on the current entry.
+    /// Reset when generalization begins; caps the stage at `MAX_GENERALIZATION_EXECS`.
+    generalization_execs: u32,
+    /// Count of interesting entries offered to `begin_stage`. Drives the C2
+    /// expensive-stage gate: the first `EXPENSIVE_STAGE_WARMUP` entries always run
+    /// the expensive stages (colorization/REDQUEEN + structure-aware stages);
+    /// afterward they run on a sampled fraction to bound stage amplification.
+    expensive_stage_entries: u64,
     /// Unicode scheduled mutator operating on `(BytesInput, UnicodeIdentificationMetadata)`.
     unicode_mutator: UnicodeMutator,
     /// JSON scheduled mutator wrapping JSON-aware mutators.
@@ -458,6 +480,7 @@ impl Fuzzer {
             last_corpus_id: None,
             calibration: CalibrationState::new(),
             unstable_entries: HashSet::new(),
+            edge_flaky_entries: HashMap::new(),
             token_tracker,
             stage_state: StageState::None,
             last_interesting_corpus_id: None,
@@ -465,6 +488,8 @@ impl Fuzzer {
             grimoire_mutator,
             redqueen_mutator,
             redqueen_ran_for_entry: false,
+            generalization_execs: 0,
+            expensive_stage_entries: 0,
             unicode_mutator,
             json_mutator,
             unevaluated_seeds: VecDeque::new(),
@@ -1122,6 +1147,52 @@ const FEATURE_BUCKET_INDEX: [u8; 256] = {
     }
     table
 };
+
+/// AFL-style hit-count bucket representative for corpus admission.
+///
+/// Maps a raw edge hit count (0-255) to the lower bound of its bucket:
+/// - 0 -> 0, 1 -> 1, 2 -> 2, 3 -> 3, 4-7 -> 4, 8-15 -> 8, 16-31 -> 16,
+///   32-127 -> 32, 128-255 -> 128
+///
+/// Unlike [`FEATURE_BUCKET_INDEX`] (which yields a 0-8 *index* for the `ft`
+/// display stat), this yields a *representative value* that is a fixed point of
+/// the bucketing: `CLASSIFY_COUNT[CLASSIFY_COUNT[n]] == CLASSIFY_COUNT[n]`, and
+/// `FEATURE_BUCKET_INDEX[CLASSIFY_COUNT[n]] == FEATURE_BUCKET_INDEX[n]`. Applying
+/// it in place to the coverage map before feedback evaluation makes
+/// `MaxMapFeedback` admit on a new (edge, hit-count-bucket) - matching AFL /
+/// libFuzzer - rather than on a raw per-edge maximum, while keeping the `ft`
+/// stat consistent when computed over the (now classified) history map.
+const CLASSIFY_COUNT: [u8; 256] = {
+    let mut table = [0u8; 256];
+    let mut i = 1usize;
+    while i < 256 {
+        table[i] = match i {
+            1 => 1,
+            2 => 2,
+            3 => 3,
+            4..=7 => 4,
+            8..=15 => 8,
+            16..=31 => 16,
+            32..=127 => 32,
+            128..=255 => 128,
+            _ => unreachable!(),
+        };
+        i += 1;
+    }
+    table
+};
+
+/// Classify a coverage map in place into AFL-style hit-count buckets.
+///
+/// Each raw count is replaced by its bucket representative (see
+/// [`CLASSIFY_COUNT`]). Nonzero counts stay nonzero, so `bitmap_size` and
+/// covered-index computations are unaffected; only the *granularity* of the
+/// per-edge value changes, so corpus admission keys on hit-count buckets.
+pub(super) fn classify_counts_in_place(map: &mut [u8]) {
+    for slot in map.iter_mut() {
+        *slot = CLASSIFY_COUNT[*slot as usize];
+    }
+}
 
 /// Compute coverage features from a feedback history map.
 ///

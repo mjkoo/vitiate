@@ -14,21 +14,31 @@ pub(super) const CALIBRATION_STAGE_START: usize = 4;
 /// Calibration run count: maximum total runs (extended when unstable edges detected).
 pub(super) const CALIBRATION_STAGE_MAX: usize = 8;
 
+/// Number of distinct corpus entries that must independently find an edge flaky
+/// before it is masked globally. Masking is a coverage-blinding operation, so we
+/// require corroboration across entries rather than reacting to a single entry's
+/// noise (design review C4: down-weight, don't delete on a single sample).
+pub(super) const UNSTABLE_ENTRY_THRESHOLD: u32 = 2;
+
 /// Tracks the calibration lifecycle for a single corpus entry.
 /// Populated by `report_result()` when an input is interesting,
 /// updated by `calibrate_run()`, consumed by `calibrate_finish()`.
 pub(super) struct CalibrationState {
     /// Entry being calibrated.
     pub(super) corpus_id: Option<CorpusId>,
-    /// First calibration run's coverage snapshot (baseline).
+    /// First calibration run's (classified) coverage snapshot (baseline).
     pub(super) first_map: Option<Vec<u8>>,
-    /// Unstable edge tracker (u8::MAX = unstable).
-    pub(super) history_map: Option<Vec<u8>>,
+    /// Per-edge count of calibration reruns whose classified coverage differed
+    /// from the baseline. Used at `calibrate_finish` to decide, via a majority
+    /// threshold, which edges are flaky *for this entry* - so a single one-off
+    /// blip does not flag an edge.
+    pub(super) disagreements: Option<Vec<u16>>,
     /// Accumulated execution time across calibration runs.
     pub(super) total_time: Duration,
     /// Number of calibration runs completed (including the original fuzz iteration).
     pub(super) iterations: usize,
-    /// Whether unstable edges were detected during calibration.
+    /// Whether any inter-run disagreement was observed (extends the run budget to
+    /// gather more samples; not itself a masking decision).
     pub(super) has_unstable: bool,
 }
 
@@ -37,7 +47,7 @@ impl CalibrationState {
         Self {
             corpus_id: None,
             first_map: None,
-            history_map: None,
+            disagreements: None,
             total_time: Duration::ZERO,
             iterations: 0,
             has_unstable: false,
@@ -67,29 +77,35 @@ impl Fuzzer {
         self.calibration.total_time += exec_time;
         self.calibration.iterations += 1;
 
-        // Read current coverage map into a snapshot.
+        // Read current coverage map into a snapshot and classify into hit-count
+        // buckets, so within-bucket count jitter (common under JS loop-count
+        // nondeterminism) is not mistaken for instability - only a bucket change
+        // counts as a disagreement.
         // SAFETY: `self.map_ptr` is valid for `self.map_len` bytes (backed by
         // `self._coverage_map` Buffer). We only read here.
-        let current_map =
+        let mut current_map =
             unsafe { std::slice::from_raw_parts(self.map_ptr, self.map_len) }.to_vec();
+        super::classify_counts_in_place(&mut current_map);
 
         if let Some(first) = &self.calibration.first_map {
-            // Compare with first run to detect unstable edges.
-            // Panic justification: `history_map` is always set together with
+            // Compare with baseline, accumulating per-edge disagreement counts.
+            // Panic justification: `disagreements` is always set together with
             // `first_map` in the `else` branch below, so when `first_map` is
-            // `Some`, `history_map` is too.
-            let history = self.calibration.history_map.as_mut().unwrap();
+            // `Some`, `disagreements` is too.
+            let disagreements = self.calibration.disagreements.as_mut().unwrap();
 
             for (idx, (&first_val, &cur_val)) in first.iter().zip(current_map.iter()).enumerate() {
-                if first_val != cur_val && history[idx] != u8::MAX {
-                    history[idx] = u8::MAX; // mark as unstable
+                if first_val != cur_val {
+                    disagreements[idx] = disagreements[idx].saturating_add(1);
+                    // Seeing any disagreement extends the run budget (below) so we
+                    // gather enough samples to judge the edge by majority.
                     self.calibration.has_unstable = true;
                 }
             }
         } else {
             // First calibration run - store as baseline.
             self.calibration.first_map = Some(current_map);
-            self.calibration.history_map = Some(vec![0u8; self.map_len]);
+            self.calibration.disagreements = Some(vec![0u16; self.map_len]);
         }
 
         // Zero coverage map for next run.
@@ -176,11 +192,26 @@ impl Fuzzer {
             psmeta.set_bitmap_entries(psmeta.bitmap_entries() + 1);
         }
 
-        // Merge newly discovered unstable edges into the fuzzer's global set.
-        if let Some(history) = self.calibration.history_map.take() {
-            for (idx, &v) in history.iter().enumerate() {
-                if v == u8::MAX {
-                    self.unstable_entries.insert(idx);
+        // Decide which edges were flaky *for this entry* and fold them into the
+        // cross-entry instability tally. An edge is masked globally only once
+        // UNSTABLE_ENTRY_THRESHOLD distinct entries have independently found it
+        // flaky - a single entry's noise never blinds an edge for the campaign.
+        if let Some(disagreements) = self.calibration.disagreements.take() {
+            // The first calibrate_run captures the baseline (no comparison); the
+            // original fuzz iteration is not a calibrate_run. So the number of
+            // baseline comparisons is iterations - 2.
+            let comparisons = self.calibration.iterations.saturating_sub(2);
+            if comparisons > 0 {
+                for (idx, &count) in disagreements.iter().enumerate() {
+                    // Flaky-for-entry: differed from the baseline in a strict
+                    // majority of comparison runs (ignores one-off blips).
+                    if (count as usize) * 2 > comparisons {
+                        let entry_count = self.edge_flaky_entries.entry(idx).or_insert(0);
+                        *entry_count += 1;
+                        if *entry_count >= UNSTABLE_ENTRY_THRESHOLD {
+                            self.unstable_entries.insert(idx);
+                        }
+                    }
                 }
             }
         }

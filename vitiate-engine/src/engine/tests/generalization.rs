@@ -3,7 +3,7 @@ use crate::cmplog;
 use crate::engine::generalization::{
     GeneralizationPhase, build_generalization_candidate, trim_payload,
 };
-use crate::engine::{Fuzzer, MAX_GENERALIZED_LEN, StageState};
+use crate::engine::{Fuzzer, MAX_GENERALIZATION_EXECS, MAX_GENERALIZED_LEN, StageState};
 use crate::types::ExitKind;
 use libafl::HasMetadata;
 use libafl::corpus::{Corpus, CorpusId, Testcase};
@@ -138,6 +138,68 @@ fn test_generalization_verification_succeeds() {
             ..
         }
     ));
+}
+
+#[test]
+fn test_generalization_capped_finalizes_early() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    // C2: generalization is bounded to MAX_GENERALIZATION_EXECS target execs per
+    // entry. Once the budget is exhausted mid-sweep, the stage finalizes early -
+    // storing GeneralizedInputMetadata and transitioning out - rather than
+    // running the previously uncapped Offset/Delimiter/Bracket sweep to the end.
+    let input = b"fn foo() {}";
+    let novelty_indices = vec![10, 20];
+    let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+        .grimoire(true)
+        .build_with_corpus_entry(input, &novelty_indices);
+
+    let first = fuzzer.begin_generalization(corpus_id).unwrap();
+    assert!(first.is_some());
+
+    // Isolate generalization: finalize should transition to None, not Grimoire/
+    // unicode/json.
+    fuzzer.features.grimoire_enabled = false;
+    fuzzer.features.unicode_enabled = false;
+    fuzzer.features.json_mutations_enabled = false;
+
+    // Pass verification to reach a gap-finding (Offset) phase.
+    for &idx in &novelty_indices {
+        unsafe {
+            *fuzzer.map_ptr.add(idx) = 1;
+        }
+    }
+    let next = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+    assert!(next.is_some(), "verification should pass into gap-finding");
+    assert!(matches!(
+        fuzzer.stage_state,
+        StageState::Generalization {
+            phase: GeneralizationPhase::Offset { .. },
+            ..
+        }
+    ));
+
+    // Exhaust the budget: the next advance hits the cap and finalizes early.
+    fuzzer.generalization_execs = MAX_GENERALIZATION_EXECS - 1;
+    for &idx in &novelty_indices {
+        unsafe {
+            *fuzzer.map_ptr.add(idx) = 1;
+        }
+    }
+    let capped = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+    assert!(
+        capped.is_none(),
+        "hitting the exec cap should end the stage (grimoire/unicode/json disabled)"
+    );
+    assert!(
+        matches!(fuzzer.stage_state, StageState::None),
+        "stage should be finalized after the cap"
+    );
+
+    let tc = fuzzer.state.corpus().get(corpus_id).unwrap().borrow();
+    assert!(
+        tc.has_metadata::<GeneralizedInputMetadata>(),
+        "capped generalization should still store GeneralizedInputMetadata"
+    );
 }
 
 #[test]

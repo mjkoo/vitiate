@@ -1,12 +1,39 @@
 use super::helpers::{TestFuzzerBuilder, force_single_iteration, make_cmplog_bytes};
 use crate::cmplog;
 use crate::engine::StageState;
+use crate::engine::stages::EXPENSIVE_STAGE_WARMUP;
 use crate::types::{ExitKind, IterationResult};
 use libafl::HasMetadata;
 use libafl::corpus::Corpus;
 use libafl::observers::cmp::{CmpValues, CmpValuesMetadata};
 use libafl::state::{HasCorpus, HasExecutions};
 use napi::bindgen_prelude::Buffer;
+
+#[test]
+fn test_expensive_stage_gate_warmup_then_samples() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    // C2: the first EXPENSIVE_STAGE_WARMUP interesting entries always run the
+    // expensive stages; afterward the gate samples a fraction (deterministic
+    // under the fixed test seed), so expensive stages no longer run on every
+    // entry for the whole campaign.
+    let mut fuzzer = TestFuzzerBuilder::new(256).build();
+
+    for i in 0..EXPENSIVE_STAGE_WARMUP {
+        assert!(
+            fuzzer.should_run_expensive_stages(),
+            "entry {i} within warmup must run expensive stages"
+        );
+    }
+
+    let n = 400;
+    let trues = (0..n)
+        .filter(|_| fuzzer.should_run_expensive_stages())
+        .count();
+    assert!(
+        trues > 0 && trues < n,
+        "after warmup the gate should run some and skip some entries, got {trues}/{n}"
+    );
+}
 
 #[test]
 fn test_begin_stage_returns_null_during_active_stage() {

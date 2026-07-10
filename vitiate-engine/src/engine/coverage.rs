@@ -15,7 +15,7 @@ use libafl_bolts::tuples::tuple_list;
 use napi::bindgen_prelude::*;
 
 use super::cmplog_metadata::set_n_fuzz_entry_for_corpus_id;
-use super::{EDGES_OBSERVER_NAME, Fuzzer};
+use super::{EDGES_OBSERVER_NAME, Fuzzer, classify_counts_in_place};
 
 /// Result of coverage evaluation for a single execution.
 pub(super) struct CoverageEvalResult {
@@ -76,14 +76,20 @@ impl Fuzzer {
         exit_kind: LibaflExitKind,
         parent_corpus_id: Option<CorpusId>,
     ) -> Result<CoverageEvalResult> {
-        // Mask unstable edges before observer construction. This prevents
-        // non-deterministic coverage edges from triggering false-positive
-        // "interesting" evaluations. Must happen before the observer reads
-        // the map.
-        if !self.unstable_entries.is_empty() {
+        // Classify raw hit counts into AFL-style buckets and mask unstable edges,
+        // both before observer construction. Classification makes `MaxMapFeedback`
+        // admit on a new (edge, hit-count-bucket) rather than a raw per-edge max
+        // (see `classify_counts_in_place`); masking prevents non-deterministic
+        // edges from triggering false-positive "interesting" evaluations. Both
+        // must happen before the observer / novelty scan reads the map.
+        //
+        {
             // SAFETY: `self.map_ptr` is valid for `self.map_len` bytes (backed by
-            // `self._coverage_map` Buffer). The map is mutable and not aliased here.
+            // `self._coverage_map` Buffer). The map is mutable and not aliased here;
+            // the slice is dropped at the end of this block, before the observer
+            // (which aliases the same memory) is reconstructed below.
             let map = unsafe { std::slice::from_raw_parts_mut(self.map_ptr, self.map_len) };
+            classify_counts_in_place(map);
             for &idx in &self.unstable_entries {
                 if idx < self.map_len {
                     map[idx] = 0;

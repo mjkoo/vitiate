@@ -156,6 +156,9 @@ impl Fuzzer {
         // First candidate is the original input (verification phase).
         self.last_stage_input = Some(input_bytes.clone());
 
+        // Reset the per-entry exec budget for the generalization stage (C2 cap).
+        self.generalization_execs = 0;
+
         self.stage_state = StageState::Generalization {
             corpus_id,
             novelties,
@@ -218,6 +221,19 @@ impl Fuzzer {
             unsafe {
                 std::ptr::write_bytes(self.map_ptr, 0, self.map_len);
             }
+        }
+
+        // Enforce the per-entry generalization exec budget (C2). Count this exec,
+        // and once the cap is reached finalize with the payload generalized so
+        // far - this preserves the GeneralizedInputMetadata and the normal
+        // transition into Grimoire/Unicode rather than discarding the work. The
+        // Verify phase is never cut short (the cap is far above 1), so a genuine
+        // generalization always runs at least the verification exec.
+        self.generalization_execs = self.generalization_execs.saturating_add(1);
+        if self.generalization_execs >= super::MAX_GENERALIZATION_EXECS
+            && !matches!(phase, GeneralizationPhase::Verify)
+        {
+            return self.finalize_generalization(corpus_id, &payload);
         }
 
         match phase {

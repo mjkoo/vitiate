@@ -3,6 +3,7 @@ use super::helpers::{
 };
 use crate::cmplog;
 use crate::engine::EDGES_OBSERVER_NAME;
+use crate::engine::Fuzzer;
 use crate::engine::calibration::{CALIBRATION_STAGE_MAX, CALIBRATION_STAGE_START};
 use crate::types::{ExitKind, IterationResult};
 use libafl::HasMetadata;
@@ -18,7 +19,6 @@ use libafl::schedulers::Scheduler;
 use libafl::schedulers::powersched::SchedulerMetadata;
 use libafl::state::HasCorpus;
 use libafl_bolts::tuples::tuple_list;
-use std::collections::HashSet;
 use std::time::Duration;
 
 #[test]
@@ -103,50 +103,124 @@ fn test_calibrate_run_first_call_captures_baseline() {
     );
 }
 
-#[test]
-fn test_calibrate_run_detects_unstable_edges() {
-    let (map_ptr, mut map) = make_coverage_map(256);
+/// Drive one full interesting-input + calibration cycle for `fuzzer`, where
+/// `novel_idx` provides fresh (stable) coverage and `flaky_idx` appears only in
+/// the calibration baseline and never again - i.e. it is flaky for this entry.
+/// Returns after `calibrate_finish`.
+fn run_flaky_calibration(fuzzer: &mut Fuzzer, novel_idx: usize, flaky_idx: usize) {
+    fuzzer.last_input = Some(BytesInput::new(b"flaky_input".to_vec()));
+    fuzzer.last_corpus_id = None;
 
-    // Simulate calibration with differing maps.
-    let first_map = {
-        map[10] = 1;
-        map[20] = 1;
-        map.to_vec()
-    };
-    let mut history_map = vec![0u8; map.len()];
-    let mut has_unstable = false;
+    // Report novel coverage (novel_idx + flaky_idx) to begin calibration.
+    unsafe {
+        *fuzzer.map_ptr.add(novel_idx) = 1;
+        *fuzzer.map_ptr.add(flaky_idx) = 1;
+    }
+    let result = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
+    assert_eq!(result, IterationResult::Interesting);
 
-    // Second run: edge 20 is now 0 (unstable).
-    let second_map = {
-        map.fill(0);
-        map[10] = 1;
-        // map[20] = 0 - differs from first
-        map.to_vec()
-    };
-
-    for (idx, (&first_val, &cur_val)) in first_map.iter().zip(second_map.iter()).enumerate() {
-        if first_val != cur_val && history_map[idx] != u8::MAX {
-            history_map[idx] = u8::MAX;
-            has_unstable = true;
+    // Calibration reruns: baseline includes flaky_idx; every subsequent run omits
+    // it, so it disagrees with the baseline in a strict majority of comparisons.
+    loop {
+        unsafe {
+            *fuzzer.map_ptr.add(novel_idx) = 1;
+        }
+        if fuzzer.calibration.first_map.is_none() {
+            // First calibrate_run captures the baseline - include the flaky edge.
+            unsafe {
+                *fuzzer.map_ptr.add(flaky_idx) = 1;
+            }
+        }
+        let needs_more = fuzzer.calibrate_run(100_000.0).unwrap();
+        if !needs_more {
+            break;
         }
     }
+    fuzzer.calibrate_finish().unwrap();
+}
 
-    assert!(has_unstable, "Should detect unstable edge at index 20");
+#[test]
+fn test_single_entry_flaky_edge_tracked_but_not_masked() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    // C4: an edge found flaky by a single entry must NOT be masked - masking
+    // requires corroboration across UNSTABLE_ENTRY_THRESHOLD entries. The old
+    // behavior masked on the first entry (and even a single sample).
+    let mut fuzzer = TestFuzzerBuilder::new(256).build();
+
+    run_flaky_calibration(&mut fuzzer, 10, 20);
+
     assert_eq!(
-        history_map[20],
-        u8::MAX,
-        "Index 20 should be marked unstable"
+        fuzzer.edge_flaky_entries.get(&20).copied(),
+        Some(1),
+        "edge 20 should be tallied as flaky for one entry"
     );
-    assert_eq!(history_map[10], 0, "Index 10 should remain stable");
+    assert!(
+        !fuzzer.unstable_entries.contains(&20),
+        "a single entry's flaky edge must not be masked globally"
+    );
+    let _ = (CALIBRATION_STAGE_MAX, CALIBRATION_STAGE_START);
+}
 
-    // With unstable detected, target should extend to 8 runs.
-    let target_runs = if has_unstable {
-        CALIBRATION_STAGE_MAX
-    } else {
-        CALIBRATION_STAGE_START
-    };
-    assert_eq!(target_runs, CALIBRATION_STAGE_MAX);
-    let _ = map_ptr;
+#[test]
+fn test_edge_masked_only_after_multiple_entries_flaky() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    // C4: once UNSTABLE_ENTRY_THRESHOLD (2) distinct entries independently find
+    // the same edge flaky, it is masked globally.
+    let mut fuzzer = TestFuzzerBuilder::new(256).build();
+
+    // First entry: edge 20 flaky (novel coverage at 10).
+    run_flaky_calibration(&mut fuzzer, 10, 20);
+    assert!(
+        !fuzzer.unstable_entries.contains(&20),
+        "not masked after only one entry"
+    );
+
+    // Second entry: fresh novel coverage at 11, same flaky edge 20.
+    run_flaky_calibration(&mut fuzzer, 11, 20);
+    assert_eq!(fuzzer.edge_flaky_entries.get(&20).copied(), Some(2));
+    assert!(
+        fuzzer.unstable_entries.contains(&20),
+        "edge flaky across two entries must be masked"
+    );
+}
+
+#[test]
+fn test_within_bucket_count_jitter_is_not_flaky() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    // C4: hit-count jitter within the same AFL bucket (e.g. 4 vs 6, both bucket
+    // [4,7]) is not instability - classification collapses it, so no disagreement
+    // is recorded and the edge is never flagged.
+    let mut fuzzer = TestFuzzerBuilder::new(256).build();
+
+    fuzzer.last_input = Some(BytesInput::new(b"jitter".to_vec()));
+    fuzzer.last_corpus_id = None;
+    unsafe {
+        *fuzzer.map_ptr.add(10) = 1;
+        *fuzzer.map_ptr.add(20) = 4;
+    }
+    let result = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
+    assert_eq!(result, IterationResult::Interesting);
+
+    // Calibration reruns vary edge 20 within bucket [4,7]: 4, 5, 6, 7, ...
+    let mut count: u8 = 4;
+    loop {
+        unsafe {
+            *fuzzer.map_ptr.add(10) = 1;
+            *fuzzer.map_ptr.add(20) = count;
+        }
+        count = if count >= 7 { 4 } else { count + 1 };
+        let needs_more = fuzzer.calibrate_run(100_000.0).unwrap();
+        if !needs_more {
+            break;
+        }
+    }
+    fuzzer.calibrate_finish().unwrap();
+
+    assert!(
+        fuzzer.edge_flaky_entries.is_empty(),
+        "within-bucket jitter must not be recorded as flaky"
+    );
+    assert!(fuzzer.unstable_entries.is_empty());
 }
 
 #[test]
@@ -261,45 +335,6 @@ fn test_calibrate_finish_updates_global_metadata() {
     assert_eq!(psmeta.cycles(), 4);
     assert_eq!(psmeta.bitmap_size(), 150);
     assert_eq!(psmeta.bitmap_entries(), 1);
-}
-
-#[test]
-fn test_calibrate_finish_merges_unstable_edges() {
-    let mut unstable_entries = HashSet::new();
-
-    // First calibration: edges 42, 100.
-    let history1 = {
-        let mut h = vec![0u8; 256];
-        h[42] = u8::MAX;
-        h[100] = u8::MAX;
-        h
-    };
-    for (idx, &v) in history1.iter().enumerate() {
-        if v == u8::MAX {
-            unstable_entries.insert(idx);
-        }
-    }
-    assert!(unstable_entries.contains(&42));
-    assert!(unstable_entries.contains(&100));
-
-    // Second calibration: edges 100, 200.
-    let history2 = {
-        let mut h = vec![0u8; 256];
-        h[100] = u8::MAX;
-        h[200] = u8::MAX;
-        h
-    };
-    for (idx, &v) in history2.iter().enumerate() {
-        if v == u8::MAX {
-            unstable_entries.insert(idx);
-        }
-    }
-
-    // Should be union: {42, 100, 200}.
-    assert_eq!(unstable_entries.len(), 3);
-    assert!(unstable_entries.contains(&42));
-    assert!(unstable_entries.contains(&100));
-    assert!(unstable_entries.contains(&200));
 }
 
 #[test]

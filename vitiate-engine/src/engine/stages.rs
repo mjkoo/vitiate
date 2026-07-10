@@ -14,6 +14,16 @@ use super::generalization::GeneralizationPhase;
 use super::{Fuzzer, STAGE_MAX_ITERATIONS};
 use crate::types::ExitKind;
 
+/// Number of initial interesting entries that always receive the full expensive
+/// stage pipeline before sampling begins (C2 warmup: explore thoroughly early,
+/// then bound stage amplification for the long tail of the campaign).
+pub(super) const EXPENSIVE_STAGE_WARMUP: u64 = 64;
+/// After warmup, expensive stages run when `rand_below(DENOM) < NUMER`, i.e. on
+/// this fraction of interesting entries (here 1/2), mirroring AFL++ running
+/// cmplog/REDQUEEN on a fraction of the queue rather than every entry.
+const EXPENSIVE_STAGE_NUMER: usize = 1;
+const EXPENSIVE_STAGE_DENOM: usize = 2;
+
 /// Tracks the lifecycle of a multi-execution stage (I2S, Grimoire, etc.).
 /// Designed for extensibility - future stages add new variants.
 pub(crate) enum StageState {
@@ -92,6 +102,27 @@ pub(crate) enum StageState {
 }
 
 impl Fuzzer {
+    /// Decide whether the current interesting entry should run the expensive
+    /// stages (colorization/REDQUEEN and the structure-aware post-I2S stages).
+    ///
+    /// Always true during the warmup window; afterward samples a fixed fraction
+    /// using the seeded RNG, so the decision is deterministic under a fixed seed.
+    /// This bounds the stage amplification the design review flagged in C2: the
+    /// expensive stages no longer run on every interesting entry for the whole
+    /// campaign.
+    pub(super) fn should_run_expensive_stages(&mut self) -> bool {
+        self.expensive_stage_entries = self.expensive_stage_entries.saturating_add(1);
+        if self.expensive_stage_entries <= EXPENSIVE_STAGE_WARMUP {
+            return true;
+        }
+        // SAFETY of unwrap: EXPENSIVE_STAGE_DENOM is a nonzero constant.
+        let roll = self
+            .state
+            .rand_mut()
+            .below(core::num::NonZero::new(EXPENSIVE_STAGE_DENOM).unwrap());
+        roll < EXPENSIVE_STAGE_NUMER
+    }
+
     /// Implementation of `begin_stage` - dispatches to the appropriate stage.
     pub(super) fn begin_stage_impl(&mut self) -> Result<Option<Buffer>> {
         // Precondition: no stage currently active.
@@ -109,8 +140,13 @@ impl Fuzzer {
         // Reset per-entry flag.
         self.redqueen_ran_for_entry = false;
 
-        // Step 1: Attempt colorization if REDQUEEN is enabled and input fits.
-        if self.features.redqueen_enabled {
+        // C2: gate the expensive stages. When gated out, this entry skips straight
+        // to havoc (begin_stage returns None) except for the cheap, bounded I2S
+        // stage, which stays available whenever CmpLog data exists.
+        let run_expensive = self.should_run_expensive_stages();
+
+        // Step 1: Attempt colorization if REDQUEEN is enabled and input fits (expensive).
+        if run_expensive && self.features.redqueen_enabled {
             let input_len = self
                 .state
                 .corpus()
@@ -131,7 +167,8 @@ impl Fuzzer {
             }
         }
 
-        // Step 2: Attempt I2S (only if REDQUEEN didn't run).
+        // Step 2: Attempt I2S (only if REDQUEEN didn't run). Bounded and cheap, so
+        // it is not gated by the expensive-stage sampler.
         if !self.redqueen_ran_for_entry {
             let has_cmp_data = self
                 .state
@@ -143,8 +180,13 @@ impl Fuzzer {
             }
         }
 
-        // Step 3: Fall through to Grimoire/unicode.
-        self.begin_post_i2s_stages(corpus_id)
+        // Step 3: Fall through to the structure-aware stages (Grimoire/unicode/
+        // json/generalization), also gated as expensive.
+        if run_expensive {
+            self.begin_post_i2s_stages(corpus_id)
+        } else {
+            Ok(None)
+        }
     }
 
     /// Begin the I2S stage for the given corpus entry.
