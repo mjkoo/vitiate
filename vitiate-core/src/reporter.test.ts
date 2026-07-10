@@ -11,6 +11,7 @@ import {
   printCrash,
   printSummary,
   writeResultsFile,
+  warnOnCoverageMapLoad,
 } from "./reporter.js";
 import type { ResultsFileContent } from "./reporter.js";
 import type { FuzzerStats } from "@vitiate/engine";
@@ -199,5 +200,40 @@ describe("writeResultsFile", () => {
       "/path/crash-b",
     ]);
     expect(parsed.error).toBe("test crash message");
+  });
+});
+
+describe("warnOnCoverageMapLoad", () => {
+  let stderrSpy: MockInstance;
+  const original = globalThis.__vitiate_edge_count;
+
+  beforeEach(() => {
+    stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    stderrSpy.mockRestore();
+    globalThis.__vitiate_edge_count = original;
+  });
+
+  it("warns when edge count is a high fraction of the map size", () => {
+    globalThis.__vitiate_edge_count = 4000; // 4000 / 65536 = ~6.1% > 2%
+    warnOnCoverageMapLoad(65536);
+    expect(stderrSpy).toHaveBeenCalledTimes(1);
+    const msg = stderrSpy.mock.calls[0]![0] as string;
+    expect(msg).toContain("4000 instrumented edges");
+    expect(msg).toContain("coverageMapSize");
+  });
+
+  it("does not warn when load is below the threshold", () => {
+    globalThis.__vitiate_edge_count = 500; // 500 / 65536 = ~0.8% < 2%
+    warnOnCoverageMapLoad(65536);
+    expect(stderrSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not warn when no instrumented edges have loaded", () => {
+    globalThis.__vitiate_edge_count = undefined;
+    warnOnCoverageMapLoad(65536);
+    expect(stderrSpy).not.toHaveBeenCalled();
   });
 });

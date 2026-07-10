@@ -17,7 +17,9 @@ The plugin inserts two kinds of instrumentation:
 __vitiate_cov[42]++; // edge ID 42
 ```
 
-Each edge gets a deterministic ID derived from the file path and source location. The coverage map is a fixed-size array (default: 65,536 slots) where each slot counts how many times that edge was hit.
+The plugin records both sides of a branch, not just the taken side. When an `if` has no `else`, a synthetic not-taken counter is inserted so that "the condition was false" is distinguishable from "the branch was never reached." Likewise, a loop-exit counter is placed immediately after each loop, distinguishing "the loop ran zero iterations / exited" from "the loop was never reached." Together these roughly double meaningful branch coverage relative to instrumenting only taken paths.
+
+Each edge gets a deterministic ID derived from the file path, source location, and edge kind, hashed (FNV-1a with an avalanche finalizer) into the coverage map. The coverage map is a fixed-size array (default: 65,536 slots) where each slot counts how many times that edge was hit. Because IDs are hashed into a fixed number of slots, distinct edges can occasionally collide and share a slot; if the number of instrumented edges grows large relative to the map size, Vitiate prints a one-time warning suggesting you raise [`coverageMapSize`](/reference/plugin-options/#coveragemapsize).
 
 **Comparison tracing** - For equality and relational comparisons (`==`, `===`, `<`, `>=`, etc.), the plugin inserts a tracing call:
 

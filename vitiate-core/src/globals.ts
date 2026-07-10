@@ -33,6 +33,13 @@ export const SITE_COUNT_SLOTS = 512;
 
 declare global {
   var __vitiate_cov: Uint8Array | Buffer;
+  /**
+   * Running total of coverage counters emitted across all loaded instrumented
+   * modules. Written by the SWC plugin's injected preamble
+   * (`globalThis.__vitiate_edge_count = (globalThis.__vitiate_edge_count | 0) + N`).
+   * Used only to estimate coverage-map load (collision pressure); never reset.
+   */
+  var __vitiate_edge_count: number | undefined;
   var __vitiate_cmplog_write: (
     left: unknown,
     right: unknown,
@@ -56,6 +63,16 @@ declare global {
  */
 export function getCoverageMap(): Uint8Array {
   return globalThis.__vitiate_cov;
+}
+
+/**
+ * Return the total number of coverage counters emitted across all instrumented
+ * modules loaded so far, or 0 if none have loaded. This is an approximate
+ * upper bound on the number of distinct edge ids (it double-counts only the
+ * negligible intra-file hash collisions), used to estimate coverage-map load.
+ */
+export function getInstrumentedEdgeCount(): number {
+  return globalThis.__vitiate_edge_count ?? 0;
 }
 
 export interface CmplogWriteFunctions {
