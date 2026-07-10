@@ -1,7 +1,10 @@
 use super::helpers::{
-    make_coverage_map, make_scheduler, make_seed_testcase, make_state_and_feedback,
+    TestFuzzerBuilder, make_coverage_map, make_scheduler, make_seed_testcase,
+    make_state_and_feedback,
 };
+use crate::cmplog;
 use crate::engine::EDGES_OBSERVER_NAME;
+use crate::types::{ExitKind, IterationResult};
 use libafl::corpus::Corpus;
 use libafl::corpus::Testcase;
 use libafl::events::NopEventManager;
@@ -13,6 +16,7 @@ use libafl::observers::StdMapObserver;
 use libafl::schedulers::Scheduler;
 use libafl::state::{HasCorpus, HasSolutions};
 use libafl_bolts::tuples::tuple_list;
+use napi::bindgen_prelude::Buffer;
 
 #[test]
 fn test_new_state_is_empty() {
@@ -107,6 +111,100 @@ fn test_duplicate_coverage_not_interesting() {
         )
         .unwrap();
     assert!(!interesting2);
+}
+
+#[test]
+fn test_classify_counts_bucketing_is_consistent() {
+    // The classification table used for bucketed admission must be a fixed point
+    // of the bucketing (idempotent) and agree with the display-stat bucket index,
+    // so the `ft` stat stays correct when computed over a classified history map.
+    use crate::engine::{FEATURE_BUCKET_INDEX, classify_counts_in_place};
+
+    let mut map: Vec<u8> = (0..=255u16).map(|v| v as u8).collect();
+    classify_counts_in_place(&mut map);
+
+    // Known bucket representatives (lower bound of each AFL bucket).
+    assert_eq!(map[0], 0);
+    assert_eq!(map[1], 1);
+    assert_eq!(map[2], 2);
+    assert_eq!(map[3], 3);
+    assert_eq!(map[4], 4);
+    assert_eq!(map[7], 4);
+    assert_eq!(map[8], 8);
+    assert_eq!(map[15], 8);
+    assert_eq!(map[16], 16);
+    assert_eq!(map[31], 16);
+    assert_eq!(map[32], 32);
+    assert_eq!(map[127], 32);
+    assert_eq!(map[128], 128);
+    assert_eq!(map[255], 128);
+
+    for raw in 0..=255usize {
+        let rep = map[raw];
+        // Nonzero counts stay nonzero (preserves bitmap_size / covered indices).
+        assert_eq!(rep == 0, raw == 0, "nonzero-ness preserved at {raw}");
+        // Idempotent: classifying a representative yields itself.
+        let mut single = [rep];
+        classify_counts_in_place(&mut single);
+        assert_eq!(single[0], rep, "classify not idempotent at {raw}");
+        // The `ft` display bucket index agrees for raw and classified values.
+        assert_eq!(
+            FEATURE_BUCKET_INDEX[raw], FEATURE_BUCKET_INDEX[rep as usize],
+            "feature bucket index diverges at {raw}"
+        );
+    }
+}
+
+#[test]
+fn test_admission_keys_on_hitcount_bucket() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    // C3: corpus admission keys on AFL-style hit-count buckets, not the raw
+    // per-edge maximum. An input that raises an edge's count within the same
+    // bucket must NOT be admitted (raw-max feedback would wrongly admit it);
+    // an input that crosses into a higher bucket MUST be admitted.
+    let mut fuzzer = TestFuzzerBuilder::new(256).build();
+    fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
+
+    // Iteration 1: establish history at edge 10 with count 4 (bucket [4,7]).
+    let _input = fuzzer.get_next_input().unwrap();
+    unsafe {
+        *fuzzer.map_ptr.add(10) = 4;
+    }
+    let r1 = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
+    assert_eq!(r1, IterationResult::Interesting, "first coverage is novel");
+    fuzzer.calibrate_finish().unwrap();
+    assert_eq!(fuzzer.state.corpus().count(), 1);
+
+    // Iteration 2: same edge, count 5 -> raw 5 > 4, but still bucket [4,7].
+    // Bucketed admission must reject this.
+    let _input = fuzzer.get_next_input().unwrap();
+    unsafe {
+        *fuzzer.map_ptr.add(10) = 5;
+    }
+    let r2 = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
+    assert_eq!(
+        r2,
+        IterationResult::None,
+        "higher count within the same hit-count bucket must not be admitted"
+    );
+    assert_eq!(
+        fuzzer.state.corpus().count(),
+        1,
+        "no corpus entry added for same-bucket input"
+    );
+
+    // Iteration 3: same edge, count 8 -> bucket [8,15], a new bucket.
+    let _input = fuzzer.get_next_input().unwrap();
+    unsafe {
+        *fuzzer.map_ptr.add(10) = 8;
+    }
+    let r3 = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
+    assert_eq!(
+        r3,
+        IterationResult::Interesting,
+        "crossing into a higher hit-count bucket must be admitted"
+    );
+    assert_eq!(fuzzer.state.corpus().count(), 2);
 }
 
 #[test]
