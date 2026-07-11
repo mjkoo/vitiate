@@ -84,6 +84,18 @@ describe("reproduce subcommand: single-input replay with libFuzzer exit codes", 
     expect(result.exitCode).toBe(0);
   }, 120_000);
 
+  it("exits 0 on a clean replay with the watchdog disabled (-timeout 0)", async () => {
+    const result = await runReproduce([
+      benignFile,
+      "-test",
+      "parse-url",
+      "-timeout",
+      "0",
+    ]);
+    if (result.exitCode !== 0) dumpOutput("reproduce-timeout-0", result.output);
+    expect(result.exitCode).toBe(0);
+  }, 120_000);
+
   it("exits 1 with a not-found message when the input file is missing", async () => {
     const missing = path.join(tmpDir, "does-not-exist.bin");
     const result = await runReproduce([missing, "-test", "parse-url"]);

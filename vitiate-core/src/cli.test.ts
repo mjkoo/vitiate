@@ -29,6 +29,8 @@ import {
   type TestManifestRow,
   main,
   supervisorExitCode,
+  resolveReproduceTimeoutMs,
+  DEFAULT_REPRODUCE_TIMEOUT_SECONDS,
 } from "./cli.js";
 import type { SupervisorResult } from "./supervisor.js";
 import { getCliOptions, setDataDir, resetDataDir } from "./config.js";
@@ -335,6 +337,23 @@ describe("reproduce subcommand parser", () => {
   it("requires the input file argument", () => {
     const result = parseSync(reproduceParser, []);
     expect(result.success).toBe(false);
+  });
+});
+
+describe("resolveReproduceTimeoutMs", () => {
+  it("defaults to libFuzzer's -timeout default (1200s) when omitted", () => {
+    expect(resolveReproduceTimeoutMs(undefined)).toBe(
+      DEFAULT_REPRODUCE_TIMEOUT_SECONDS * 1000,
+    );
+    expect(resolveReproduceTimeoutMs(undefined)).toBe(1_200_000);
+  });
+
+  it("converts an explicit -timeout from seconds to milliseconds", () => {
+    expect(resolveReproduceTimeoutMs(5)).toBe(5000);
+  });
+
+  it("keeps 0 as 0 so the watchdog stays disabled", () => {
+    expect(resolveReproduceTimeoutMs(0)).toBe(0);
   });
 });
 

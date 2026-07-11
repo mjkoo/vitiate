@@ -700,6 +700,31 @@ export const DEFAULT_ERROR_EXITCODE = 77;
 export const DEFAULT_TIMEOUT_EXITCODE = 70;
 
 /**
+ * Default per-execution replay timeout (seconds) for the `reproduce`
+ * subcommand when `-timeout` is omitted, matching libFuzzer's `-timeout`
+ * default. Without it the single-input replay runs with no vitiate watchdog
+ * and a hung input is bounded only by vitest's `testTimeout` (which cannot
+ * interrupt a synchronous loop). Defaulting arms the watchdog so any hang is
+ * bounded by its `_exit` fallback and attributed with a `timeout-*` artifact.
+ * Pass `-timeout 0` to disable the watchdog.
+ */
+export const DEFAULT_REPRODUCE_TIMEOUT_SECONDS = 1200;
+
+/**
+ * Resolve the `reproduce` replay timeout (milliseconds) from the parsed
+ * `-timeout` flag (seconds). Omitted arms the watchdog at libFuzzer's default;
+ * an explicit value wins; `0` stays `0` and disables the watchdog.
+ *
+ * :param timeoutSeconds: the parsed `-timeout` value in seconds, or undefined.
+ * :returns: the timeout in milliseconds for `FuzzOptions.timeoutMs`.
+ */
+export function resolveReproduceTimeoutMs(
+  timeoutSeconds: number | undefined,
+): number {
+  return (timeoutSeconds ?? DEFAULT_REPRODUCE_TIMEOUT_SECONDS) * 1000;
+}
+
+/**
  * Map a {@link SupervisorResult} to a process exit code for CLI parent modes,
  * following libFuzzer's exit-code conventions.
  *
@@ -1620,11 +1645,13 @@ async function runReproduceSubcommand(
     return;
   }
 
-  const options: FuzzOptions = {};
-  if (parsed.timeout !== undefined) {
-    // CLI flags use seconds (libFuzzer convention); FuzzOptions use ms.
-    options.timeoutMs = parsed.timeout * 1000;
-  }
+  // Default to libFuzzer's `-timeout` value so a hung single-input replay is
+  // bounded by the watchdog's `_exit` fallback rather than relying on vitest's
+  // `testTimeout` (which a synchronous loop never yields to). An explicit
+  // `-timeout` wins; `-timeout 0` disables the watchdog.
+  const options: FuzzOptions = {
+    timeoutMs: resolveReproduceTimeoutMs(parsed.timeout),
+  };
 
   const env: Record<string, string> = {
     ...process.env,
