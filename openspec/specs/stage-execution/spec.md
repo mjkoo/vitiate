@@ -11,112 +11,42 @@ The system SHALL provide `fuzzer.beginStage()` which initiates a stage execution
 1. Check that `StageState` is `None` (no stage currently active). If a stage is in progress, return `null`.
 2. Read `last_interesting_corpus_id`. If not set (no corpus entry was recently added via `reportResult()` returning `Interesting` with completed calibration), clear `last_interesting_corpus_id` and return `null`.
 3. Clear `last_interesting_corpus_id` (set to `None`) unconditionally - the ID is consumed regardless of whether the stage proceeds.
-4. If REDQUEEN is enabled AND the corpus entry is at most `MAX_COLORIZATION_LEN` bytes: begin the colorization stage (transition to `StageState::Colorization`). Set `redqueen_ran_for_entry = true`.
-5. If colorization was not started: attempt to start the I2S stage: read `CmpValuesMetadata` (populated by `reportResult()` alongside `AflppCmpValuesMetadata`). If the list is non-empty, begin the I2S stage (select 1-128 iterations, clone entry, apply `I2SSpliceReplace`, transition to `StageState::I2S`). Set `redqueen_ran_for_entry = false`.
-6. If I2S was not started AND Grimoire is enabled AND the input qualifies for generalization: begin the generalization stage directly (transition to `StageState::Generalization`).
-7. If I2S was not started AND Grimoire is enabled AND the input does NOT qualify for generalization BUT already has `GeneralizedInputMetadata`: begin the Grimoire stage directly (transition to `StageState::Grimoire`).
-8. If I2S was not started AND Grimoire stages are not applicable AND unicode is enabled AND the corpus entry has valid UTF-8 regions: begin the unicode stage directly (transition to `StageState::Unicode`).
-9. If I2S was not started AND unicode was not started AND JSON mutations are enabled AND the corpus entry passes `looks_like_json()`: begin the JSON stage directly (select 1-128 iterations, transition to `StageState::Json`).
-10. If none of the above can start: return `null`.
+4. Decide whether the expensive stages run for this entry by calling `should_run_expensive_stages()` (see the "Expensive stage gating" requirement). The colorization/REDQUEEN stage (step 5) and the structure-aware stages (steps 7-10) are gated by this decision; the bounded I2S stage (step 6) is not.
+5. If the expensive stages run AND REDQUEEN is enabled AND the corpus entry is at most `MAX_COLORIZATION_LEN` bytes: begin the colorization stage (transition to `StageState::Colorization`). Set `redqueen_ran_for_entry = true`.
+6. If colorization was not started: attempt to start the I2S stage: read `CmpValuesMetadata` (populated by `reportResult()` alongside `AflppCmpValuesMetadata`). If the list is non-empty, begin the I2S stage (select 1-128 iterations, clone entry, apply `I2SSpliceReplace`, transition to `StageState::I2S`). Set `redqueen_ran_for_entry = false`. I2S is not gated by the expensive-stage decision.
+7. If the expensive stages run AND I2S was not started AND Grimoire is enabled AND the input qualifies for generalization: begin the generalization stage directly (transition to `StageState::Generalization`).
+8. If the expensive stages run AND I2S was not started AND Grimoire is enabled AND the input does NOT qualify for generalization BUT already has `GeneralizedInputMetadata`: begin the Grimoire stage directly (transition to `StageState::Grimoire`).
+9. If the expensive stages run AND I2S was not started AND Grimoire stages are not applicable AND unicode is enabled AND the corpus entry has valid UTF-8 regions: begin the unicode stage directly (transition to `StageState::Unicode`).
+10. If the expensive stages run AND I2S was not started AND unicode was not started AND JSON mutations are enabled AND the corpus entry passes `looks_like_json()`: begin the JSON stage directly (select 1-128 iterations, transition to `StageState::Json`).
+11. If none of the above can start (including when the expensive stages are gated out and no I2S data exists): return `null`, and the entry proceeds to havoc mutation in the fuzz loop.
 
-The pipeline ordering is: Colorization → REDQUEEN → I2S → Generalization → Grimoire → Unicode → Json → None. `beginStage()` always attempts colorization first (if REDQUEEN enabled). If colorization is skipped, it falls through to I2S, then Grimoire stages (if enabled and applicable), then unicode (if enabled), then JSON (if enabled and corpus entry passes `looks_like_json()`).
+The pipeline ordering is: Colorization → REDQUEEN → I2S → Generalization → Grimoire → Unicode → Json → None. `beginStage()` attempts colorization first (if REDQUEEN enabled and the expensive stages run this entry). If colorization is skipped, it falls through to I2S, then the structure-aware stages (if the expensive stages run and each is enabled and applicable).
 
 It SHALL be valid to call `beginStage()` only after `calibrateFinish()` has completed for the current interesting input. This is a protocol-level contract enforced by the JS fuzz loop's calling order (calibration always runs before `beginStage()`), not a Rust-side check - the Rust-side precondition checks are `StageState::None` and `last_interesting_corpus_id` being set.
 
 #### Scenario: Stage begins with colorization when REDQUEEN enabled
 
 - **WHEN** `reportResult()` returned `Interesting` and calibration has completed
+- **AND** the expensive stages run for this entry (within the warmup window)
 - **AND** REDQUEEN is enabled
 - **AND** the corpus entry is at most `MAX_COLORIZATION_LEN` bytes
 - **THEN** `beginStage()` SHALL return a non-null `Buffer` containing the original corpus entry (baseline hash computed by the subsequent `advanceStage()` call)
 - **AND** `StageState` SHALL transition to `Colorization`
 - **AND** `redqueen_ran_for_entry` SHALL be set to `true`
 
-#### Scenario: Stage begins with I2S when REDQUEEN disabled
+#### Scenario: I2S still runs when expensive stages are gated out
 
-- **WHEN** `reportResult()` returned `Interesting` and calibration has completed
-- **AND** REDQUEEN is disabled
+- **WHEN** the expensive stages are gated out for this entry
 - **AND** `CmpValuesMetadata` contains at least one entry
-- **THEN** `beginStage()` SHALL return a non-null `Buffer` containing an I2S-mutated variant of the corpus entry
+- **THEN** `beginStage()` SHALL skip colorization/REDQUEEN and begin the I2S stage
 - **AND** `StageState` SHALL transition to `I2S`
 
-#### Scenario: Stage begins with I2S when input too large for colorization
+#### Scenario: Entry skips to havoc when expensive stages gated out and no I2S data
 
-- **WHEN** `reportResult()` returned `Interesting` and calibration has completed
-- **AND** REDQUEEN is enabled
-- **AND** the corpus entry exceeds `MAX_COLORIZATION_LEN` bytes
-- **AND** `CmpValuesMetadata` contains at least one entry
-- **THEN** `beginStage()` SHALL skip colorization and return an I2S-mutated variant
-- **AND** `StageState` SHALL transition to `I2S`
-- **AND** `redqueen_ran_for_entry` SHALL be `false`
-
-#### Scenario: Stage skipped when no CmpLog data and Grimoire disabled and unicode disabled and JSON disabled and REDQUEEN disabled
-
-- **WHEN** `reportResult()` returned `Interesting` and calibration has completed
-- **AND** REDQUEEN is disabled
+- **WHEN** the expensive stages are gated out for this entry
 - **AND** `CmpValuesMetadata` is empty
-- **AND** Grimoire is disabled
-- **AND** unicode is disabled
-- **AND** JSON mutations are disabled (or corpus entry does not pass `looks_like_json()`)
 - **THEN** `beginStage()` SHALL return `null`
 - **AND** `StageState` SHALL remain `None`
-
-#### Scenario: Stage begins with JSON when all prior stages not applicable
-
-- **WHEN** `reportResult()` returned `Interesting` and calibration has completed
-- **AND** REDQUEEN is disabled
-- **AND** `CmpValuesMetadata` is empty
-- **AND** Grimoire is disabled
-- **AND** unicode is disabled
-- **AND** JSON mutations are enabled
-- **AND** the corpus entry passes `looks_like_json()`
-- **THEN** `beginStage()` SHALL return a non-null `Buffer` containing a JSON-mutated variant
-- **AND** `StageState` SHALL transition to `Json`
-
-#### Scenario: Stage overflow in begin_stage
-
-- **WHEN** no stages can be entered (all conditions fail including JSON)
-- **THEN** `beginStage()` SHALL return `null`
-- **AND** `StageState` SHALL remain `None`
-
-#### Scenario: Generalization begins when I2S skipped and Grimoire enabled
-
-- **WHEN** `reportResult()` returned `Interesting` and calibration has completed
-- **AND** colorization was not started (REDQUEEN disabled or input too large)
-- **AND** `CmpValuesMetadata` is empty
-- **AND** Grimoire is enabled
-- **AND** the corpus entry qualifies for generalization (≤8192 bytes, has `MapNoveltiesMetadata`, not already generalized)
-- **THEN** `beginStage()` SHALL return a non-null `Buffer` containing the original corpus entry (for verification)
-- **AND** `StageState` SHALL transition to `Generalization`
-
-#### Scenario: beginStage called without pending calibration
-
-- **WHEN** `beginStage()` is called without a preceding `Interesting` result and completed calibration
-- **THEN** `beginStage()` SHALL return `null`
-
-#### Scenario: beginStage called during active stage
-
-- **WHEN** `beginStage()` is called while `StageState` is not `None` (any stage in progress)
-- **THEN** `beginStage()` SHALL return `null`
-- **AND** the active stage SHALL NOT be disrupted
-
-#### Scenario: Mutated input respects max input length
-
-- **WHEN** `beginStage()` generates an I2S-mutated input
-- **AND** the mutated result exceeds `maxInputLen`
-- **THEN** the returned buffer SHALL be truncated to `maxInputLen` bytes
-
-#### Scenario: Iteration count is between 1 and 128
-
-- **WHEN** `beginStage()` selects a random iteration count for I2S
-- **THEN** `max_iterations` SHALL be between 1 and 128 inclusive
-
-#### Scenario: I2SSpliceReplace mutation is a no-op
-
-- **WHEN** `beginStage()` applies `I2SSpliceReplace` to the cloned corpus entry
-- **AND** the mutation does not modify the input (e.g., no CmpLog operands match any bytes in the input)
-- **THEN** `beginStage()` SHALL still return the (unmodified) input as a `Buffer`
-- **AND** the stage SHALL proceed normally
 
 ### Requirement: Advance stage after each execution
 
@@ -532,3 +462,22 @@ Each stage execution SHALL increment both the `total_execs` counter on the Fuzze
 - **WHEN** a colorization stage runs for 5 iterations and the 6th execution crashes
 - **AND** `abortStage()` is called
 - **THEN** `total_execs` SHALL include all 6 executions
+
+### Requirement: Expensive stage gating
+
+To bound stage amplification, the engine SHALL NOT run the expensive stages (colorization/REDQUEEN and the structure-aware post-I2S stages: generalization, Grimoire, unicode, JSON) on every interesting entry for the whole campaign. `should_run_expensive_stages()` SHALL decide per interesting entry:
+
+1. The first `EXPENSIVE_STAGE_WARMUP` interesting entries offered to `beginStage()` SHALL always run the expensive stages (thorough early exploration).
+2. After the warmup window, the expensive stages SHALL run on a sampled fraction of entries, chosen with the engine's seeded RNG (`rand_below(EXPENSIVE_STAGE_DENOM) < EXPENSIVE_STAGE_NUMER`).
+
+The decision SHALL be deterministic under a fixed engine seed. The bounded I2S stage is exempt from this gate. These parameters are internal engine tunables, not user-facing configuration.
+
+#### Scenario: Warmup entries always run expensive stages
+
+- **WHEN** fewer than `EXPENSIVE_STAGE_WARMUP` interesting entries have been offered to `beginStage()`
+- **THEN** `should_run_expensive_stages()` SHALL return `true` for each
+
+#### Scenario: Post-warmup entries are sampled
+
+- **WHEN** more than `EXPENSIVE_STAGE_WARMUP` interesting entries have been offered
+- **THEN** `should_run_expensive_stages()` SHALL return `true` for some entries and `false` for others (a sampled fraction), deterministically under a fixed seed

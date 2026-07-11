@@ -259,6 +259,11 @@ export const optimizeParser = object({
       description: detectorsDescription,
     }),
   ),
+  timeout: optional(
+    option("--timeout", integer({ min: 0 }), {
+      description: [text("Per-entry replay timeout in seconds (0 = disabled)")],
+    }),
+  ),
   positionalArgs: withDefault(
     multiple(argument(string({ metavar: "VITEST_ARG" }))),
     [],
@@ -878,14 +883,24 @@ async function runInitSubcommand(): Promise<void> {
 }
 
 /**
+ * Serialize a `FuzzOptions` object into the `VITIATE_OPTIONS` env var read by
+ * the child (see `getCliOptions` in config.ts). Returns an empty record when
+ * there is nothing to pass, so callers can `Object.assign` unconditionally.
+ */
+function buildOptionsEnv(options: FuzzOptions): Record<string, string> {
+  return Object.keys(options).length > 0
+    ? { VITIATE_OPTIONS: JSON.stringify(options) }
+    : {};
+}
+
+/**
  * Build env vars for detectors flag, shared by fuzz/regression/optimize.
  */
 function buildDetectorsEnv(
   detectorsSpec: string | undefined,
 ): Record<string, string> {
   if (detectorsSpec === undefined) return {};
-  const detectors = parseDetectorsFlag(detectorsSpec);
-  return { VITIATE_OPTIONS: JSON.stringify({ detectors }) };
+  return buildOptionsEnv({ detectors: parseDetectorsFlag(detectorsSpec) });
 }
 
 /**
@@ -928,7 +943,16 @@ function runOptimizeSubcommand(
   parsed: InferValue<typeof optimizeParser>,
 ): void {
   const env: Record<string, string> = { VITIATE_OPTIMIZE: "1" };
-  Object.assign(env, buildDetectorsEnv(parsed.detectors));
+  const options: FuzzOptions = {};
+  if (parsed.detectors !== undefined) {
+    options.detectors = parseDetectorsFlag(parsed.detectors);
+  }
+  if (parsed.timeout !== undefined) {
+    // CLI flags use seconds (matching libFuzzer convention); internal
+    // FuzzOptions use milliseconds. 0 stays 0, disabling the watchdog.
+    options.timeoutMs = parsed.timeout * 1000;
+  }
+  Object.assign(env, buildOptionsEnv(options));
   spawnVitestWrapper(env, [...parsed.vitestArgs, ...parsed.positionalArgs]);
 }
 

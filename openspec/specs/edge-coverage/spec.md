@@ -211,7 +211,7 @@ When `evaluate_coverage()` determines an input is interesting (triggers new cove
 
 The novelty computation SHALL:
 
-1. Before calling `MaxMapFeedback::is_interesting()`, compare the current coverage map against the feedback's internal history to identify indices where `map[i] > history[i]` (the current execution has a higher hit count than any previous execution at that index).
+1. Before calling `MaxMapFeedback::is_interesting()`, compare the current coverage map against the feedback's internal history to identify indices where `map[i] > history[i]`. Because the coverage map has been classified into AFL-style hit-count buckets and the history stores classified values, this comparison identifies indices where the current execution reached a strictly higher hit-count *bucket* than any previous execution at that index (not merely a higher raw count within the same bucket).
 2. Record these indices as a `Vec<usize>`.
 3. After `is_interesting()` confirms the input is interesting, store the recorded indices as `MapNoveltiesMetadata` on the testcase.
 
@@ -225,8 +225,14 @@ Novelty tracking SHALL NOT occur during calibration. Calibration calls `MaxMapFe
 
 - **WHEN** a fuzz input triggers coverage at map indices `[42, 107, 255]`
 - **AND** indices 42 and 255 were previously zero in the feedback history (newly discovered)
-- **AND** index 107 had a previous value of 1 but the current execution has value 3 (newly maximized)
+- **AND** index 107 had a previous classified value of 1 but the current execution reaches bucket `[8,15]` (classified value 8, a higher bucket)
 - **THEN** `MapNoveltiesMetadata` on the testcase SHALL contain `[42, 107, 255]`
+
+#### Scenario: Same-bucket increase is not novel
+
+- **WHEN** index 107 had a previous classified value of 4 (bucket `[4,7]`)
+- **AND** the current execution has a raw count of 6 at index 107 (still bucket `[4,7]`)
+- **THEN** index 107 SHALL NOT appear in `MapNoveltiesMetadata`
 
 #### Scenario: No novelty metadata for non-interesting inputs
 
@@ -239,13 +245,6 @@ Novelty tracking SHALL NOT occur during calibration. Calibration calls `MaxMapFe
 - **AND** the input is added to the corpus
 - **THEN** `MapNoveltiesMetadata` SHALL be stored on the new testcase
 - **AND** the new entry can be generalized in a future stage pipeline
-
-#### Scenario: Novelty indices reflect only newly maximized positions
-
-- **WHEN** a fuzz input covers map indices `[10, 20, 30, 40, 50]`
-- **AND** indices 10, 20, 30 already have equal or higher values in the feedback history
-- **AND** only indices 40 and 50 have values exceeding the history
-- **THEN** `MapNoveltiesMetadata` SHALL contain only `[40, 50]` (not all covered indices)
 
 ### Requirement: Loop-exit edge instrumentation
 

@@ -355,6 +355,8 @@ describe("prototype pollution restored without afterIteration", () => {
   afterEach(() => {
     const proto = Object.prototype as Record<string, unknown>;
     delete proto["pollutedProp"];
+    delete proto["toJSON"];
+    delete proto["evil"];
   });
 
   it("resetIteration restores prototypes even when afterIteration is skipped (the bug fix)", () => {
@@ -376,6 +378,37 @@ describe("prototype pollution restored without afterIteration", () => {
     expect(
       Object.prototype.hasOwnProperty.call(Object.prototype, "pollutedProp"),
     ).toBe(false);
+
+    manager.teardown();
+  });
+
+  it("keeps detecting function pollution across iterations (capture-once latch)", () => {
+    const manager = new DetectorManager({
+      prototypePollution: true,
+      commandInjection: false,
+      pathTraversal: false,
+    });
+    manager.setup();
+
+    // Iteration 1: plant a function, detect, reset. No teardown - the pristine
+    // table must persist for the rest of the campaign.
+    manager.beforeIteration();
+    (Object.prototype as Record<string, unknown>)["toJSON"] = () => ({});
+    const first = manager.endIteration(true);
+    expect(first).toBeInstanceOf(VulnerabilityError);
+    expect(
+      Object.prototype.hasOwnProperty.call(Object.prototype, "toJSON"),
+    ).toBe(false);
+
+    // Iteration 2: a fresh function pollution must still be caught against the
+    // table captured in iteration 1 (the latch must not have cleared it).
+    manager.beforeIteration();
+    (Object.prototype as Record<string, unknown>)["evil"] = () => ({});
+    const second = manager.endIteration(true);
+    expect(second).toBeInstanceOf(VulnerabilityError);
+    expect(Object.prototype.hasOwnProperty.call(Object.prototype, "evil")).toBe(
+      false,
+    );
 
     manager.teardown();
   });

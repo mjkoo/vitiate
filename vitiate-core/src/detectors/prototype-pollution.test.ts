@@ -36,14 +36,6 @@ describe("PrototypePollutionDetector", () => {
     expect(() => detector.afterIteration()).toThrow(VulnerabilityError);
   });
 
-  it("ignores function-valued property additions", () => {
-    detector.setup();
-    detector.beforeIteration();
-    (Object.prototype as Record<string, unknown>)["testPolyfill"] =
-      function () {};
-    detector.afterIteration(); // should NOT throw
-  });
-
   it("restores prototype state via resetIteration", () => {
     detector.setup();
     detector.beforeIteration();
@@ -188,6 +180,173 @@ describe("PrototypePollutionDetector", () => {
     expect(tokenStrings).toContain("__defineSetter__");
     expect(tokenStrings).toContain("__lookupGetter__");
     expect(tokenStrings).toContain("__lookupSetter__");
+  });
+});
+
+// ── function-valued prototype pollution ─────────────────────────────────
+//
+// The pristine table (captured once on the first beforeIteration) covers
+// function-valued properties, so planting, replacing, or deleting a built-in
+// method is now detected and restored. Pre-existing methods/polyfills present
+// when the table is captured are the baseline and are never flagged. Each
+// test uses a fresh detector and saves/restores any real built-in it touches.
+
+describe("PrototypePollutionDetector function-valued pollution", () => {
+  it("ignores a pre-existing function-valued property (polyfill)", () => {
+    const d = new PrototypePollutionDetector();
+    // Installed BEFORE the pristine table is captured -> part of the baseline.
+    (Object.prototype as Record<string, unknown>)["preexistingPolyfill"] =
+      function () {};
+    try {
+      d.setup();
+      d.beforeIteration();
+      expect(() => d.afterIteration()).not.toThrow();
+      d.resetIteration();
+      d.teardown();
+    } finally {
+      delete (Object.prototype as Record<string, unknown>)[
+        "preexistingPolyfill"
+      ];
+    }
+  });
+
+  it("detects and restores a newly-added function property", () => {
+    const d = new PrototypePollutionDetector();
+    d.setup();
+    d.beforeIteration();
+    (Object.prototype as Record<string, unknown>)["toJSON"] = () => ({});
+    try {
+      let thrown: VulnerabilityError | undefined;
+      try {
+        d.afterIteration();
+      } catch (e) {
+        thrown = e as VulnerabilityError;
+      }
+      expect(thrown).toBeInstanceOf(VulnerabilityError);
+      expect(thrown?.context["changeType"]).toBe("added");
+      expect(thrown?.context["isAccessor"]).toBe(false);
+      d.resetIteration();
+      expect(
+        Object.prototype.hasOwnProperty.call(Object.prototype, "toJSON"),
+      ).toBe(false);
+    } finally {
+      d.teardown();
+      delete (Object.prototype as Record<string, unknown>)["toJSON"];
+    }
+  });
+
+  it("detects and restores a replaced built-in method", () => {
+    const d = new PrototypePollutionDetector();
+    const arr = Array.prototype as unknown as Record<string, unknown>;
+    const originalMap = Array.prototype.map;
+    d.setup();
+    d.beforeIteration();
+    arr["map"] = function () {
+      return [];
+    };
+    try {
+      let thrown: VulnerabilityError | undefined;
+      try {
+        d.afterIteration();
+      } catch (e) {
+        thrown = e as VulnerabilityError;
+      }
+      expect(thrown).toBeInstanceOf(VulnerabilityError);
+      expect(thrown?.context["changeType"]).toBe("modified");
+      d.resetIteration();
+      expect(Array.prototype.map).toBe(originalMap);
+    } finally {
+      d.teardown();
+      arr["map"] = originalMap;
+    }
+  });
+
+  it("detects and restores a deleted built-in method", () => {
+    const d = new PrototypePollutionDetector();
+    const arr = Array.prototype as unknown as Record<string, unknown>;
+    const originalPush = Array.prototype.push;
+    d.setup();
+    d.beforeIteration();
+    delete arr["push"];
+    // Capture results while `push` is deleted, but restore it before running
+    // any `expect(...)` - assertions may use `Array.prototype.push` internally,
+    // and only the detector calls (which do not push) run in the guarded window.
+    let thrown: VulnerabilityError | undefined;
+    let restoredPush: unknown;
+    try {
+      try {
+        d.afterIteration();
+      } catch (e) {
+        thrown = e as VulnerabilityError;
+      }
+      d.resetIteration();
+      restoredPush = Array.prototype.push;
+    } finally {
+      d.teardown();
+      arr["push"] = originalPush;
+    }
+    expect(thrown).toBeInstanceOf(VulnerabilityError);
+    expect(thrown?.context["changeType"]).toBe("deleted");
+    expect(restoredPush).toBe(originalPush);
+  });
+
+  it("detects and restores a replaced symbol-keyed function", () => {
+    // A custom symbol-keyed method installed as baseline, then replaced. We
+    // avoid replacing a real built-in symbol method (e.g. Symbol.iterator),
+    // since that would sabotage the detector's own array iteration.
+    const sym = Symbol("customMethod");
+    const proto = Object.prototype as unknown as Record<symbol, () => unknown>;
+    const original = function original(): void {};
+    Object.defineProperty(Object.prototype, sym, {
+      value: original,
+      writable: true,
+      configurable: true,
+      enumerable: false,
+    });
+    const d = new PrototypePollutionDetector();
+    d.setup();
+    d.beforeIteration(); // captures sym -> original into the pristine table
+    proto[sym] = function replacement(): void {};
+    try {
+      let thrown: VulnerabilityError | undefined;
+      try {
+        d.afterIteration();
+      } catch (e) {
+        thrown = e as VulnerabilityError;
+      }
+      expect(thrown).toBeInstanceOf(VulnerabilityError);
+      expect(thrown?.context["changeType"]).toBe("modified");
+      d.resetIteration();
+      expect(proto[sym]).toBe(original);
+    } finally {
+      d.teardown();
+      delete proto[sym];
+    }
+  });
+
+  it("does not re-baseline on a later beforeIteration (captured latch)", () => {
+    const d = new PrototypePollutionDetector();
+    d.setup();
+    d.beforeIteration(); // captures the pristine table
+    d.afterIteration(); // clean
+    // A mutation introduced AFTER the pristine capture must still be a finding
+    // on the next iteration - beforeIteration must not re-baseline.
+    (Object.prototype as Record<string, unknown>)["latched"] = () => {};
+    d.beforeIteration();
+    try {
+      let thrown: VulnerabilityError | undefined;
+      try {
+        d.afterIteration();
+      } catch (e) {
+        thrown = e as VulnerabilityError;
+      }
+      expect(thrown).toBeInstanceOf(VulnerabilityError);
+      expect(thrown?.context["changeType"]).toBe("added");
+    } finally {
+      d.resetIteration();
+      d.teardown();
+      delete (Object.prototype as Record<string, unknown>)["latched"];
+    }
   });
 });
 
