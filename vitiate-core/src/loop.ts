@@ -657,7 +657,8 @@ export async function runFuzzLoop(
   const testDataCorpus = loadTestDataCorpus(relativeTestFilePath, testName);
   const cachedCorpus = loadCachedCorpus(relativeTestFilePath, testName);
   const extraCorpus = corpusDirs ? loadCorpusFromDirs(corpusDirs) : [];
-  for (const seed of [...testDataCorpus, ...cachedCorpus, ...extraCorpus]) {
+  const combinedCorpus = [...testDataCorpus, ...cachedCorpus, ...extraCorpus];
+  for (const seed of combinedCorpus) {
     fuzzer.addSeed(seed);
   }
 
@@ -694,9 +695,15 @@ export async function runFuzzLoop(
   startReporting(reporter, () => fuzzer.stats);
 
   const startTime = now();
-  // `|| Infinity`: 0 means "unlimited" for both fields, matching libFuzzer convention.
+  // `|| Infinity`: a 0 (or unset) value means "unlimited" for both fields.
+  // Note the CLI routes an explicit `-runs=0` to `replayOnly` (below) rather
+  // than here, so `fuzzExecs === 0` only reaches this line via non-CLI/per-test
+  // options, where "0 = unlimited" still holds.
   const maxTime = options.fuzzTimeMs || Infinity;
   const maxRuns = options.fuzzExecs || Infinity;
+  // Replay-only mode (libFuzzer `-runs=0`): replay the loaded corpus once and
+  // exit, skipping the mutation loop entirely.
+  const replayOnly = options.replayOnly === true;
   // Absolute wall-clock deadline for the whole campaign. Propagated into
   // calibration, stages, batching, and minimization so those phases cannot
   // overshoot the time budget (an in-flight target execution is still only
@@ -948,7 +955,42 @@ export async function runFuzzLoop(
     // subsequent iterations.
     let isAsyncTarget = false;
     let shouldStop = false;
-    if (!interrupted && iteration < maxRuns && !pastDeadline()) {
+
+    if (replayOnly) {
+      // libFuzzer `-runs=0`: replay each loaded corpus entry once (no
+      // mutation), reporting the first crash, then exit. The corpus was
+      // already seeded above; here we execute the entries directly so a
+      // crashing input yields a non-zero exit without any fuzzing.
+      for (const entry of combinedCorpus) {
+        if (interrupted || pastDeadline()) break;
+        const input = Buffer.from(entry);
+        fuzzer.stashInput(input);
+        beginIteration(detectorManager);
+        const replayResult = await executeTarget(
+          target,
+          input,
+          fuzzer,
+          timeoutMs,
+        );
+        let { exitKind, error: caughtError } = replayResult;
+        const detectorError = detectorManager.endIteration(
+          exitKind === ExitKind.Ok,
+          replayResult.result,
+        );
+        if (detectorError) {
+          exitKind = ExitKind.Crash;
+          caughtError = detectorError;
+        }
+        iteration++;
+        if (
+          exitKind !== ExitKind.Ok &&
+          handleCrash(input, exitKind, caughtError)
+        ) {
+          break;
+        }
+        await yieldToEventLoop();
+      }
+    } else if (!interrupted && iteration < maxRuns && !pastDeadline()) {
       const rawInput = getNextInputOrThrow(fuzzer);
       const input = Buffer.from(rawInput);
       fuzzer.stashInput(input);
@@ -1007,7 +1049,9 @@ export async function runFuzzLoop(
       }
     }
 
-    if (isAsyncTarget) {
+    if (replayOnly) {
+      // Replay-only pass already completed above; skip the mutation loop.
+    } else if (isAsyncTarget) {
       // Per-iteration fallback for async targets.
       while (!interrupted && !shouldStop) {
         if (iteration >= maxRuns) break;

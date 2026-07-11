@@ -11,9 +11,11 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { parseSync } from "@optique/core/parser";
 import {
   parseArgs,
   parseDetectorsFlag,
+  reproduceParser,
   main,
   supervisorExitCode,
 } from "./cli.js";
@@ -162,6 +164,66 @@ describe("parseArgs", () => {
       expect(() => parseArgs(argv("./test.ts", "-bogus=1"))).toThrow();
     });
 
+    it("accepts the parsed-but-ignored libFuzzer compat flags without throwing or warning", () => {
+      const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      try {
+        const result = parseArgs(
+          argv(
+            "./test.ts",
+            "-rss_limit_mb=2048",
+            "-print_final_stats=1",
+            "-close_fd_mask=0",
+            "-reload=1",
+          ),
+        );
+        expect(result.testFile).toBe("./test.ts");
+        // These flags are ignored; at their no-op values nothing warns.
+        expect(stderrSpy).not.toHaveBeenCalled();
+      } finally {
+        stderrSpy.mockRestore();
+      }
+    });
+
+    it("honors -error_exitcode into CliArgs (no warning - it is applied, not ignored)", () => {
+      const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      try {
+        const result = parseArgs(argv("./test.ts", "-error_exitcode=99"));
+        expect(result.errorExitcode).toBe(99);
+        expect(stderrSpy).not.toHaveBeenCalled();
+      } finally {
+        stderrSpy.mockRestore();
+      }
+    });
+
+    it("honors -timeout_exitcode into CliArgs (no warning - it is applied, not ignored)", () => {
+      const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      try {
+        const result = parseArgs(argv("./test.ts", "-timeout_exitcode=42"));
+        expect(result.timeoutExitcode).toBe(42);
+        expect(stderrSpy).not.toHaveBeenCalled();
+      } finally {
+        stderrSpy.mockRestore();
+      }
+    });
+
+    it("leaves errorExitcode/timeoutExitcode undefined when the flags are absent", () => {
+      const result = parseArgs(argv("./test.ts"));
+      expect(result.errorExitcode).toBeUndefined();
+      expect(result.timeoutExitcode).toBeUndefined();
+    });
+
+    it("warns when -close_fd_mask is non-zero", () => {
+      const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      try {
+        parseArgs(argv("./test.ts", "-close_fd_mask=3"));
+        expect(stderrSpy).toHaveBeenCalledWith(
+          expect.stringContaining("-close_fd_mask=3 is ignored"),
+        );
+      } finally {
+        stderrSpy.mockRestore();
+      }
+    });
+
     it("combines libFuzzer flags with supported flags", () => {
       const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
       try {
@@ -231,6 +293,38 @@ describe("-test flag", () => {
   });
 });
 
+describe("reproduce subcommand parser", () => {
+  it("parses the input file positional argument", () => {
+    const result = parseSync(reproduceParser, ["crash.bin"]);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.value.subcommand).toBe("reproduce");
+      expect(result.value.inputFile).toBe("crash.bin");
+      expect(result.value.testName).toBeUndefined();
+      expect(result.value.timeout).toBeUndefined();
+    }
+  });
+
+  it("parses -test and -timeout flags", () => {
+    const result = parseSync(reproduceParser, [
+      "crash.bin",
+      "-test=parse-url",
+      "-timeout=5",
+    ]);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.value.inputFile).toBe("crash.bin");
+      expect(result.value.testName).toBe("parse-url");
+      expect(result.value.timeout).toBe(5);
+    }
+  });
+
+  it("requires the input file argument", () => {
+    const result = parseSync(reproduceParser, []);
+    expect(result.success).toBe(false);
+  });
+});
+
 describe("minimization config flags", () => {
   it("parses -minimize_budget flag", () => {
     const result = parseArgs(argv("./test.ts", "-minimize_budget=5000"));
@@ -255,9 +349,24 @@ describe("zero-value CLI flags (0 = unlimited convention)", () => {
     expect(result.fuzzOptions.timeoutMs).toBe(0);
   });
 
-  it("-runs=0 converts to runs: 0", () => {
+  it("-runs=0 maps to replay-only mode (not unlimited)", () => {
+    // libFuzzer semantics: an explicit -runs=0 replays the corpus once and
+    // exits, so fuzzExecs stays unset and replayOnly is signalled instead.
     const result = parseArgs(argv("./test.ts", "-runs=0"));
-    expect(result.fuzzOptions.fuzzExecs).toBe(0);
+    expect(result.fuzzOptions.fuzzExecs).toBeUndefined();
+    expect(result.fuzzOptions.replayOnly).toBe(true);
+  });
+
+  it("-runs omitted leaves fuzzExecs and replayOnly unset (unlimited)", () => {
+    const result = parseArgs(argv("./test.ts"));
+    expect(result.fuzzOptions.fuzzExecs).toBeUndefined();
+    expect(result.fuzzOptions.replayOnly).toBeUndefined();
+  });
+
+  it("-runs=100 sets fuzzExecs and leaves replayOnly unset", () => {
+    const result = parseArgs(argv("./test.ts", "-runs=100"));
+    expect(result.fuzzOptions.fuzzExecs).toBe(100);
+    expect(result.fuzzOptions.replayOnly).toBeUndefined();
   });
 
   it("-max_total_time=0 converts to fuzzTimeMs: 0", () => {
@@ -1097,9 +1206,31 @@ describe("supervisorExitCode", () => {
     expect(supervisorExitCode({ crashed: false, exitCode: 0 })).toBe(0);
   });
 
-  it("maps a found crash to 1 (even without an exit code)", () => {
-    expect(supervisorExitCode({ crashed: true, signal: "SIGSEGV" })).toBe(1);
-    expect(supervisorExitCode({ crashed: true, exitCode: 134 })).toBe(1);
+  it("maps a found crash to libFuzzer's error_exitcode (77)", () => {
+    expect(supervisorExitCode({ crashed: true, signal: "SIGSEGV" })).toBe(77);
+    expect(supervisorExitCode({ crashed: true, exitCode: 134 })).toBe(77);
+  });
+
+  it("maps a timeout finding to libFuzzer's timeout_exitcode (70)", () => {
+    // A timeout sets both timedOut and crashed; timedOut wins.
+    expect(
+      supervisorExitCode({ crashed: true, timedOut: true, exitCode: 1 }),
+    ).toBe(70);
+  });
+
+  it("honors -error_exitcode override for a crash", () => {
+    expect(
+      supervisorExitCode({ crashed: true, exitCode: 1 }, { errorExitcode: 99 }),
+    ).toBe(99);
+  });
+
+  it("honors -timeout_exitcode override for a timeout", () => {
+    expect(
+      supervisorExitCode(
+        { crashed: true, timedOut: true, exitCode: 1 },
+        { timeoutExitcode: 5 },
+      ),
+    ).toBe(5);
   });
 
   it("maps an OOM via exit code 137 to 137", () => {
@@ -1146,13 +1277,13 @@ describe("supervisorExitCode", () => {
     ).toBe(78);
   });
 
-  it("prefers crash (1) over other flags if both were somehow set", () => {
-    // `crashed` is checked first; defends against an unexpected result shape.
+  it("prefers timeout (70) over crash when both timedOut and crashed are set", () => {
+    // timedOut is checked first; a timeout carries crashed:true too.
     const result: SupervisorResult = {
       crashed: true,
-      oomKilled: true,
-      exitCode: 137,
+      timedOut: true,
+      exitCode: 1,
     };
-    expect(supervisorExitCode(result)).toBe(1);
+    expect(supervisorExitCode(result)).toBe(70);
   });
 });

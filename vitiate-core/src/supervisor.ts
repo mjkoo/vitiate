@@ -100,6 +100,14 @@ export interface SupervisorResult {
    */
   engineError?: boolean;
   /**
+   * True when the finding is a timeout rather than an ordinary crash - either
+   * a soft timeout (child exited 1 having written only `timeout-*` artifacts)
+   * or a hard watchdog timeout that exhausted respawns. Both still set
+   * {@link crashed}; this flag lets the exit-code mapping distinguish them so a
+   * timeout can surface libFuzzer's `timeout_exitcode` instead of `error_exitcode`.
+   */
+  timedOut?: boolean;
+  /**
    * True when the child was killed by SIGKILL (exit code 137). This is
    * ambiguous between an environmental kill (OOM-killer, container/cgroup
    * memory limit, k8s eviction, CI timeout) and a possible memory-exhaustion
@@ -258,7 +266,12 @@ export async function runSupervisor(
       process.stderr.write(
         `vitiate: respawn limit (${maxRespawns}) exceeded, giving up\n`,
       );
-      return { ...identity, crashed: true, crashArtifactPath };
+      return {
+        ...identity,
+        crashed: true,
+        crashArtifactPath,
+        timedOut: kind === "timeout",
+      };
     }
 
     respawnCount++;
@@ -363,13 +376,21 @@ export async function runSupervisor(
         // Check whether the child actually wrote new crash artifacts.
         // Exit code 1 without new artifacts typically means a vitest
         // infrastructure failure (worker timeout, module resolution, etc.).
-        const hasNewArtifacts = listCrashArtifacts().some(
+        const newArtifacts = listCrashArtifacts().filter(
           (f) => !preExistingCrashes.has(f),
         );
+        // A soft timeout (in-loop watchdog / async idle) also exits the child
+        // with code 1, but writes a `timeout-*` artifact rather than `crash-*`.
+        // When the only new artifacts are timeouts, classify the finding as a
+        // timeout so the exit-code mapping can emit timeout_exitcode.
+        const timedOut =
+          newArtifacts.length > 0 &&
+          newArtifacts.every((f) => f.startsWith("timeout-"));
         return {
           crashed: true,
           exitCode: 1,
-          newCrashArtifacts: hasNewArtifacts,
+          newCrashArtifacts: newArtifacts.length > 0,
+          timedOut,
         };
       }
 

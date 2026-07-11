@@ -72,6 +72,10 @@ export interface CliArgs {
   merge: boolean;
   fuzzOptions: FuzzOptions;
   forkExplicit?: boolean;
+  /** libFuzzer `-error_exitcode` override for the final crash exit code. */
+  errorExitcode?: number;
+  /** libFuzzer `-timeout_exitcode` override for the final timeout exit code. */
+  timeoutExitcode?: number;
 }
 
 export const libfuzzerParser = object({
@@ -92,7 +96,12 @@ export const libfuzzerParser = object({
   ),
   runs: optional(
     option("-runs", integer({ min: 0 }), {
-      description: [text("Total number of fuzzing iterations (0 = unlimited)")],
+      description: [
+        text(
+          "Number of fuzzing iterations. 0 replays the corpus once and exits; " +
+            "omit for unlimited",
+        ),
+      ],
     }),
   ),
   seed: optional(
@@ -180,6 +189,56 @@ export const libfuzzerParser = object({
     option("-merge", integer({ min: 0 }), {
       description: [
         text("Corpus minimization via set cover (1 = enabled, 0 = disabled)"),
+      ],
+    }),
+  ),
+  // Additional libFuzzer flags accepted for fuzzing-platform compatibility, so
+  // orchestrator invocations do not abort on an unknown flag. The exit-code
+  // flags (-error_exitcode/-timeout_exitcode) are honored (see
+  // supervisorExitCode); the rest are parsed but ignored (see warnUnsupportedFlags).
+  rssLimitMb: optional(
+    option("-rss_limit_mb", integer({ min: 0 }), {
+      description: [
+        text("Memory limit in MB (libFuzzer compat, accepted but ignored)"),
+      ],
+    }),
+  ),
+  timeoutExitcode: optional(
+    option("-timeout_exitcode", integer(), {
+      description: [
+        text("Process exit code when a timeout is found (default 70)"),
+      ],
+    }),
+  ),
+  errorExitcode: optional(
+    option("-error_exitcode", integer(), {
+      description: [
+        text("Process exit code when a crash is found (default 77)"),
+      ],
+    }),
+  ),
+  printFinalStats: optional(
+    option("-print_final_stats", integer({ min: 0 }), {
+      description: [
+        text("Print final statistics (libFuzzer compat, accepted but ignored)"),
+      ],
+    }),
+  ),
+  closeFdMask: optional(
+    option("-close_fd_mask", integer({ min: 0 }), {
+      description: [
+        text(
+          "Close stdout/stderr during execution (libFuzzer compat, accepted but ignored)",
+        ),
+      ],
+    }),
+  ),
+  reload: optional(
+    option("-reload", integer({ min: 0 }), {
+      description: [
+        text(
+          "Corpus reload interval in seconds (libFuzzer compat, accepted but ignored)",
+        ),
       ],
     }),
   ),
@@ -274,6 +333,22 @@ export const optimizeParser = object({
   }),
 });
 
+export const reproduceParser = object({
+  subcommand: constant("reproduce" as const),
+  inputFile: argument(string({ metavar: "FILE" })),
+  // Single-dash spellings match the libfuzzer subcommand for parity.
+  testName: optional(
+    option("-test", string(), {
+      description: [text("Run only the named fuzz test")],
+    }),
+  ),
+  timeout: optional(
+    option("-timeout", integer({ min: 0 }), {
+      description: [text("Per-execution timeout in seconds (0 = disabled)")],
+    }),
+  ),
+});
+
 const initParser = object({
   subcommand: constant("init" as const),
 });
@@ -292,6 +367,15 @@ const cli = or(
     description: [
       text(
         "Runs regression tests via vitest. Unrecognized flags are forwarded to vitest.",
+      ),
+    ],
+  }),
+  command("reproduce", reproduceParser, {
+    brief: [text("Replay a single input file through a fuzz target")],
+    description: [
+      text(
+        "Runs one input byte-file once through the fuzz target; prints the " +
+          "stack trace and exits non-zero on crash, zero on a clean run.",
       ),
     ],
   }),
@@ -321,6 +405,9 @@ const cli = or(
 function warnUnsupportedFlags(
   parsed: InferValue<typeof libfuzzerParser>,
 ): void {
+  // The supervisor spawns a child that re-parses the same args; warn only in
+  // the parent so each advisory is printed once (mirrors warnUnknownVitiateEnvVars).
+  if (isSupervisorChild()) return;
   if (parsed.fork !== undefined && parsed.fork !== 1) {
     if (parsed.fork === 0) {
       process.stderr.write(
@@ -335,6 +422,13 @@ function warnUnsupportedFlags(
   if (parsed.jobs !== undefined && parsed.jobs !== 1) {
     process.stderr.write(
       `vitiate: warning: -jobs=${parsed.jobs} is ignored; vitiate collects crashes continuously in a single process instead of running independent per-crash sessions. Use VITIATE_MAX_CRASHES to limit crash collection.\n`,
+    );
+  }
+  // Note: -error_exitcode / -timeout_exitcode are honored (see supervisorExitCode),
+  // so they are not warned about here.
+  if (parsed.closeFdMask !== undefined && parsed.closeFdMask !== 0) {
+    process.stderr.write(
+      `vitiate: warning: -close_fd_mask=${parsed.closeFdMask} is ignored; vitiate does not suppress target stdout/stderr during execution\n`,
     );
   }
 }
@@ -460,12 +554,19 @@ function toCliArgs(parsed: InferValue<typeof libfuzzerParser>): CliArgs {
     dictPath,
     merge: parsed.merge !== undefined && parsed.merge !== 0,
     forkExplicit: parsed.fork !== undefined ? true : undefined,
+    // libFuzzer exit-code overrides, honored by the parent supervisor.
+    errorExitcode: parsed.errorExitcode,
+    timeoutExitcode: parsed.timeoutExitcode,
     // CLI flags use seconds (matching libFuzzer convention).
     // Internal FuzzOptions use milliseconds. All conversions happen here.
     fuzzOptions: {
       maxLen,
       timeoutMs: timeout != null ? timeout * 1000 : undefined,
-      fuzzExecs: runs,
+      // libFuzzer semantics: an explicit `-runs=0` means "replay the corpus
+      // once and exit" (not unlimited). A positive value caps main-loop
+      // iterations; omitting the flag leaves fuzzExecs unset (unlimited).
+      fuzzExecs: runs === 0 ? undefined : runs,
+      replayOnly: runs === 0 ? true : undefined,
       seed,
       fuzzTimeMs: maxTotalTime != null ? maxTotalTime * 1000 : undefined,
       minimizeBudget,
@@ -493,6 +594,7 @@ async function runParentMode(
   maxInputLen: number,
   testName?: string,
   artifactPrefix?: string,
+  exitCodeOverrides?: { errorExitcode?: number; timeoutExitcode?: number },
 ): Promise<void> {
   const shmem = ShmemHandle.allocate(maxInputLen);
   const relativeTestFilePath = path.relative(
@@ -521,22 +623,46 @@ async function runParentMode(
       }),
   });
 
-  process.exitCode = supervisorExitCode(result);
+  process.exitCode = supervisorExitCode(result, exitCodeOverrides);
 }
 
 /**
- * Map a {@link SupervisorResult} to a process exit code for CLI parent modes.
+ * Default process exit code when a crash is found. Matches libFuzzer's
+ * `error_exitcode` default so vitiate is drop-in compatible with fuzzing
+ * platforms out of the box; overridable via `-error_exitcode`.
+ */
+export const DEFAULT_ERROR_EXITCODE = 77;
+
+/**
+ * Default process exit code when the finding is a timeout. Matches libFuzzer's
+ * `timeout_exitcode` default; overridable via `-timeout_exitcode`.
+ */
+export const DEFAULT_TIMEOUT_EXITCODE = 70;
+
+/**
+ * Map a {@link SupervisorResult} to a process exit code for CLI parent modes,
+ * following libFuzzer's exit-code conventions.
  *
- * Distinguishes a found crash (1) from infrastructure failures so orchestrators
- * and CI do not mistake an OOM/eviction or a startup failure for either a clean
- * run or a confirmed crash:
- * - crash found -> 1
- * - SIGKILL / OOM -> 137 (even when reported as a signal, where exitCode is unset)
+ * Distinguishes a crash, a timeout, and infrastructure failures so orchestrators
+ * and CI do not mistake an OOM/eviction or a startup failure for a confirmed
+ * finding:
+ * - timeout -> `timeout_exitcode` (default 70)
+ * - crash -> `error_exitcode` (default 77)
+ * - SIGKILL / OOM -> 137 (external infra kill, even when reported as a signal)
  * - startup failure / engine panic -> the child's own non-zero exit code
  * - otherwise -> the child's exit code (0 on clean completion)
+ *
+ * :param overrides: exit codes from `-error_exitcode`/`-timeout_exitcode`.
  */
-export function supervisorExitCode(result: SupervisorResult): number {
-  if (result.crashed) return 1;
+export function supervisorExitCode(
+  result: SupervisorResult,
+  overrides: { errorExitcode?: number; timeoutExitcode?: number } = {},
+): number {
+  const errorCode = overrides.errorExitcode ?? DEFAULT_ERROR_EXITCODE;
+  const timeoutCode = overrides.timeoutExitcode ?? DEFAULT_TIMEOUT_EXITCODE;
+  // A timeout sets both `timedOut` and `crashed`, so check it first.
+  if (result.timedOut) return timeoutCode;
+  if (result.crashed) return errorCode;
   if (result.oomKilled) return 137;
   if (result.startupFailure || result.engineError) return result.exitCode ?? 1;
   return result.exitCode ?? 0;
@@ -551,6 +677,7 @@ async function runMergeParentMode(
   corpusDirs: readonly string[],
   maxInputLen: number,
   testName?: string,
+  exitCodeOverrides?: { errorExitcode?: number; timeoutExitcode?: number },
 ): Promise<void> {
   if (corpusDirs.length === 0) {
     process.stderr.write(
@@ -595,7 +722,7 @@ async function runMergeParentMode(
     // Ignore - may not exist if merge had no entries
   }
 
-  process.exitCode = supervisorExitCode(result);
+  process.exitCode = supervisorExitCode(result, exitCodeOverrides);
 }
 
 /**
@@ -707,6 +834,8 @@ async function runLibfuzzerSubcommand(args: readonly string[]): Promise<void> {
     merge,
     fuzzOptions,
     forkExplicit,
+    errorExitcode,
+    timeoutExitcode,
   } = toCliArgs(
     runSync(libfuzzerParser, {
       programName: "vitiate libfuzzer",
@@ -736,7 +865,10 @@ async function runLibfuzzerSubcommand(args: readonly string[]): Promise<void> {
       await runMergeChildMode(testFile, corpusDirs, fuzzOptions, testName);
     } else {
       const maxInputLen = fuzzOptions.maxLen ?? DEFAULT_MAX_INPUT_LEN;
-      await runMergeParentMode(testFile, corpusDirs, maxInputLen, testName);
+      await runMergeParentMode(testFile, corpusDirs, maxInputLen, testName, {
+        errorExitcode,
+        timeoutExitcode,
+      });
     }
   } else if (isSupervisorChild()) {
     // Child mode: shmem is already set up by the parent
@@ -752,7 +884,10 @@ async function runLibfuzzerSubcommand(args: readonly string[]): Promise<void> {
   } else {
     // Parent mode: allocate shmem, spawn child, supervise
     const maxInputLen = fuzzOptions.maxLen ?? DEFAULT_MAX_INPUT_LEN;
-    await runParentMode(testFile, maxInputLen, testName, artifactPrefix);
+    await runParentMode(testFile, maxInputLen, testName, artifactPrefix, {
+      errorExitcode,
+      timeoutExitcode,
+    });
   }
 }
 
@@ -785,9 +920,16 @@ function spawnVitestWrapper(
 }
 
 /**
- * init subcommand: discover fuzz tests, create seed directories, manage .gitignore.
+ * Discover all `fuzz()` tests in the project by globbing `*.fuzz.*` files and
+ * collecting their fully-qualified test names via vitest.
+ *
+ * :returns: the list of discovered `{ file, name }` pairs (`file` relative to
+ *   the project root), or `null` if vitest is not installed (an error is
+ *   printed to stderr in that case). An empty array means no fuzz tests found.
  */
-async function runInitSubcommand(): Promise<void> {
+async function discoverFuzzTests(): Promise<
+  { file: string; name: string }[] | null
+> {
   let createVitest: (typeof import("vitest/node"))["createVitest"];
   try {
     ({ createVitest } = await import("vitest/node"));
@@ -795,8 +937,7 @@ async function runInitSubcommand(): Promise<void> {
     process.stderr.write(
       "vitiate: error: vitest is required but not installed. Run `npm install -D vitest` first.\n",
     );
-    process.exitCode = 1;
-    return;
+    return null;
   }
 
   const vitest = await createVitest(
@@ -811,75 +952,79 @@ async function runInitSubcommand(): Promise<void> {
 
   try {
     const specs = await vitest.globTestSpecifications();
-    if (specs.length === 0) {
-      process.stdout.write("No fuzz test files (*.fuzz.*) found.\n");
-      return;
-    }
+    if (specs.length === 0) return [];
 
     // Collect test specifications to discover test names
     await vitest.collectTests(specs);
 
     const projectRoot = getProjectRoot();
-    const tests: {
-      file: string;
-      name: string;
-      hashDir: string;
-      seedPath: string;
-    }[] = [];
-
+    const tests: { file: string; name: string }[] = [];
     for (const module of vitest.state.getTestModules()) {
       const filePath = module.moduleId;
       if (!FUZZ_FILE_SUFFIX_RE.test(filePath)) continue;
       const relativeFile = path.relative(projectRoot, filePath);
-
       for (const testCase of module.children.allTests()) {
-        const testName = testCase.fullName;
-        const hashDir = hashTestPath(relativeFile, testName);
-        const testDataDir = getTestDataDir(relativeFile, testName);
-        const seedPath = path.join(testDataDir, "seeds");
-        tests.push({ file: relativeFile, name: testName, hashDir, seedPath });
-        mkdirSync(seedPath, { recursive: true });
+        tests.push({ file: relativeFile, name: testCase.fullName });
       }
     }
-
-    if (tests.length === 0) {
-      process.stdout.write("No fuzz() tests found in fuzz test files.\n");
-      return;
-    }
-
-    // Manage .gitignore
-    const gitignorePath = path.join(projectRoot, ".gitignore");
-    const gitignoreEntry = ".vitiate/corpus/";
-    if (existsSync(gitignorePath)) {
-      const content = readFileSync(gitignorePath, "utf-8");
-      if (!content.split("\n").some((line) => line.trim() === gitignoreEntry)) {
-        appendFileSync(gitignorePath, `\n${gitignoreEntry}\n`);
-      }
-    } else {
-      writeFileSync(gitignorePath, `${gitignoreEntry}\n`);
-    }
-
-    // Print manifest
-    process.stdout.write("\nDiscovered fuzz tests:\n\n");
-    const fileWidth = Math.max(4, ...tests.map((t) => t.file.length));
-    const nameWidth = Math.max(4, ...tests.map((t) => t.name.length));
-    process.stdout.write(
-      `${"File".padEnd(fileWidth)}  ${"Test".padEnd(nameWidth)}  Hash Directory\n`,
-    );
-    process.stdout.write(
-      `${"-".repeat(fileWidth)}  ${"-".repeat(nameWidth)}  ${"-".repeat(32)}\n`,
-    );
-    for (const t of tests) {
-      process.stdout.write(
-        `${t.file.padEnd(fileWidth)}  ${t.name.padEnd(nameWidth)}  ${t.hashDir}\n`,
-      );
-    }
-    process.stdout.write(
-      `\n${tests.length} test(s) found. Seed directories created.\n`,
-    );
+    return tests;
   } finally {
     await vitest.close();
   }
+}
+
+/**
+ * init subcommand: discover fuzz tests, create seed directories, manage .gitignore.
+ */
+async function runInitSubcommand(): Promise<void> {
+  const discovered = await discoverFuzzTests();
+  if (discovered === null) {
+    process.exitCode = 1;
+    return;
+  }
+  if (discovered.length === 0) {
+    process.stdout.write("No fuzz tests (*.fuzz.*) found.\n");
+    return;
+  }
+
+  const projectRoot = getProjectRoot();
+  const tests = discovered.map(({ file, name }) => {
+    const hashDir = hashTestPath(file, name);
+    const seedPath = path.join(getTestDataDir(file, name), "seeds");
+    mkdirSync(seedPath, { recursive: true });
+    return { file, name, hashDir, seedPath };
+  });
+
+  // Manage .gitignore
+  const gitignorePath = path.join(projectRoot, ".gitignore");
+  const gitignoreEntry = ".vitiate/corpus/";
+  if (existsSync(gitignorePath)) {
+    const content = readFileSync(gitignorePath, "utf-8");
+    if (!content.split("\n").some((line) => line.trim() === gitignoreEntry)) {
+      appendFileSync(gitignorePath, `\n${gitignoreEntry}\n`);
+    }
+  } else {
+    writeFileSync(gitignorePath, `${gitignoreEntry}\n`);
+  }
+
+  // Print manifest
+  process.stdout.write("\nDiscovered fuzz tests:\n\n");
+  const fileWidth = Math.max(4, ...tests.map((t) => t.file.length));
+  const nameWidth = Math.max(4, ...tests.map((t) => t.name.length));
+  process.stdout.write(
+    `${"File".padEnd(fileWidth)}  ${"Test".padEnd(nameWidth)}  Hash Directory\n`,
+  );
+  process.stdout.write(
+    `${"-".repeat(fileWidth)}  ${"-".repeat(nameWidth)}  ${"-".repeat(32)}\n`,
+  );
+  for (const t of tests) {
+    process.stdout.write(
+      `${t.file.padEnd(fileWidth)}  ${t.name.padEnd(nameWidth)}  ${t.hashDir}\n`,
+    );
+  }
+  process.stdout.write(
+    `\n${tests.length} test(s) found. Seed directories created.\n`,
+  );
 }
 
 /**
@@ -937,6 +1082,97 @@ function runRegressionSubcommand(
 }
 
 /**
+ * Handle the reproduce subcommand: replay a single input file once through a
+ * fuzz target and exit with the target's status (0 clean, non-zero on crash).
+ *
+ * Runs through vitest (single process, no supervisor/shmem) because the fuzz
+ * target is only reachable inside the `fuzz()` test closure. The input path is
+ * handed to the worker via `VITIATE_CLI_IPC` and replayed by the regression
+ * path (see `getReproduceInputFile` in fuzz.ts).
+ */
+async function runReproduceSubcommand(
+  parsed: InferValue<typeof reproduceParser>,
+): Promise<void> {
+  const inputPath = path.resolve(parsed.inputFile);
+  if (!existsSync(inputPath)) {
+    process.stderr.write(
+      `vitiate: error: input file not found: ${parsed.inputFile}\n`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  // Resolve exactly one target test.
+  const discovered = await discoverFuzzTests();
+  if (discovered === null) {
+    process.exitCode = 1;
+    return;
+  }
+  const matches =
+    parsed.testName !== undefined
+      ? discovered.filter((t) => t.name === parsed.testName)
+      : discovered;
+
+  if (matches.length === 0) {
+    const suffix =
+      parsed.testName !== undefined ? ` named "${parsed.testName}"` : "";
+    process.stderr.write(`vitiate: error: no fuzz test found${suffix}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  if (matches.length > 1) {
+    process.stderr.write(
+      "vitiate: error: multiple fuzz tests found; disambiguate with -test <name>:\n",
+    );
+    for (const t of matches) {
+      process.stderr.write(`  ${t.file} :: ${t.name}\n`);
+    }
+    process.exitCode = 1;
+    return;
+  }
+
+  const target = matches[0]!;
+
+  let vitestCli: string;
+  try {
+    vitestCli = resolveVitestCli();
+  } catch {
+    process.stderr.write(
+      "vitiate: error: vitest is required but not installed. Run `npm install -D vitest` first.\n",
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  const options: FuzzOptions = {};
+  if (parsed.timeout !== undefined) {
+    // CLI flags use seconds (libFuzzer convention); FuzzOptions use ms.
+    options.timeoutMs = parsed.timeout * 1000;
+  }
+
+  const env: Record<string, string> = {
+    ...process.env,
+    VITIATE_CLI_IPC: JSON.stringify({ reproduceInputFile: inputPath }),
+    ...buildOptionsEnv(options),
+  };
+
+  const targetFilePath = path.join(getProjectRoot(), target.file);
+  const testNamePattern = `^${escapeStringRegexp(target.name)}$`;
+  const result = spawnSync(
+    process.execPath,
+    [vitestCli, "run", targetFilePath, "--test-name-pattern", testNamePattern],
+    { env, stdio: "inherit" },
+  );
+
+  // Match libFuzzer's single-input reproduce contract: a clean replay exits 0,
+  // and any reproduced failure (the one input crashed / tripped a detector /
+  // timed out) exits with the crash code. Since exactly one input runs through
+  // one test, a non-zero vitest status is the reproduced bug; we do not try to
+  // separate a timeout here (that distinction lives in the libfuzzer supervisor).
+  process.exitCode = result.status === 0 ? 0 : DEFAULT_ERROR_EXITCODE;
+}
+
+/**
  * Handle the optimize subcommand.
  */
 function runOptimizeSubcommand(
@@ -977,6 +1213,9 @@ export async function main(): Promise<void> {
       return;
     case "regression":
       runRegressionSubcommand(result);
+      return;
+    case "reproduce":
+      await runReproduceSubcommand(result);
       return;
     case "optimize":
       runOptimizeSubcommand(result);

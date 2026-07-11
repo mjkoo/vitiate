@@ -2,6 +2,7 @@
  * fuzz() test registrar - like Vitest's bench() but for fuzz testing.
  */
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { isMainThread } from "node:worker_threads";
 import { test } from "vitest";
@@ -19,6 +20,7 @@ import {
   getArtifactPrefix,
   getCorpusDirs,
   getMergeControlFile,
+  getReproduceInputFile,
   getCliOptions,
   getCliIpc,
   getProjectRoot,
@@ -509,19 +511,16 @@ function registerFuzzTest(
     // watchdog terminates via the V8 isolate cached at first construction,
     // so it is only safe on a process main thread (forks pool, the vitest
     // default) - under pool:'threads' fall back to unprotected replay.
-    const timeoutMs = options?.timeoutMs;
+    // Merge CLI options (env-based) so the libfuzzer-style `-timeout` flag,
+    // passed by the `reproduce` subcommand via VITIATE_OPTIONS, reaches the
+    // replay watchdog. Per-test options still apply when no CLI option is set.
+    const timeoutMs = { ...options, ...getCachedCliOptions() }.timeoutMs;
     const useWatchdog =
       timeoutMs !== undefined && timeoutMs > 0 && isMainThread;
     register(
       name,
       async ({ task }) => {
         const relativeTestFilePath = getRelativeTestFilePath(task);
-        const extraDirs = getCorpusDirs();
-        const corpus: CorpusEntryWithPath[] = [
-          ...loadTestDataCorpusWithPaths(relativeTestFilePath, name),
-          ...loadCachedCorpusWithPaths(relativeTestFilePath, name),
-          ...(extraDirs ? loadCorpusDirsWithPaths(extraDirs) : []),
-        ];
 
         // Install detector hooks, reconfiguring if the user specified
         // per-test detector options that differ from setup.ts defaults.
@@ -535,6 +534,30 @@ function registerFuzzTest(
         );
 
         try {
+          // `reproduce` subcommand: replay exactly one input file (the
+          // absolute path arrives via CliIpc), skipping corpus loading. A
+          // crash/detector-finding/timeout throws and vitest prints the
+          // stack; a clean run passes.
+          const reproduceFile = getReproduceInputFile();
+          if (reproduceFile !== undefined) {
+            await replayCorpusEntry(
+              target,
+              readFileSync(reproduceFile),
+              `input ${reproduceFile}`,
+              detectorManager,
+              replay?.runner ?? null,
+              timeoutMs,
+            );
+            return;
+          }
+
+          const extraDirs = getCorpusDirs();
+          const corpus: CorpusEntryWithPath[] = [
+            ...loadTestDataCorpusWithPaths(relativeTestFilePath, name),
+            ...loadCachedCorpusWithPaths(relativeTestFilePath, name),
+            ...(extraDirs ? loadCorpusDirsWithPaths(extraDirs) : []),
+          ];
+
           if (corpus.length === 0) {
             await replayCorpusEntry(
               target,
