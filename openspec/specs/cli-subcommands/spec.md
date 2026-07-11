@@ -122,7 +122,7 @@ The subcommand SHALL:
 
 1. Resolve the input file to an absolute path; if it does not exist, print an error to stderr and exit with code 1 without running any test.
 2. Discover the project's fuzz tests (globbing `*.fuzz.*` and collecting fully-qualified names). When `-test` is provided, filter to the exactly-matching name. If no test matches, print an error and exit 1; if more than one matches, list the candidate `file :: name` pairs and exit 1.
-3. Spawn `vitest run <testFile> --test-name-pattern ^<name>$` **once** (single process, no supervisor/shmem), passing the absolute input path to the worker via the `reproduceInputFile` field of the `VITIATE_CLI_IPC` JSON blob and the `-timeout` value (converted to ms) via `VITIATE_OPTIONS`. It SHALL NOT set `VITIATE_FUZZ`, `VITIATE_OPTIMIZE`, or `VITIATE_SUPERVISOR`, so the worker takes the regression replay path.
+3. Spawn `vitest run <testFile> --test-name-pattern ^<name>$` **once** (single process, no supervisor/shmem), passing the absolute input path to the worker via the `reproduceInputFile` field of the `VITIATE_CLI_IPC` JSON blob and the `-timeout` value (converted to ms) via `VITIATE_OPTIONS`. When `-timeout` is omitted it SHALL default to libFuzzer's `-timeout` default (1200 seconds) so the replay runs under the watchdog and a hung input is bounded by the watchdog's `_exit` fallback rather than only vitest's `testTimeout`; `-timeout 0` disables the watchdog. It SHALL NOT set `VITIATE_FUZZ`, `VITIATE_OPTIMIZE`, or `VITIATE_SUPERVISOR`, so the worker takes the regression replay path.
 4. Map the spawned vitest status to the final exit code: `0` when vitest succeeds, otherwise the crash exit code (`77`).
 
 When `reproduceInputFile` is present, the worker's regression path SHALL replay exactly that input once via `replayCorpusEntry` (skipping corpus loading), so a crash, detector finding, or timeout throws with the failure's stack trace.
@@ -136,6 +136,16 @@ When `reproduceInputFile` is present, the worker's regression path SHALL replay 
 
 - **WHEN** `npx vitiate reproduce ./ok.bin -test parse-url` is executed AND the input replays cleanly
 - **THEN** the process SHALL exit with code 0
+
+#### Scenario: Default replay timeout when -timeout is omitted
+
+- **WHEN** `npx vitiate reproduce ./input.bin -test parse-url` is executed without `-timeout`
+- **THEN** vitest SHALL be spawned with a `VITIATE_OPTIONS` JSON containing `timeoutMs: 1200000` (libFuzzer's 1200s default) so the replay runs under the watchdog
+
+#### Scenario: Disabling the replay watchdog
+
+- **WHEN** `npx vitiate reproduce ./input.bin -test parse-url -timeout 0` is executed
+- **THEN** vitest SHALL be spawned with a `VITIATE_OPTIONS` JSON containing `timeoutMs: 0`, disabling the watchdog and falling back to vitest's `testTimeout`
 
 #### Scenario: Missing input file
 

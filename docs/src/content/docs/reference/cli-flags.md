@@ -79,7 +79,9 @@ If the project defines more than one fuzz test, disambiguate with `-test`; other
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `-test <name>` | string | - | Run only the named fuzz test (required when the project has multiple fuzz tests) |
-| `-timeout <N>` | integer | - | Per-execution timeout in seconds (0 = disabled) |
+| `-timeout <N>` | integer | `1200` | Per-execution timeout in seconds (0 = disabled) |
+
+The replay runs under the vitiate watchdog by default (1200s, matching libFuzzer's `-timeout` default), so a hung input is bounded by the watchdog's `_exit` fallback and attributed with a `timeout-*` artifact rather than relying on vitest's `testTimeout`. Pass `-timeout 0` to disable the watchdog and fall back to vitest's timeout.
 
 Example: reproduce a crash artifact written by a fuzzing run.
 
