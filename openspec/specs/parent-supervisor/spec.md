@@ -30,7 +30,9 @@ function runSupervisor(options: SupervisorOptions): Promise<SupervisorResult>;
 The caller provides a `spawnChild` function that encapsulates the entry-point-specific spawning logic:
 
 - **CLI:** `spawn(process.execPath, process.argv.slice(1), { env: { VITIATE_SUPERVISOR: "1" } })`
-- **Vitest:** `spawn(process.execPath, [vitestCliPath, "run", testFile, "--test-name-pattern", pattern, "--config", configPath], { env: { VITIATE_SUPERVISOR: "1", VITIATE_FUZZ: "1" } })` where `configPath` is the resolved config file path captured by the plugin's `configResolved` hook. When the config file path is available, the child SHALL always receive the `--config` flag. When the config file path is `undefined` (no config file used), the `--config` flag SHALL be omitted.
+- **Vitest:** `spawn(process.execPath, [vitestCliPath, "run", testFile, "--test-name-pattern", pattern, "--pool=forks", "--config", configPath], { env: { VITIATE_SUPERVISOR: "1", VITIATE_FUZZ: "1" } })` where `configPath` is the resolved config file path captured by the plugin's `configResolved` hook. When the config file path is available, the child SHALL always receive the `--config` flag. When the config file path is `undefined` (no config file used), the `--config` flag SHALL be omitted.
+
+The child vitest SHALL be pinned to the forks pool (via `--pool=forks` in the Vitest spawn, or `pool: "forks"` in the CLI child mode's programmatic vitest config) so the fuzz loop always runs in a forked pool worker process regardless of the user's configured pool. This keeps the process topology the supervisor's recovery protocol assumes deterministic and matches the pool used for replay by the `reproduce` subcommand.
 
 Everything else - wait loop, exit code interpretation, shmem read, artifact write, respawn logic, SIGINT handling - SHALL be shared.
 
@@ -102,9 +104,40 @@ The parent SHALL add zero overhead to the fuzz loop hot path. It SHALL consume n
 - **AND** the parent resets the shmem generation counter
 - **AND** the parent respawns the child to continue the campaign (subject to respawn limit)
 
+### Requirement: Abrupt worker-death detection via shmem stash
+
+The direct child the supervisor waits on is a vitest orchestrator; the fuzz loop, watchdog, and native engine run in the orchestrator's forks-pool worker one process level below. The orchestrator absorbs the worker's death - signal, watchdog `_exit`, or SIGKILL - and reports plain exit code 1, so those events are not observable through the direct child's exit status. The supervisor SHALL therefore detect abrupt worker deaths through the shmem stash:
+
+1. Every input is stashed to shmem before execution (shared-memory-stash capability), and the child SHALL clear the stash on orderly shutdown (the fuzz loop's finally block). A stash that survives the child's exit is a death certificate: the worker died mid-execution.
+2. When the child exits with code 1 and the stash contains a valid input, the supervisor SHALL classify the death via new artifacts: if all new artifacts are `timeout-*` (the watchdog writes its timeout artifact before `_exit`), the finding is a hard timeout; otherwise it is a crash.
+3. The supervisor SHALL then recover the input, write the artifact, reset the generation counter, and respawn - identically to a directly-observed signal death or watchdog `_exit`.
+4. When the child exits with code 1 and the stash is empty, the exit is an in-band finding or an infrastructure failure and SHALL be handled by the existing exit-code-1 protocol.
+
+A worker-level OOM SIGKILL is indistinguishable from a native crash through the orchestrator; it classifies as a crash with the input preserved in the crashes bucket. The `ooms/` diagnosis applies only when the direct child itself is SIGKILLed.
+
+#### Scenario: Absorbed native crash recovered via stash
+
+- **WHEN** the pool worker dies from SIGSEGV mid-execution and the orchestrator exits with code 1
+- **AND** the shmem stash still contains the in-flight input
+- **THEN** the supervisor writes a crash artifact from the stash
+- **AND** resets the generation counter and respawns the child to continue the campaign
+
+#### Scenario: Absorbed hard watchdog timeout recovered via stash
+
+- **WHEN** the watchdog `_exit(77)`s the pool worker after writing a `timeout-*` artifact and the orchestrator exits with code 1
+- **AND** the shmem stash still contains the in-flight input
+- **THEN** the supervisor classifies the finding as a timeout (new artifacts are all `timeout-*`)
+- **AND** recovers the input, resets the generation counter, and respawns; on respawn exhaustion the final exit code is the timeout code (default 70)
+
+#### Scenario: Orderly exit clears the stash
+
+- **WHEN** the fuzz loop completes its campaign (clean completion or in-band findings) and reaches its finally block
+- **THEN** the engine's shutdown clears the shmem stash generation
+- **AND** the supervisor's subsequent exit-code-1 handling takes the in-band path (no stash-based recovery)
+
 ### Requirement: Native crash detection
 
-On Unix, the parent SHALL detect native crashes by checking `WIFSIGNALED(status)` after `waitpid` returns. The signal number SHALL be read from `WTERMSIG(status)`. No signal handlers SHALL be installed in the child process on Unix.
+On Unix, the parent SHALL detect native crashes of its direct child by checking `WIFSIGNALED(status)` after `waitpid` returns. The signal number SHALL be read from `WTERMSIG(status)`. No signal handlers SHALL be installed in the child process on Unix. Native crashes of the orchestrator's pool worker do not surface as direct-child signals and SHALL be detected via the shmem stash (see the abrupt worker-death requirement).
 
 On Windows, the parent SHALL detect crashes by checking the child's exit code against known `NTSTATUS` exception codes (e.g., `0xC0000005` for access violation). The child SHALL install a vectored exception handler via `AddVectoredExceptionHandler` that writes crash metadata to shmem before the process terminates.
 
@@ -171,7 +204,8 @@ The parent SHALL interpret the child's exit status according to this protocol:
 | Child exit status | Meaning | Parent action |
 |---|---|---|
 | Code 0 | Campaign complete (no crash found, or limits reached) | Exit 0 |
-| Code 1 | JS crash found, artifact written by child | Terminate; final exit code is the crash code (`-error_exitcode`, default 77), or the timeout code (`-timeout_exitcode`, default 70) when the new artifact is a `timeout-*` |
+| Code 1, surviving shmem stash | Absorbed abrupt worker death (native crash, or hard timeout when new artifacts are all `timeout-*`) | Read shmem, write artifact, reset generation, respawn (see abrupt worker-death requirement) |
+| Code 1, empty stash | JS crash found, artifact written by child | Terminate; final exit code is the crash code (`-error_exitcode`, default 77), or the timeout code (`-timeout_exitcode`, default 70) when the new artifact is a `timeout-*` |
 | Code 77 | Watchdog `_exit` (timeout), artifact written by watchdog | Read shmem (backup recovery), reset generation, respawn; on respawn exhaustion the final exit code is the timeout code (default 70) |
 | Killed by signal (Unix) / exception exit code (Windows) | Native crash | Read shmem, write artifact, reset generation, respawn |
 

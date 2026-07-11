@@ -7,6 +7,7 @@ export default defineConfig({
       "test/e2e-instrumented.test.ts",
       "test/e2e-fuzz.test.ts",
       "test/e2e-detectors.test.ts",
+      "test/e2e-supervisor-recovery.test.ts",
       "**/node_modules/**",
     ],
   },

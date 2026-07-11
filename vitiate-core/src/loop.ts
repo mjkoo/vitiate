@@ -646,6 +646,14 @@ export async function runFuzzLoop(
   }
 
   const timeoutMs = options.timeoutMs;
+  // Unlike the replay watchdog (`makeReplayRunner` in fuzz.ts), this one is
+  // deliberately NOT gated on `isMainThread`: the fuzz loop runs in a
+  // dedicated supervised child whose abrupt death via the watchdog's `_exit`
+  // fallback IS the recovery protocol (the supervisor recovers the in-flight
+  // input from shmem and respawns). The replay guard exists to protect the
+  // user's own vitest session, which vitiate does not own; here the whole
+  // process tree is vitiate-spawned and disposable, and the child's pool is
+  // pinned to forks so this code runs on a forked worker's main thread.
   const watchdog: Watchdog | null =
     timeoutMs !== undefined && timeoutMs > 0
       ? new Watchdog(timeoutArtifactPrefix, shmemHandle)

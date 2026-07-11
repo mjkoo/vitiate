@@ -79,9 +79,9 @@ If the project defines more than one fuzz test, disambiguate with `-test`; other
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `-test <name>` | string | - | Run only the named fuzz test (required when the project has multiple fuzz tests) |
-| `-timeout <N>` | integer | `1200` | Per-execution timeout in seconds (0 = disabled) |
+| `-timeout <N>` | integer | `30` | Per-execution timeout in seconds (0 = disabled) |
 
-The replay runs under the vitiate watchdog by default (1200s, matching libFuzzer's `-timeout` default), so a hung input is bounded by the watchdog's `_exit` fallback and attributed with a `timeout-*` artifact rather than relying on vitest's `testTimeout`. Pass `-timeout 0` to disable the watchdog and fall back to vitest's timeout.
+The replay runs under the vitiate watchdog by default (30s), so a hung input is bounded by the watchdog's `_exit` fallback rather than relying on vitest's `testTimeout` (which cannot interrupt a synchronous loop). The default is sized for interactive single-input replay, not libFuzzer's batch `-timeout` default (1200s): a synchronous hang is interrupted at ~30s, while an async idle-await hang - which cannot be interrupted mid-await - surfaces at roughly 5x that (the watchdog's extended `_exit` deadline). Pass `-timeout 1200` for libFuzzer parity, or `-timeout 0` to disable the watchdog and fall back to vitest's timeout. The single-input replay is pinned to vitest's `forks` pool (its default) so the watchdog is always available - under `pool: 'threads'` the watchdog is disabled and only vitest's `testTimeout` bounds a hang.
 
 Example: reproduce a crash artifact written by a fuzzing run.
 
@@ -98,6 +98,8 @@ npx vitiate optimize [flags] [-- vitest-args...]
 ```
 
 Sets `VITIATE_OPTIMIZE=1` and spawns `vitest run` filtered to fuzz test files (`*.fuzz.*`). Minimizes the cached corpus via set cover. Unrecognized flags are forwarded to vitest.
+
+The spawn is pinned to vitest's `forks` pool (its default) so the replay watchdog is always available and `--timeout` is honored - under `pool: 'threads'` the watchdog is disabled and only vitest's `testTimeout` bounds a hung entry. Passing an explicit `--pool` in the forwarded vitest args overrides the pin.
 
 ### Flags
 

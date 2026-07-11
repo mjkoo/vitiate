@@ -341,11 +341,11 @@ describe("reproduce subcommand parser", () => {
 });
 
 describe("resolveReproduceTimeoutMs", () => {
-  it("defaults to libFuzzer's -timeout default (1200s) when omitted", () => {
+  it("defaults to the interactive replay timeout (30s) when omitted", () => {
     expect(resolveReproduceTimeoutMs(undefined)).toBe(
       DEFAULT_REPRODUCE_TIMEOUT_SECONDS * 1000,
     );
-    expect(resolveReproduceTimeoutMs(undefined)).toBe(1_200_000);
+    expect(resolveReproduceTimeoutMs(undefined)).toBe(30_000);
   });
 
   it("converts an explicit -timeout from seconds to milliseconds", () => {
@@ -1400,6 +1400,30 @@ describe("regression and optimize subcommand flags", () => {
     const fuzzOptions = JSON.parse(env["VITIATE_OPTIONS"]!);
     // CLI seconds are converted to internal milliseconds.
     expect(fuzzOptions.timeoutMs).toBe(5000);
+  });
+
+  it("optimize pins --pool=forks so the replay watchdog can arm", async () => {
+    process.argv = ["node", "vitiate", "optimize"];
+    mockSpawnSuccess();
+    await main();
+    const mockSpawnSync = vi.mocked(spawnSync);
+    expect(mockSpawnSync).toHaveBeenCalledOnce();
+    const [, args] = mockSpawnSync.mock.calls[0]!;
+    expect(args as string[]).toContain("--pool=forks");
+  });
+
+  it("optimize does not add --pool=forks when the user passes --pool", async () => {
+    // vitest's CLI rejects a repeated --pool, so an explicit user pool must
+    // suppress the pin rather than be overridden by it.
+    process.argv = ["node", "vitiate", "optimize", "--pool=threads"];
+    mockSpawnSuccess();
+    await main();
+    const mockSpawnSync = vi.mocked(spawnSync);
+    expect(mockSpawnSync).toHaveBeenCalledOnce();
+    const [, args] = mockSpawnSync.mock.calls[0]!;
+    const argsList = args as string[];
+    expect(argsList).toContain("--pool=threads");
+    expect(argsList).not.toContain("--pool=forks");
   });
 
   it("optimize --timeout 0 disables the watchdog (timeoutMs 0)", async () => {

@@ -148,7 +148,9 @@ static void* resolve_symbol(const char* name) {
 extern "C" {
 
 // Cache the current V8 isolate pointer and resolve V8 + NAPI symbol addresses.
-// Must be called from the main thread during initialization.
+// Must be called from the JS thread that runs the fuzz loop during
+// initialization: Isolate::GetCurrent() is thread-local, so the calling
+// thread determines which isolate the watchdog terminates.
 // Returns 1 on success, 0 if any symbols are unavailable.
 int vitiate_v8_init() {
     // V8 symbol names differ by platform due to C++ name mangling.

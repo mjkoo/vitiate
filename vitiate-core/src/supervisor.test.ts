@@ -203,6 +203,134 @@ describe("runSupervisor", () => {
     expect(result.newCrashArtifacts).toBe(false);
   });
 
+  it("recovers input and respawns on exit 1 with a surviving stash (absorbed worker crash)", async () => {
+    const dir = makeTmpDir();
+    // Under the forks pool, a pool worker dying abruptly (native crash,
+    // SIGKILL) is absorbed by the vitest orchestrator, which exits 1. The
+    // surviving shmem stash is the death certificate: the child clears it on
+    // orderly shutdown, so a stash outliving the child means it died
+    // mid-execution.
+    const shmem = createMockShmem(Buffer.from("worker-crash-input"));
+    let spawnCount = 0;
+    const testName = "test-absorbed-worker-crash";
+
+    const spy = vi.spyOn(process.stderr, "write");
+
+    const result = await runSupervisor({
+      shmem,
+      relativeTestFilePath: TEST_RELATIVE_PATH,
+      testName,
+      maxRespawns: 2,
+      spawnChild: () => {
+        spawnCount++;
+        return spawn(process.execPath, ["-e", "process.exit(1)"], {
+          stdio: "ignore",
+        });
+      },
+    });
+
+    // One respawn happened before the limit was hit.
+    expect(spawnCount).toBe(2);
+    expect(result.crashed).toBe(true);
+    expect(result.exitCode).toBe(1);
+    expect(result.timedOut).toBeFalsy();
+    expect(result.crashArtifactPath).toBeDefined();
+    expect(existsSync(result.crashArtifactPath!)).toBe(true);
+    expect(readFileSync(result.crashArtifactPath!).toString()).toBe(
+      "worker-crash-input",
+    );
+    const hashDir = hashTestPath(TEST_RELATIVE_PATH, testName);
+    expect(existsSync(path.join(dir, "testdata", hashDir, "crashes"))).toBe(
+      true,
+    );
+    // Generation is reset before each respawned child (and on final exit).
+    expect(shmem.resetGenerationCount).toBe(2);
+    expect(spy).toHaveBeenCalledWith(
+      expect.stringContaining("died abruptly mid-execution"),
+    );
+  });
+
+  it("recovers a real cross-process stash on an absorbed exit 1", async () => {
+    // End-to-end over real shared memory (no mock): the child attaches to
+    // the parent's shmem region via VITIATE_SHMEM, stashes an input, and
+    // dies with plain exit code 1 without clearing the stash - exactly what
+    // an orchestrator-absorbed worker death looks like to the supervisor.
+    makeTmpDir();
+    const { ShmemHandle } = await import("@vitiate/engine");
+    const shmem = ShmemHandle.allocate(256);
+    const testName = "test-real-shmem-absorbed";
+
+    const result = await runSupervisor({
+      shmem,
+      relativeTestFilePath: TEST_RELATIVE_PATH,
+      testName,
+      maxRespawns: 1,
+      spawnChild: () =>
+        spawn(
+          process.execPath,
+          [
+            "-e",
+            `const { ShmemHandle } = require("@vitiate/engine");` +
+              `ShmemHandle.attach().stashInput(Buffer.from("real-stash-input"));` +
+              `process.exit(1);`,
+          ],
+          { stdio: "ignore" },
+        ),
+    });
+
+    expect(result.crashed).toBe(true);
+    expect(result.exitCode).toBe(1);
+    expect(result.crashArtifactPath).toBeDefined();
+    expect(readFileSync(result.crashArtifactPath!).toString()).toBe(
+      "real-stash-input",
+    );
+    // The recovery path reset the real generation counter: a fresh read
+    // finds no stale stash.
+    expect(shmem.readConsistent()).toBeNull();
+  });
+
+  it("classifies exit 1 + surviving stash + only new timeout artifacts as a hard timeout", async () => {
+    const dir = makeTmpDir();
+    // An absorbed hard watchdog timeout: the watchdog wrote its timeout-*
+    // artifact before `_exit(77)`, the orchestrator absorbed the 77 into a
+    // plain exit 1, and the stash survived. Must classify as a timeout (so
+    // the exit-code mapping emits timeout_exitcode), not a crash.
+    const shmem = createMockShmem(Buffer.from("hard-timeout-input"));
+    const testName = "test-absorbed-hard-timeout";
+
+    const hashDir = hashTestPath(TEST_RELATIVE_PATH, testName);
+    const timeoutsDir = path.join(dir, "testdata", hashDir, "timeouts");
+
+    const result = await runSupervisor({
+      shmem,
+      relativeTestFilePath: TEST_RELATIVE_PATH,
+      testName,
+      maxRespawns: 1,
+      spawnChild: () =>
+        spawn(
+          process.execPath,
+          [
+            "-e",
+            `require("fs").mkdirSync(${JSON.stringify(timeoutsDir)}, { recursive: true }); ` +
+              `require("fs").writeFileSync(require("path").join(${JSON.stringify(timeoutsDir)}, "timeout-abc123"), "data"); ` +
+              `process.exit(1)`,
+          ],
+          { stdio: "ignore" },
+        ),
+    });
+
+    expect(result.crashed).toBe(true);
+    expect(result.timedOut).toBe(true);
+    expect(result.exitCode).toBe(1);
+    // The in-flight input is recovered into the timeouts bucket.
+    expect(result.crashArtifactPath).toBeDefined();
+    expect(result.crashArtifactPath).toContain("timeout-");
+    expect(readFileSync(result.crashArtifactPath!).toString()).toBe(
+      "hard-timeout-input",
+    );
+    expect(shmem.resetGenerationCount).toBe(1);
+  });
+
   it("returns crashed=true on unknown exit code and warns to stderr", async () => {
     const shmem = createMockShmem();
     makeTmpDir();
