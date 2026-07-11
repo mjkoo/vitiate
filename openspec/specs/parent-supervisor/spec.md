@@ -171,19 +171,26 @@ The parent SHALL interpret the child's exit status according to this protocol:
 | Child exit status | Meaning | Parent action |
 |---|---|---|
 | Code 0 | Campaign complete (no crash found, or limits reached) | Exit 0 |
-| Code 1 | JS crash found, artifact written by child | Exit 1 |
-| Code 77 | Watchdog `_exit` (timeout), artifact written by watchdog | Read shmem (backup recovery), reset generation, respawn |
+| Code 1 | JS crash found, artifact written by child | Terminate; final exit code is the crash code (`-error_exitcode`, default 77), or the timeout code (`-timeout_exitcode`, default 70) when the new artifact is a `timeout-*` |
+| Code 77 | Watchdog `_exit` (timeout), artifact written by watchdog | Read shmem (backup recovery), reset generation, respawn; on respawn exhaustion the final exit code is the timeout code (default 70) |
 | Killed by signal (Unix) / exception exit code (Windows) | Native crash | Read shmem, write artifact, reset generation, respawn |
+
+The parent follows libFuzzer's exit-code conventions: a crash maps to `error_exitcode` (default 77) and a timeout to `timeout_exitcode` (default 70), both overridable via CLI flags; an OOM/SIGKILL maps to 137 and an engine panic to 78. These are the parent's final process codes and are distinct from the internal child exit codes above (which the parent translates).
 
 #### Scenario: Exit code 0 forwarded
 
 - **WHEN** the child exits with code 0
 - **THEN** the parent exits with code 0
 
-#### Scenario: Exit code 1 forwarded
+#### Scenario: Exit code 1 maps to the crash exit code
 
-- **WHEN** the child exits with code 1
-- **THEN** the parent exits with code 1
+- **WHEN** the child exits with code 1 having written a `crash-*` artifact
+- **THEN** the parent exits with the crash code (`-error_exitcode`, default 77)
+
+#### Scenario: A timeout maps to the timeout exit code
+
+- **WHEN** the child exits with code 1 having written only `timeout-*` artifacts (a soft timeout)
+- **THEN** the parent exits with the timeout code (`-timeout_exitcode`, default 70)
 
 #### Scenario: Exit code 77 triggers respawn
 

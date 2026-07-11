@@ -2,7 +2,7 @@
 
 Crash input minimization for the fuzz loop. When a crashing input is found, the minimizer reduces it to the smallest byte sequence that still triggers the same crash before writing the artifact.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Crash input minimization
 

@@ -12,7 +12,7 @@ The system SHALL provide a `bin` entry (`npx vitiate`) that dispatches to subcom
 
 Usage: `npx vitiate <subcommand> [args...]`
 
-The CLI SHALL use `@optique`'s `command()` primitive and `or()` combinator to dispatch to known subcommand names: `init`, `fuzz`, `regression`, `optimize`, `libfuzzer`. If a known subcommand is matched, the corresponding subcommand handler SHALL be invoked with the remaining arguments. If no argument is provided, an auto-generated usage summary SHALL be printed and the process SHALL exit with code 0. If the argument does not match a known subcommand, an error SHALL be printed (with typo suggestions if applicable) and the process SHALL exit with code 1.
+The CLI SHALL use `@optique`'s `command()` primitive and `or()` combinator to dispatch to known subcommand names: `init`, `fuzz`, `regression`, `reproduce`, `optimize`, `libfuzzer`. If a known subcommand is matched, the corresponding subcommand handler SHALL be invoked with the remaining arguments. If no argument is provided, an auto-generated usage summary SHALL be printed and the process SHALL exit with code 0. If the argument does not match a known subcommand, an error SHALL be printed (with typo suggestions if applicable) and the process SHALL exit with code 1.
 
 The previous behavior (accepting a test file path as the first positional argument and directly entering the fuzzer) SHALL be available exclusively via the `libfuzzer` subcommand.
 
@@ -75,13 +75,13 @@ When `-test` is not provided, all fuzz tests in the file enter the fuzz loop. Th
 
 All existing libFuzzer-compatible flags SHALL continue to be accepted exclusively under the `libfuzzer` subcommand. The flag parsing, validation, and behavior SHALL remain unchanged.
 
-The flags (`-max_len`, `-timeout`, `-runs`, `-seed`, `-max_total_time`, `-test`, `-artifact_prefix`, `-dict`, `-detectors`, `-fork`, `-jobs`, `-merge`, `-minimize_budget`, `-minimize_time_limit`) SHALL NOT be accepted by the `fuzz`, `regression`, `optimize`, or `init` subcommands.
+The flags (`-max_len`, `-timeout`, `-runs`, `-seed`, `-max_total_time`, `-test`, `-artifact_prefix`, `-dict`, `-detectors`, `-fork`, `-jobs`, `-merge`, `-minimize_budget`, `-minimize_time_limit`, `-error_exitcode`, `-timeout_exitcode`, `-rss_limit_mb`, `-print_final_stats`, `-close_fd_mask`, `-reload`) SHALL NOT be accepted by the `fuzz`, `regression`, `optimize`, or `init` subcommands.
 
 The CLI SHALL accept libFuzzer-style flags (hyphen prefix, `=` separator):
 
 - `-max_len=N`: Maximum input length in bytes. Passed to `FuzzerConfig.maxInputLen`.
 - `-timeout=N`: Per-execution timeout in seconds. Converted to milliseconds for `FuzzOptions.timeoutMs`. Applies to both synchronous and asynchronous fuzz targets.
-- `-runs=N`: Exit after N executions. Passed to `FuzzOptions.fuzzExecs`.
+- `-runs=N`: Cap the number of main-loop executions (passed to `FuzzOptions.fuzzExecs`). An explicit `-runs=0` SHALL instead replay the loaded corpus once (no mutation) and exit, matching libFuzzer; omitting the flag fuzzes without an iteration limit.
 - `-seed=N`: RNG seed. Passed to `FuzzerConfig.seed`.
 - `-artifact_prefix=<path>`: Prefix path for crash/timeout artifacts. See `cli-artifact-prefix` capability.
 - `-dict=<path>`: Path to an AFL/libfuzzer-format dictionary file. Resolved relative to cwd. The resolved absolute path SHALL be passed to the child process via the `dictionaryPath` field in the `VITIATE_CLI_IPC` JSON blob. See `user-dictionary` capability.
@@ -98,6 +98,16 @@ The CLI SHALL accept libFuzzer-style flags (hyphen prefix, `=` separator):
 - `-minimize_budget=N`: Maximum iterations for input minimization.
 - `-minimize_time_limit=N`: Time limit for input minimization in seconds.
 - `-merge=1`: Enter corpus merge mode. Load all inputs from all specified corpus directories, replay each through the fuzz target to collect coverage edges, run set cover to select the minimal subset covering all edges, and write surviving entries to the first corpus directory. At least one corpus directory SHALL be required when `-merge=1` is set; the CLI SHALL print an error and exit with code 1 if no corpus directories are provided. See `set-cover-merge` capability for full merge behavior.
+- `-error_exitcode=N`: Final process exit code when a crash is found. Defaults to `77` (libFuzzer's `error_exitcode` default). Honored by the parent supervisor (see `parent-supervisor` capability).
+- `-timeout_exitcode=N`: Final process exit code when a timeout is found. Defaults to `70` (libFuzzer's `timeout_exitcode` default). Honored by the parent supervisor.
+- `-rss_limit_mb=N`, `-print_final_stats=<0|1>`, `-close_fd_mask=N`, `-reload=N`: Parsed for libFuzzer compatibility but ignored, so a fuzzing platform invocation does not abort on an unrecognized flag. A non-default `-close_fd_mask` prints a warning; the warning is emitted only by the parent, not the supervised child.
+
+The final process exit code (crash → `-error_exitcode`, timeout → `-timeout_exitcode`, OOM/SIGKILL → 137, engine panic → 78) is defined by the `parent-supervisor` capability.
+
+#### Scenario: Exit code follows libFuzzer conventions
+
+- **WHEN** `npx vitiate libfuzzer ./test.ts ./crash-corpus/ -runs=0` is executed AND a corpus input crashes
+- **THEN** the process SHALL exit with code 77 (or the value of `-error_exitcode` when provided)
 
 #### Scenario: Flags under libfuzzer subcommand
 
@@ -190,6 +200,7 @@ The CLI SHALL pass CLI-specific IPC configuration to the child process via the `
 - `corpusDirs` - array of corpus directory paths.
 - `dictionaryPath` - resolved absolute path to the dictionary file.
 - `forkExplicit` - set to `true` when the user passes any `-fork=N` flag. Omitted otherwise. Used by the child to resolve `stopOnCrash: "auto"` correctly.
+- `reproduceInputFile` - set by the `reproduce` subcommand to the absolute path of the single input file to replay. When present, the worker's regression path replays exactly this input once instead of loading the corpus (see `cli-subcommands` capability).
 
 These fields SHALL be read via helper functions in `config.ts` (e.g., `isLibfuzzerCompat()`, `getCorpusOutputDir()`, `getArtifactPrefix()`) which delegate to `getCliIpc()`.
 

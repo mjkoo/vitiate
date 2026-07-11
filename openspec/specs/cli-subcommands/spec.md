@@ -2,13 +2,13 @@
 
 ## Purpose
 
-Defines the subcommand-based CLI dispatch for vitiate, providing `init`, `fuzz`, `regression`, `optimize`, and `libfuzzer` subcommands as the primary user interface.
+Defines the subcommand-based CLI dispatch for vitiate, providing `init`, `fuzz`, `regression`, `reproduce`, `optimize`, and `libfuzzer` subcommands as the primary user interface.
 
 ## Requirements
 
 ### Requirement: Subcommand dispatch
 
-The CLI entry point (`npx vitiate`) SHALL use `@optique`'s `command()` primitive and `or()` combinator to dispatch subcommands. Known subcommands: `init`, `fuzz`, `regression`, `optimize`, `libfuzzer`. Each subcommand SHALL be registered with a brief description for help text generation.
+The CLI entry point (`npx vitiate`) SHALL use `@optique`'s `command()` primitive and `or()` combinator to dispatch subcommands. Known subcommands: `init`, `fuzz`, `regression`, `reproduce`, `optimize`, `libfuzzer`. Each subcommand SHALL be registered with a brief description for help text generation.
 
 If no subcommand is provided, the CLI SHALL print an auto-generated usage summary listing all available subcommands with their descriptions and exit with code 0.
 
@@ -111,9 +111,42 @@ Both positional arguments and unrecognized option-like arguments SHALL be forwar
 - **WHEN** `npx vitiate regression test/specific.fuzz.ts` is executed
 - **THEN** `vitest run .fuzz.ts test/specific.fuzz.ts` SHALL be spawned
 
+### Requirement: reproduce subcommand
+
+The `vitiate reproduce <file>` subcommand SHALL replay a single input file **once** through a fuzz target, matching libFuzzer's single-input reproduce contract. It SHALL accept a required positional input-file argument and the single-hyphen `-test <name>` and `-timeout <seconds>` flags.
+
+The subcommand SHALL:
+
+1. Resolve the input file to an absolute path; if it does not exist, print an error to stderr and exit with code 1 without running any test.
+2. Discover the project's fuzz tests (globbing `*.fuzz.*` and collecting fully-qualified names). When `-test` is provided, filter to the exactly-matching name. If no test matches, print an error and exit 1; if more than one matches, list the candidate `file :: name` pairs and exit 1.
+3. Spawn `vitest run <testFile> --test-name-pattern ^<name>$` **once** (single process, no supervisor/shmem), passing the absolute input path to the worker via the `reproduceInputFile` field of the `VITIATE_CLI_IPC` JSON blob and the `-timeout` value (converted to ms) via `VITIATE_OPTIONS`. It SHALL NOT set `VITIATE_FUZZ`, `VITIATE_OPTIMIZE`, or `VITIATE_SUPERVISOR`, so the worker takes the regression replay path.
+4. Map the spawned vitest status to the final exit code: `0` when vitest succeeds, otherwise the crash exit code (`77`).
+
+When `reproduceInputFile` is present, the worker's regression path SHALL replay exactly that input once via `replayCorpusEntry` (skipping corpus loading), so a crash, detector finding, or timeout throws with the failure's stack trace.
+
+#### Scenario: Reproduce a crashing input
+
+- **WHEN** `npx vitiate reproduce ./crash.bin -test parse-url` is executed AND the input reproduces a crash
+- **THEN** the failure's stack trace SHALL be printed AND the process SHALL exit with code 77
+
+#### Scenario: Reproduce a benign input
+
+- **WHEN** `npx vitiate reproduce ./ok.bin -test parse-url` is executed AND the input replays cleanly
+- **THEN** the process SHALL exit with code 0
+
+#### Scenario: Missing input file
+
+- **WHEN** `npx vitiate reproduce ./missing.bin` is executed AND the file does not exist
+- **THEN** an error SHALL be printed to stderr AND the process SHALL exit with code 1
+
+#### Scenario: Ambiguous target without -test
+
+- **WHEN** `npx vitiate reproduce ./input.bin` is executed AND the project defines more than one fuzz test
+- **THEN** the candidate `file :: name` pairs SHALL be listed AND the process SHALL exit with code 1
+
 ### Requirement: optimize subcommand
 
-The `vitiate optimize` subcommand SHALL parse vitiate-specific flags (`--detectors`) via an `@optique` parser. Unrecognized arguments SHALL be forwarded to vitest via `passThrough()`.
+The `vitiate optimize` subcommand SHALL parse vitiate-specific flags (`--detectors`, `--timeout`) via an `@optique` parser. Unrecognized arguments SHALL be forwarded to vitest via `passThrough()`. The `--timeout <N>` flag SHALL set the per-entry replay timeout in seconds (converted to `timeoutMs`; see `subcommand-flags` capability).
 
 The subcommand SHALL set `VITIATE_OPTIMIZE=1` in the environment, then spawn `vitest run` with `.fuzz.ts` prepended to the forwarded arguments.
 
@@ -124,11 +157,16 @@ Both positional arguments and unrecognized option-like arguments SHALL be forwar
 - **WHEN** `npx vitiate optimize` is executed
 - **THEN** `vitest run .fuzz.ts` SHALL be spawned with `VITIATE_OPTIMIZE=1`
 
+#### Scenario: Optimize with per-entry timeout
+
+- **WHEN** `npx vitiate optimize --timeout 5` is executed
+- **THEN** vitest SHALL be spawned with `VITIATE_OPTIMIZE=1` and a `VITIATE_OPTIONS` JSON containing `timeoutMs: 5000`
+
 ### Requirement: libfuzzer subcommand
 
 The `vitiate libfuzzer` subcommand SHALL provide all current standalone CLI functionality. The argument parsing, parent/child supervisor model, shmem management, libFuzzer-compatible flags, merge mode, and all other existing CLI behavior SHALL be preserved unchanged under this subcommand.
 
-Arguments after `libfuzzer` SHALL be parsed using the existing `@optique`-based parser with all current flags (`-max_len`, `-timeout`, `-runs`, `-seed`, `-max_total_time`, `-test`, `-artifact_prefix`, `-dict`, `-detectors`, `-fork`, `-jobs`, `-merge`, `-minimize_budget`, `-minimize_time_limit`).
+Arguments after `libfuzzer` SHALL be parsed using the existing `@optique`-based parser with all current flags (`-max_len`, `-timeout`, `-runs`, `-seed`, `-max_total_time`, `-test`, `-artifact_prefix`, `-dict`, `-detectors`, `-fork`, `-jobs`, `-merge`, `-minimize_budget`, `-minimize_time_limit`), plus the exit-code flags `-error_exitcode`/`-timeout_exitcode` and the parsed-but-ignored compatibility flags `-rss_limit_mb`, `-print_final_stats`, `-close_fd_mask`, `-reload` (see `standalone-cli` capability). An explicit `-runs=0` SHALL replay the loaded corpus once and exit (rather than fuzzing unbounded). The final process exit code SHALL follow libFuzzer's conventions (see `parent-supervisor` capability): crash → `-error_exitcode` (default 77), timeout → `-timeout_exitcode` (default 70).
 
 #### Scenario: libfuzzer mode invocation
 

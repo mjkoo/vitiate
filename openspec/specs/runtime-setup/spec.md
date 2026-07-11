@@ -1,3 +1,7 @@
+## Purpose
+
+The runtime-setup capability defines how the global coverage map and instrumentation runtime are initialized before any instrumented module runs. It establishes `globalThis.__vitiate_cov` once with a stable buffer identity, selecting a plain array in regression mode or a Rust-backed zero-copy buffer in fuzzing mode.
+
 ## Requirements
 
 ### Requirement: Coverage map initialization

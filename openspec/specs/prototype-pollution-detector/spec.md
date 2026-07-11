@@ -28,7 +28,7 @@ The detector SHALL have `name: "prototype-pollution"` and `tier: 2`.
 
 - **WHEN** the fuzz target modifies an existing non-function property on `Array.prototype`
 - **THEN** the detector SHALL throw a `VulnerabilityError`
-- **AND** the error's `context` SHALL include the original and new values
+- **AND** the error's `context` SHALL include the prototype name (`"Array.prototype"`), the property name, and the change type (`"modified"`)
 
 #### Scenario: Ignore pre-existing function-valued properties
 

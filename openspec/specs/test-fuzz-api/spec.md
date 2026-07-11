@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+The test-fuzz-api capability defines the `fuzz(name, target, options?)` test registrar that integrates fuzz targets into Vitest, mirroring the ergonomics of Vitest's `bench()`. It registers a target that appears in test output and is driven by the fuzzing engine in fuzz mode or replayed against the corpus in regression mode.
+
+## Requirements
 
 ### Requirement: fuzz test registrar function
 

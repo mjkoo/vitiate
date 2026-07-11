@@ -51,7 +51,7 @@ Total header size: 24 bytes (`HEADER_SIZE`). Total region size: `24 + MAX_INPUT_
 
 ### Requirement: Per-iteration input stash (seqlock protocol)
 
-Before each fuzz iteration, copy input using odd/even seqlock:
+The system SHALL, before each fuzz iteration, copy the input using an odd/even seqlock:
 1. Increment `generation` to odd value (write-in-progress) with release semantics
 2. Write `input_len` and copy to `input_buf`
 3. Increment `generation` to even value (write-complete) with release semantics
