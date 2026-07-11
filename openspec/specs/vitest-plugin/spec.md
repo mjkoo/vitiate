@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+The vitest-plugin capability defines the `vitiatePlugin(options?)` factory that returns the pair of Vite plugins wiring vitiate into a Vitest project: a pre-transform pass that rewrites hooked built-in imports so detector module hooks can intercept them, and a post-transform pass that applies SWC edge-coverage and comparison-tracing instrumentation.
+
+## Requirements
 
 ### Requirement: Plugin factory function
 
@@ -255,12 +259,6 @@ The `configureVitest` hook SHALL NOT be used for setup file registration because
 - **WHEN** the vitiate plugin is loaded by Vitest
 - **THEN** the plugin's `config()` hook returns a config object containing the vitiate runtime setup module in `test.setupFiles`
 - **AND** the setup file is present in the resolved Vitest config before any tests execute
-
-### ~~Requirement: Fuzz mode activation via --fuzz CLI flag~~ (REMOVED)
-
-> **Removed in change `projects-fuzz-activation`.**
-> **Reason**: Vitest's `cac` CLI parser rejects unknown flags before the plugin's `config()` hook runs, making `parseFuzzFlag()` dead code. The Vitest maintainers have explicitly declined to support plugin-extensible CLI flags. `VITIATE_FUZZ=1` is the sole activation mechanism.
-> **Migration**: Use `VITIATE_FUZZ=1 vitest run` instead of `vitest --fuzz`. Use Vitest's `-t` flag instead of `--fuzz=<pattern>`.
 
 ### Requirement: Hook import bail-out optimization
 

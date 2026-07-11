@@ -1,3 +1,7 @@
+## Purpose
+
+The cmplog-feedback capability records the operands and operators of comparisons executed during a fuzz iteration so the engine can solve magic-value and checksum comparisons. Instrumented JavaScript calls `trace_cmp` to push each comparison into a thread-local accumulator, which Rust drains after every iteration to feed CmpLog/Redqueen mutation and dictionary extraction.
+
 ## Requirements
 
 ### Requirement: CmpLogOperator enum

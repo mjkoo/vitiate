@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+The set-cover-merge capability provides the greedy set-cover algorithm used to minimize a corpus: given entries annotated with their covered edges, it selects the smallest subset whose edges cover the union of all edges, tie-breaking toward smaller inputs. It underpins the `-merge` and corpus optimization workflows.
+
+## Requirements
 
 ### Requirement: Set cover algorithm
 

@@ -1,8 +1,12 @@
+## Purpose
+
+The fuzzing-engine capability defines the `Fuzzer` NAPI class that owns the LibAFL-based mutation and scheduling pipeline. It constructs the mutators, power schedule, CmpLog/Redqueen state, and stage machinery; accepts seeds and dictionaries; and exposes the batched and per-iteration execution entry points used by the fuzz loop.
+
 ## Requirements
 
 ### Requirement: Create fuzzer instance
 
-Provide `Fuzzer` class constructable via `new Fuzzer(coverageMap, config?, watchdog?, shmemHandle?)`.
+The system SHALL provide a `Fuzzer` class constructable via `new Fuzzer(coverageMap, config?, watchdog?, shmemHandle?)`.
 
 Required: coverage map `Buffer`.
 

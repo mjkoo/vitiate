@@ -1,3 +1,7 @@
+## Purpose
+
+The i2s-splice-mutation capability provides the `I2SSpliceReplace` mutator, which extends LibAFL's input-to-state replacement with a length-changing splice path for byte-valued comparison operands. It substitutes observed comparison operands into the input so the fuzzer can pass magic-value and length checks.
+
 ## Requirements
 
 ### Requirement: I2S splice replace mutator

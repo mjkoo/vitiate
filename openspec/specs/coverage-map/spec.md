@@ -1,3 +1,7 @@
+## Purpose
+
+The coverage-map capability provides the shared edge-coverage counter buffer that instrumented code writes to and the fuzzing engine reads from. A single Rust allocation is exposed to JavaScript as a zero-copy `Buffer`, written by instrumentation during execution and zeroed by Rust after each result is reported.
+
 ## Requirements
 
 ### Requirement: Allocate coverage map from Rust

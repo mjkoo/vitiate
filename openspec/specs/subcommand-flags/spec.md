@@ -69,6 +69,20 @@ The `vitiate regression` and `vitiate optimize` subcommands SHALL each accept a 
 - **WHEN** `npx vitiate optimize --detectors pathTraversal` is executed
 - **THEN** vitest SHALL be spawned with `VITIATE_OPTIMIZE=1` and a `VITIATE_OPTIONS` JSON containing `detectors: { pathTraversal: true, ... }` with unlisted detectors set to false
 
+### Requirement: Optimize per-entry replay timeout flag
+
+The `vitiate optimize` subcommand SHALL accept a `--timeout <N>` flag specifying the per-entry replay timeout in seconds (minimum 0, where 0 disables the timeout). The value SHALL be converted from seconds to milliseconds and serialized as `timeoutMs` into the `VITIATE_OPTIONS` JSON environment variable on the spawned vitest process.
+
+#### Scenario: Optimize with per-entry timeout
+
+- **WHEN** `npx vitiate optimize --timeout 5` is executed
+- **THEN** vitest SHALL be spawned with `VITIATE_OPTIMIZE=1` and a `VITIATE_OPTIONS` JSON containing `timeoutMs: 5000`
+
+#### Scenario: Optimize timeout disabled
+
+- **WHEN** `npx vitiate optimize --timeout 0` is executed
+- **THEN** vitest SHALL be spawned with a `VITIATE_OPTIONS` JSON containing `timeoutMs: 0`, disabling the per-entry timeout
+
 ### Requirement: Vitest flag forwarding via passThrough
 
 All three vitest-wrapper subcommands (`fuzz`, `regression`, `optimize`) SHALL use `@optique`'s `passThrough()` to collect unrecognized arguments. Unrecognized arguments SHALL be forwarded to the spawned vitest process, appended after `vitest run .fuzz.ts`.

@@ -1,3 +1,7 @@
+## Purpose
+
+The trace-cmp-bridge capability defines the boundary between instrumented JavaScript, which evaluates comparisons and records their operands and operator id, and the Rust CmpLog accumulator, which maps those operator ids to `CmpLogOperator` values during draining. The bridge itself never evaluates comparisons.
+
 ## Requirements
 
 ### Requirement: Correct comparison evaluation for all operators

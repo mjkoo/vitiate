@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+The corpus-management capability defines how on-disk corpus, seed, dictionary, and artifact paths are derived from test identity and how testdata is loaded for seeding and regression. It uses a Nix-style base32 hash of the test file path and name to give each test a stable, collision-free directory.
+
+## Requirements
 
 ### Requirement: Test name directory format
 

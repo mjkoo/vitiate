@@ -1,3 +1,7 @@
+## Purpose
+
+The fuzz-loop capability defines the core fuzzing iteration cycle that drives mutation, target execution, detector lifecycle hooks, coverage feedback, and crash handling. It uses a batched Rust path for synchronous targets and a per-iteration fallback for asynchronous targets, terminating on crash limits, time, iteration count, or interrupt.
+
 ## Requirements
 
 ### Requirement: Core fuzzing iteration cycle
@@ -469,7 +473,7 @@ The loop SHALL detect async targets during the first iteration: if the target fu
 
 ### Requirement: Periodic event loop yield
 
-Yield to the Node.js event loop between batches using `setImmediate` wrapped in a Promise. The adaptive batch size (see "Adaptive batch size calculation") ensures yields occur frequently enough for timers and signal handlers to fire. In the per-iteration fallback path, yield every N iterations (default 1000) as before.
+The fuzz loop SHALL yield to the Node.js event loop between batches using `setImmediate` wrapped in a Promise. The adaptive batch size (see "Adaptive batch size calculation") ensures yields occur frequently enough for timers and signal handlers to fire. In the per-iteration fallback path, yield every N iterations (default 1000) as before.
 
 #### Scenario: Event loop not starved during batched execution
 - **WHEN** the fuzz loop runs with batched execution
