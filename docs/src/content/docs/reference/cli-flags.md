@@ -19,6 +19,7 @@ npx vitiate <subcommand> [options]
 | `optimize` | Minimize cached corpus via set cover |
 | `libfuzzer <test-file> [corpus-dirs...] [flags]` | libFuzzer-compatible mode |
 | `init` | Discover fuzz tests and create seed directories |
+| `paths [pattern] [flags]` | Show the test-to-directory mapping and corpus counts |
 
 ---
 
@@ -193,6 +194,36 @@ npx vitiate init
 ```
 
 Discovers fuzz test files (`*.fuzz.ts`, `*.fuzz.js`, etc.), creates seed directories under `.vitiate/testdata/`, and ensures `.vitiate/corpus/` is in `.gitignore`. No flags.
+
+---
+
+## paths
+
+```
+npx vitiate paths [pattern] [flags]
+```
+
+Read-only inspector that maps each discovered fuzz test to its `.vitiate/testdata/` and `.vitiate/corpus/` directory, with per-bucket entry counts. Creates nothing. Also detects and (opt-in) prunes orphaned directories left behind by renamed or deleted tests.
+
+### Positional arguments
+
+| Argument | Description |
+|----------|-------------|
+| `pattern` | Optional. Case-insensitive substring; keeps tests whose file path, test name, or hash directory contains it. |
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Emit machine-readable JSON (includes an `orphans` array) instead of a table. Always uses absolute paths. |
+| `--absolute` | Print absolute directory paths instead of project-root-relative ones (affects the table and `--orphans` list). |
+| `--dir` | Print only the matched test's testdata directory (absolute). Requires the pattern to match exactly one test; errors otherwise. |
+| `--orphans` | Also list on-disk `testdata/`+`corpus/` directories that match no discovered test. |
+| `--prune` | Delete orphaned `corpus/` directories. Prompts for confirmation first. |
+| `--all` | With `--prune`, also delete orphaned `testdata/` directories (which may hold committed crashes/seeds). |
+| `--force` / `-f` | With `--prune`, skip the confirmation prompt. |
+
+`--dir`, `--json`, and `--prune` are mutually-exclusive modes; combining them is an error. `--prune` refuses to delete when stdin is not a TTY unless `--force` is given. `--orphans` and `--prune` refuse entirely when the current test set cannot be determined - Vitest not installed, or no fuzz tests discovered at all (for example, run from the wrong directory) - since every directory would otherwise appear orphaned. `--all` and `--force` are only valid together with `--prune`.
 
 ---
 

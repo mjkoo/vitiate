@@ -27,6 +27,9 @@ import {
   loadTestDataCorpusWithPaths,
   getTestDataDir,
   getCorpusDir,
+  getTestPathStats,
+  listOnDiskHashDirs,
+  countOrphanEntries,
 } from "./corpus.js";
 import {
   setProjectRoot,
@@ -771,6 +774,147 @@ describe("corpus", () => {
       const result = getCorpusDir("test.fuzz.ts", "parse");
       const hashDir = hashTestPath("test.fuzz.ts", "parse");
       expect(result).toBe(path.join(tmpDir, "corpus", hashDir));
+    });
+  });
+
+  describe("getTestPathStats", () => {
+    it("returns all-zero counts when nothing exists on disk", () => {
+      expect(getTestPathStats("test.fuzz.ts", "unseen")).toEqual({
+        seeds: 0,
+        crashes: 0,
+        timeouts: 0,
+        ooms: 0,
+        corpus: 0,
+      });
+    });
+
+    it("counts each bucket and cached corpus independently", () => {
+      const base = path.join(
+        tmpDir,
+        "testdata",
+        hashTestPath("test.fuzz.ts", "counts"),
+      );
+      const buckets: Record<string, number> = {
+        seeds: 3,
+        crashes: 2,
+        timeouts: 1,
+        ooms: 4,
+      };
+      for (const [sub, n] of Object.entries(buckets)) {
+        mkdirSync(path.join(base, sub), { recursive: true });
+        for (let i = 0; i < n; i++) {
+          writeFileSync(path.join(base, sub, `e${i}`), "x");
+        }
+      }
+      const corpusDir = path.join(
+        tmpDir,
+        "corpus",
+        hashTestPath("test.fuzz.ts", "counts"),
+      );
+      mkdirSync(corpusDir, { recursive: true });
+      writeFileSync(path.join(corpusDir, "c1"), "x");
+      writeFileSync(path.join(corpusDir, "c2"), "x");
+
+      expect(getTestPathStats("test.fuzz.ts", "counts")).toEqual({
+        seeds: 3,
+        crashes: 2,
+        timeouts: 1,
+        ooms: 4,
+        corpus: 2,
+      });
+    });
+
+    it("excludes dotfiles and nested subdirectories from counts", () => {
+      const base = path.join(
+        tmpDir,
+        "testdata",
+        hashTestPath("test.fuzz.ts", "dotfiles"),
+        "seeds",
+      );
+      mkdirSync(base, { recursive: true });
+      writeFileSync(path.join(base, "real"), "x");
+      writeFileSync(path.join(base, ".hidden"), "x");
+      mkdirSync(path.join(base, "nested"), { recursive: true });
+
+      expect(getTestPathStats("test.fuzz.ts", "dotfiles").seeds).toBe(1);
+    });
+  });
+
+  describe("listOnDiskHashDirs", () => {
+    it("returns an empty array when the root does not exist", () => {
+      expect(listOnDiskHashDirs("testdata")).toEqual([]);
+      expect(listOnDiskHashDirs("corpus")).toEqual([]);
+    });
+
+    it("lists only directories under the given root", () => {
+      const a = hashTestPath("a.fuzz.ts", "one");
+      const b = hashTestPath("b.fuzz.ts", "two");
+      mkdirSync(path.join(tmpDir, "testdata", a), { recursive: true });
+      mkdirSync(path.join(tmpDir, "testdata", b), { recursive: true });
+      // A stray file at the root must not be reported as a hash dir.
+      writeFileSync(path.join(tmpDir, "testdata", "stray-file"), "x");
+      mkdirSync(path.join(tmpDir, "corpus", a), { recursive: true });
+
+      expect(listOnDiskHashDirs("testdata").sort()).toEqual([a, b].sort());
+      expect(listOnDiskHashDirs("corpus")).toEqual([a]);
+    });
+  });
+
+  describe("countOrphanEntries", () => {
+    it("sums buckets for a testdata dir and counts files for a corpus dir", () => {
+      const hashDir = hashTestPath("orphan.fuzz.ts", "gone");
+      const base = path.join(tmpDir, "testdata", hashDir);
+      mkdirSync(path.join(base, "seeds"), { recursive: true });
+      mkdirSync(path.join(base, "crashes"), { recursive: true });
+      writeFileSync(path.join(base, "seeds", "s1"), "x");
+      writeFileSync(path.join(base, "seeds", "s2"), "x");
+      writeFileSync(path.join(base, "crashes", "c1"), "x");
+
+      const corpusDir = path.join(tmpDir, "corpus", hashDir);
+      mkdirSync(corpusDir, { recursive: true });
+      writeFileSync(path.join(corpusDir, "x1"), "x");
+
+      expect(countOrphanEntries("testdata", hashDir)).toBe(3);
+      expect(countOrphanEntries("corpus", hashDir)).toBe(1);
+    });
+
+    it("returns zero for a missing dir", () => {
+      expect(countOrphanEntries("testdata", "does-not-exist")).toBe(0);
+      expect(countOrphanEntries("corpus", "does-not-exist")).toBe(0);
+    });
+  });
+
+  describe("read helpers tolerate a malformed .vitiate tree", () => {
+    it("listOnDiskHashDirs returns [] when the root is a file, not a dir", () => {
+      // Create <root>/corpus as a regular file so readdirSync throws ENOTDIR.
+      writeFileSync(path.join(tmpDir, "corpus"), "not a directory");
+      expect(listOnDiskHashDirs("corpus")).toEqual([]);
+    });
+
+    it("getTestPathStats counts a file-where-a-bucket-should-be as zero", () => {
+      const base = path.join(
+        tmpDir,
+        "testdata",
+        hashTestPath("test.fuzz.ts", "malformed"),
+      );
+      mkdirSync(base, { recursive: true });
+      // seeds/ is a file, not a directory (ENOTDIR on readdir).
+      writeFileSync(path.join(base, "seeds"), "oops");
+      // crashes/ is a normal bucket with one entry.
+      mkdirSync(path.join(base, "crashes"), { recursive: true });
+      writeFileSync(path.join(base, "crashes", "c1"), "x");
+
+      const stats = getTestPathStats("test.fuzz.ts", "malformed");
+      expect(stats.seeds).toBe(0);
+      expect(stats.crashes).toBe(1);
+    });
+
+    it("countOrphanEntries does not throw when a bucket is a file", () => {
+      const hashDir = hashTestPath("test.fuzz.ts", "malformed2");
+      const base = path.join(tmpDir, "testdata", hashDir);
+      mkdirSync(base, { recursive: true });
+      writeFileSync(path.join(base, "seeds"), "oops");
+      expect(countOrphanEntries("testdata", hashDir)).toBe(0);
     });
   });
 });

@@ -3,12 +3,10 @@
 ## Purpose
 
 Defines the subcommand-based CLI dispatch for vitiate, providing `init`, `fuzz`, `regression`, `reproduce`, `optimize`, and `libfuzzer` subcommands as the primary user interface.
-
 ## Requirements
-
 ### Requirement: Subcommand dispatch
 
-The CLI entry point (`npx vitiate`) SHALL use `@optique`'s `command()` primitive and `or()` combinator to dispatch subcommands. Known subcommands: `init`, `fuzz`, `regression`, `reproduce`, `optimize`, `libfuzzer`. Each subcommand SHALL be registered with a brief description for help text generation.
+The CLI entry point (`npx vitiate`) SHALL use `@optique`'s `command()` primitive and `or()` combinator to dispatch subcommands. Known subcommands: `init`, `fuzz`, `regression`, `reproduce`, `optimize`, `libfuzzer`, `paths`. Each subcommand SHALL be registered with a brief description for help text generation.
 
 If no subcommand is provided, the CLI SHALL print an auto-generated usage summary listing all available subcommands with their descriptions and exit with code 0.
 
@@ -18,6 +16,11 @@ If an unknown subcommand is provided, the CLI SHALL print an error message. If t
 
 - **WHEN** `npx vitiate fuzz --fuzz-time 60` is executed
 - **THEN** the `fuzz` subcommand handler SHALL be invoked with the remaining arguments
+
+#### Scenario: paths subcommand dispatched
+
+- **WHEN** `npx vitiate paths` is executed
+- **THEN** the `paths` subcommand handler SHALL be invoked
 
 #### Scenario: No subcommand shows help
 
@@ -211,3 +214,97 @@ The spawn SHALL:
 
 - **WHEN** a vitest wrapper subcommand runs
 - **THEN** vitest's stdout, stderr, and stdin SHALL be inherited from the parent process
+
+### Requirement: paths subcommand
+
+The `vitiate paths [pattern]` subcommand SHALL be a read-only inspector that maps each discovered fuzz test to its testdata and corpus hash directory. It SHALL create no directories and mutate no files, except on the explicit `--prune` deletion path.
+
+The subcommand SHALL discover the project's fuzz tests via the same discovery used by `init` (globbing `*.fuzz.*` and collecting fully-qualified names). If discovery cannot determine the test set (for example, Vitest is not installed), the subcommand SHALL exit with code 1 without scanning or deleting anything. If discovery succeeds but finds no fuzz tests at all, the subcommand SHALL still render an empty table or JSON, but SHALL refuse `--orphans` and `--prune` (printing an error and exiting with code 1), because with no known tests every on-disk directory would appear orphaned.
+
+For each discovered test the subcommand SHALL compute its hash directory, testdata directory, corpus directory, and per-bucket entry counts (`seeds`, `crashes`, `timeouts`, `ooms`, and cached `corpus`).
+
+The subcommand SHALL accept an optional positional `pattern` argument that filters the listed tests by case-insensitive substring match against the test's file path, test name, or hash directory.
+
+The subcommand SHALL accept the following flags:
+
+- `--dir`: print only the matched test's testdata directory. It SHALL require the filter to match exactly one test; if zero or more than one test matches, an error SHALL be printed to stderr and the process SHALL exit with code 1.
+- `--json`: emit machine-readable JSON (a `tests` array with per-test directories and counts, and an `orphans` array) instead of the human table.
+- `--absolute`: print absolute directory paths instead of project-root-relative paths.
+- `--orphans`: additionally list on-disk `testdata/` and `corpus/` hash directories that match no discovered test.
+- `--prune`: delete orphaned `corpus/` directories. It SHALL prompt for confirmation before deleting.
+- `--all`: with `--prune`, additionally delete orphaned `testdata/` directories. Using `--all` without `--prune` SHALL be a usage error (exit code 1).
+- `--force` / `-f`: with `--prune`, skip the confirmation prompt. Using `--force` without `--prune` SHALL be a usage error (exit code 1).
+
+`--dir`, `--json`, and `--prune` are mutually-exclusive output/action modes; specifying more than one SHALL be a usage error (exit code 1). `--absolute` affects only the human table and the `--orphans` list; `--json` and `--dir` always emit absolute paths.
+
+For `--prune`, if `--force` is not given and stdin is not a TTY, the subcommand SHALL print the orphan list and abort with code 1 rather than hanging or deleting. If the user declines the confirmation prompt, nothing SHALL be deleted.
+
+Absent `--dir`, `--json`, and `--prune`, the subcommand SHALL print a human-readable table with columns for the test file, test name, seed/crash/timeout counts, and directory, followed (when `--orphans` is set) by a list of orphaned directories.
+
+#### Scenario: Default mapping table
+
+- **WHEN** `npx vitiate paths` is executed in a project with fuzz tests
+- **THEN** a table SHALL be printed mapping each test to its directory with seed/crash/timeout counts
+- **AND** no directories SHALL be created
+
+#### Scenario: Pattern filter
+
+- **WHEN** `npx vitiate paths url` is executed
+- **THEN** only tests whose file path, test name, or hash directory contains `url` SHALL be listed
+
+#### Scenario: Pattern matches no test
+
+- **WHEN** `npx vitiate paths zzz` is executed in a project that has fuzz tests but none match `zzz`
+- **THEN** a message SHALL indicate that no fuzz tests match the pattern (distinct from the "no fuzz tests found" message used when the project has none)
+
+#### Scenario: Unique directory for scripting
+
+- **WHEN** `npx vitiate paths normalize --dir` is executed AND exactly one test matches `normalize`
+- **THEN** only that test's testdata directory path SHALL be printed
+
+#### Scenario: Ambiguous --dir match
+
+- **WHEN** `npx vitiate paths url --dir` is executed AND more than one test matches
+- **THEN** an error SHALL be printed to stderr AND the process SHALL exit with code 1
+
+#### Scenario: Orphan listing
+
+- **WHEN** `npx vitiate paths --orphans` is executed AND a hash directory exists on disk with no matching test
+- **THEN** that directory SHALL be listed as orphaned with its entry count
+
+#### Scenario: Prune corpus orphans with confirmation
+
+- **WHEN** `npx vitiate paths --prune` is executed on a TTY AND the user confirms
+- **THEN** orphaned `corpus/` directories SHALL be deleted
+- **AND** orphaned `testdata/` directories SHALL be left intact
+
+#### Scenario: Prune all with --all
+
+- **WHEN** `npx vitiate paths --prune --all --force` is executed
+- **THEN** orphaned `corpus/` and `testdata/` directories SHALL both be deleted
+
+#### Scenario: Non-TTY prune without --force aborts
+
+- **WHEN** `npx vitiate paths --prune` is executed AND stdin is not a TTY AND `--force` is not given
+- **THEN** the orphan list SHALL be printed AND nothing SHALL be deleted AND the process SHALL exit with code 1
+
+#### Scenario: Prune refused on unknown test set
+
+- **WHEN** `npx vitiate paths --prune` is executed AND the fuzz-test set cannot be discovered (Vitest missing)
+- **THEN** nothing SHALL be deleted AND the process SHALL exit with code 1
+
+#### Scenario: Prune refused when no fuzz tests are discovered
+
+- **WHEN** `npx vitiate paths --prune --all --force` is executed AND discovery succeeds but finds zero fuzz tests
+- **THEN** an error SHALL be printed AND nothing SHALL be deleted AND the process SHALL exit with code 1
+
+#### Scenario: Usage error for --all without --prune
+
+- **WHEN** `npx vitiate paths --all` is executed without `--prune`
+- **THEN** an error SHALL be printed AND the process SHALL exit with code 1
+
+#### Scenario: Mode flags are mutually exclusive
+
+- **WHEN** `npx vitiate paths --dir --json` (or any two of `--dir`/`--json`/`--prune`) is executed
+- **THEN** an error SHALL be printed AND the process SHALL exit with code 1
+
