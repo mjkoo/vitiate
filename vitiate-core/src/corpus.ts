@@ -71,6 +71,95 @@ export function getCorpusDir(
 }
 
 /**
+ * Count files (excluding dotfiles) directly in a directory, without reading
+ * their contents. Same file/dotfile filtering as {@link readCorpusDirWithPaths}.
+ *
+ * Any read failure counts as zero: a missing directory, a path that is a file
+ * (ENOTDIR), a permission error (EACCES), or a TOCTOU race where the directory
+ * vanishes mid-scan. This keeps the read-only inspector robust against a messy
+ * `.vitiate` tree instead of crashing.
+ */
+function countDirEntries(dir: string): number {
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  return entries.filter((e) => e.isFile() && !e.name.startsWith(".")).length;
+}
+
+/** Testdata bucket subdirectories, in display order. */
+export const BUCKET_SUBDIRS = ["seeds", "crashes", "timeouts", "ooms"] as const;
+
+/** Per-test corpus entry counts, one field per bucket plus cached corpus. */
+export interface TestPathStats {
+  seeds: number;
+  crashes: number;
+  timeouts: number;
+  ooms: number;
+  corpus: number;
+}
+
+/**
+ * Count corpus entries for a fuzz test across its testdata buckets
+ * (seeds/crashes/timeouts/ooms) and its cached corpus directory. Missing
+ * directories count as zero, so this is safe to call on a test that has never
+ * been fuzzed.
+ */
+export function getTestPathStats(
+  relativeTestFilePath: string,
+  testName: string,
+): TestPathStats {
+  const testDataDir = getTestDataDir(relativeTestFilePath, testName);
+  return {
+    seeds: countDirEntries(path.join(testDataDir, "seeds")),
+    crashes: countDirEntries(path.join(testDataDir, "crashes")),
+    timeouts: countDirEntries(path.join(testDataDir, "timeouts")),
+    ooms: countDirEntries(path.join(testDataDir, "ooms")),
+    corpus: countDirEntries(getCorpusDir(relativeTestFilePath, testName)),
+  };
+}
+
+/**
+ * List the hash-directory names present on disk under `<dataDir>/<kind>`, where
+ * `kind` is `"testdata"` or `"corpus"`. Returns an empty array if the root does
+ * not exist. Used for orphan detection: any returned name that does not match a
+ * currently-discovered test's {@link hashTestPath} is a leftover from a renamed
+ * or deleted test.
+ */
+export function listOnDiskHashDirs(kind: "testdata" | "corpus"): string[] {
+  const root = path.join(getDataDir(), kind);
+  let entries;
+  try {
+    entries = readdirSync(root, { withFileTypes: true });
+  } catch {
+    // Missing root, or the root is a file / unreadable: no hash dirs to report.
+    return [];
+  }
+  return entries.filter((e) => e.isDirectory()).map((e) => e.name);
+}
+
+/**
+ * Count the entries held by an on-disk hash dir, for orphan reporting. For a
+ * `corpus` dir this is the file count directly under it; for a `testdata` dir
+ * it is the sum across its buckets ({@link BUCKET_SUBDIRS}).
+ */
+export function countOrphanEntries(
+  kind: "testdata" | "corpus",
+  hashDir: string,
+): number {
+  const base = path.join(getDataDir(), kind, hashDir);
+  if (kind === "corpus") {
+    return countDirEntries(base);
+  }
+  return BUCKET_SUBDIRS.reduce(
+    (sum, sub) => sum + countDirEntries(path.join(base, sub)),
+    0,
+  );
+}
+
+/**
  * Discover dictionary files for a fuzz test by scanning the testdata directory.
  * Looks for `*.dict` files and a file named `dictionary` at the top level.
  * Files inside subdirectories (seeds/, crashes/, timeouts/) are ignored.

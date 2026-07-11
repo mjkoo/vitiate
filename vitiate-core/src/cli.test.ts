@@ -8,19 +8,32 @@ import {
   type MockInstance,
 } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { PassThrough } from "node:stream";
 import path from "node:path";
 import { parseSync } from "@optique/core/parser";
 import {
   parseArgs,
   parseDetectorsFlag,
   reproduceParser,
+  pathsParser,
+  findOrphans,
+  selectPruneTargets,
+  deleteOrphans,
+  prunePaths,
+  validatePathsFlags,
+  resolveOrphans,
+  pathsEmptyMessage,
+  promptYesNo,
+  type TestManifestRow,
   main,
   supervisorExitCode,
 } from "./cli.js";
 import type { SupervisorResult } from "./supervisor.js";
-import { getCliOptions } from "./config.js";
+import { getCliOptions, setDataDir, resetDataDir } from "./config.js";
+import { getTestDataDir, getCorpusDir } from "./corpus.js";
+import { hashTestPath } from "./nix-base32.js";
 
 vi.mock("node:child_process", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:child_process")>();
@@ -322,6 +335,388 @@ describe("reproduce subcommand parser", () => {
   it("requires the input file argument", () => {
     const result = parseSync(reproduceParser, []);
     expect(result.success).toBe(false);
+  });
+});
+
+describe("paths subcommand parser", () => {
+  it("defaults all flags off with no pattern", () => {
+    const result = parseSync(pathsParser, []);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.value.subcommand).toBe("paths");
+      expect(result.value.pattern).toBeUndefined();
+      expect(result.value.json).toBe(false);
+      expect(result.value.absolute).toBe(false);
+      expect(result.value.dir).toBe(false);
+      expect(result.value.orphans).toBe(false);
+      expect(result.value.prune).toBe(false);
+      expect(result.value.all).toBe(false);
+      expect(result.value.force).toBe(false);
+    }
+  });
+
+  it("parses a positional pattern and boolean flags", () => {
+    const result = parseSync(pathsParser, [
+      "round",
+      "--json",
+      "--orphans",
+      "--prune",
+      "--all",
+    ]);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.value.pattern).toBe("round");
+      expect(result.value.json).toBe(true);
+      expect(result.value.orphans).toBe(true);
+      expect(result.value.prune).toBe(true);
+      expect(result.value.all).toBe(true);
+    }
+  });
+
+  it("accepts the -f short form of --force", () => {
+    const result = parseSync(pathsParser, ["--prune", "-f"]);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.value.force).toBe(true);
+    }
+  });
+});
+
+function parsePaths(...args: string[]) {
+  const result = parseSync(pathsParser, args);
+  if (!result.success) {
+    throw new Error(`paths parse failed: ${JSON.stringify(args)}`);
+  }
+  return result.value;
+}
+
+describe("validatePathsFlags", () => {
+  it("accepts a plain invocation and single-mode flags", () => {
+    expect(validatePathsFlags(parsePaths())).toBeNull();
+    expect(validatePathsFlags(parsePaths("--json"))).toBeNull();
+    expect(validatePathsFlags(parsePaths("--dir"))).toBeNull();
+    expect(validatePathsFlags(parsePaths("--prune", "--all", "-f"))).toBeNull();
+  });
+
+  it("rejects --all/--force without --prune", () => {
+    expect(validatePathsFlags(parsePaths("--all"))).toBe(
+      "--all is only valid with --prune.",
+    );
+    expect(validatePathsFlags(parsePaths("-f"))).toBe(
+      "--force is only valid with --prune.",
+    );
+  });
+
+  it("rejects combining more than one of --dir/--json/--prune", () => {
+    const msg = "--dir, --json, and --prune are mutually exclusive.";
+    expect(validatePathsFlags(parsePaths("--dir", "--json"))).toBe(msg);
+    expect(validatePathsFlags(parsePaths("--dir", "--prune"))).toBe(msg);
+    expect(validatePathsFlags(parsePaths("--json", "--prune"))).toBe(msg);
+  });
+});
+
+describe("pathsEmptyMessage", () => {
+  it("distinguishes no-tests from no-match", () => {
+    expect(pathsEmptyMessage()).toBe("No fuzz tests (*.fuzz.*) found.");
+    expect(pathsEmptyMessage("url")).toBe('No fuzz tests match "url".');
+  });
+});
+
+describe("resolveOrphans (empty-set safety gate)", () => {
+  let tmpDir: string;
+
+  function manifestRow(file: string, name: string): TestManifestRow {
+    return {
+      file,
+      name,
+      hashDir: hashTestPath(file, name),
+      testDataDir: getTestDataDir(file, name),
+      corpusDir: getCorpusDir(file, name),
+      stats: { seeds: 0, crashes: 0, timeouts: 0, ooms: 0, corpus: 0 },
+    };
+  }
+
+  beforeEach(() => {
+    tmpDir = path.join(
+      tmpdir(),
+      `vitiate-resolve-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    mkdirSync(tmpDir, { recursive: true });
+    setDataDir(tmpDir);
+    // Seed an on-disk dir that would look orphaned against an empty manifest.
+    mkdirSync(path.join(tmpDir, "corpus", hashTestPath("gone.fuzz.ts", "x")), {
+      recursive: true,
+    });
+  });
+
+  afterEach(() => {
+    resetDataDir();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("refuses --prune on an empty manifest and does NOT scan disk", () => {
+    expect(resolveOrphans([], parsePaths("--prune"))).toEqual({
+      refuse: true,
+      orphans: [],
+    });
+  });
+
+  it("refuses --orphans on an empty manifest", () => {
+    expect(resolveOrphans([], parsePaths("--orphans"))).toEqual({
+      refuse: true,
+      orphans: [],
+    });
+  });
+
+  it("does not report every dir as orphaned for --json on an empty manifest", () => {
+    expect(resolveOrphans([], parsePaths("--json"))).toEqual({
+      refuse: false,
+      orphans: [],
+    });
+  });
+
+  it("returns no orphans for a plain empty manifest", () => {
+    expect(resolveOrphans([], parsePaths())).toEqual({
+      refuse: false,
+      orphans: [],
+    });
+  });
+
+  it("finds orphans for a non-empty manifest with --orphans", () => {
+    const known = manifestRow("a.fuzz.ts", "known");
+    const { refuse, orphans } = resolveOrphans(
+      [known],
+      parsePaths("--orphans"),
+    );
+    expect(refuse).toBe(false);
+    expect(orphans.map((o) => `${o.kind}/${o.hashDir}`)).toEqual([
+      `corpus/${hashTestPath("gone.fuzz.ts", "x")}`,
+    ]);
+  });
+
+  it("does not scan orphans when no orphan-consuming flag is set", () => {
+    const known = manifestRow("a.fuzz.ts", "known");
+    expect(resolveOrphans([known], parsePaths("url"))).toEqual({
+      refuse: false,
+      orphans: [],
+    });
+  });
+});
+
+describe("promptYesNo", () => {
+  it("resolves true on an affirmative answer", async () => {
+    const input = new PassThrough();
+    const p = promptYesNo("? ", input, new PassThrough());
+    input.write("y\n");
+    expect(await p).toBe(true);
+  });
+
+  it("resolves false on a negative answer", async () => {
+    const input = new PassThrough();
+    const p = promptYesNo("? ", input, new PassThrough());
+    input.write("n\n");
+    expect(await p).toBe(false);
+  });
+
+  it("resolves false on EOF (closed stdin) without hanging", async () => {
+    const input = new PassThrough();
+    const p = promptYesNo("? ", input, new PassThrough());
+    input.end(); // EOF with no answer
+    expect(await p).toBe(false);
+  });
+});
+
+describe("paths orphan detection and prune", () => {
+  let tmpDir: string;
+
+  function manifestRow(file: string, name: string): TestManifestRow {
+    return {
+      file,
+      name,
+      hashDir: hashTestPath(file, name),
+      testDataDir: getTestDataDir(file, name),
+      corpusDir: getCorpusDir(file, name),
+      stats: { seeds: 0, crashes: 0, timeouts: 0, ooms: 0, corpus: 0 },
+    };
+  }
+
+  /**
+   * Create a hash dir on disk under testdata/ or corpus/ with one entry.
+   * testdata entries go in the seeds bucket (where counts are tallied);
+   * corpus entries live directly under the dir. Returns the hash dir path.
+   */
+  function seedDir(kind: "testdata" | "corpus", hashDir: string): string {
+    const dir = path.join(tmpDir, kind, hashDir);
+    const entryDir = kind === "testdata" ? path.join(dir, "seeds") : dir;
+    mkdirSync(entryDir, { recursive: true });
+    writeFileSync(path.join(entryDir, "entry"), "x");
+    return dir;
+  }
+
+  beforeEach(() => {
+    tmpDir = path.join(
+      tmpdir(),
+      `vitiate-paths-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    mkdirSync(tmpDir, { recursive: true });
+    setDataDir(tmpDir);
+  });
+
+  afterEach(() => {
+    resetDataDir();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("reports on-disk dirs with no matching test as orphans", () => {
+    const known = manifestRow("a.fuzz.ts", "known");
+    seedDir("testdata", known.hashDir); // matches a test -> not orphan
+    const staleTestData = hashTestPath("gone.fuzz.ts", "removed");
+    const staleCorpus = hashTestPath("gone.fuzz.ts", "removed2");
+    seedDir("testdata", staleTestData);
+    seedDir("corpus", staleCorpus);
+
+    const orphans = findOrphans([known]);
+    const keys = orphans.map((o) => `${o.kind}/${o.hashDir}`).sort();
+    expect(keys).toEqual([
+      `corpus/${staleCorpus}`,
+      `testdata/${staleTestData}`,
+    ]);
+    expect(orphans.every((o) => o.entries === 1)).toBe(true);
+  });
+
+  it("selects only corpus orphans unless --all is set", () => {
+    const orphans = findOrphans([]); // no known tests
+    seedDir("testdata", hashTestPath("x.fuzz.ts", "t"));
+    seedDir("corpus", hashTestPath("x.fuzz.ts", "c"));
+    const all = findOrphans([]);
+
+    expect(selectPruneTargets(all, false).map((o) => o.kind)).toEqual([
+      "corpus",
+    ]);
+    expect(
+      selectPruneTargets(all, true)
+        .map((o) => o.kind)
+        .sort(),
+    ).toEqual(["corpus", "testdata"]);
+    expect(orphans).toEqual([]); // sanity: computed before seeding
+  });
+
+  it("deleteOrphans removes exactly the given dirs", () => {
+    const a = seedDir("corpus", hashTestPath("x.fuzz.ts", "a"));
+    const b = seedDir("testdata", hashTestPath("x.fuzz.ts", "b"));
+    const orphans = findOrphans([]);
+    deleteOrphans(orphans.filter((o) => o.path === a));
+    expect(existsSync(a)).toBe(false);
+    expect(existsSync(b)).toBe(true);
+  });
+
+  describe("prunePaths confirmation gate", () => {
+    let stdoutSpy: MockInstance;
+    let stderrSpy: MockInstance;
+    let ttyDescriptor: PropertyDescriptor | undefined;
+
+    beforeEach(() => {
+      stdoutSpy = vi
+        .spyOn(process.stdout, "write")
+        .mockImplementation(() => true);
+      stderrSpy = vi
+        .spyOn(process.stderr, "write")
+        .mockImplementation(() => true);
+      ttyDescriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+      process.exitCode = undefined;
+    });
+
+    afterEach(() => {
+      stdoutSpy.mockRestore();
+      stderrSpy.mockRestore();
+      if (ttyDescriptor) {
+        Object.defineProperty(process.stdin, "isTTY", ttyDescriptor);
+      } else {
+        delete (process.stdin as { isTTY?: boolean }).isTTY;
+      }
+      process.exitCode = undefined;
+    });
+
+    function setTTY(value: boolean): void {
+      Object.defineProperty(process.stdin, "isTTY", {
+        value,
+        configurable: true,
+      });
+    }
+
+    it("deletes without prompting when force is set", async () => {
+      const dir = seedDir("corpus", hashTestPath("x.fuzz.ts", "a"));
+      const orphans = findOrphans([]);
+      const confirm = vi.fn<(q: string) => Promise<boolean>>();
+      await prunePaths(orphans, false, true, confirm);
+      expect(confirm).not.toHaveBeenCalled();
+      expect(existsSync(dir)).toBe(false);
+    });
+
+    it("aborts without deleting when non-TTY and not forced", async () => {
+      const dir = seedDir("corpus", hashTestPath("x.fuzz.ts", "a"));
+      const orphans = findOrphans([]);
+      setTTY(false);
+      const confirm = vi.fn<(q: string) => Promise<boolean>>();
+      await prunePaths(orphans, false, false, confirm);
+      expect(confirm).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(1);
+      expect(existsSync(dir)).toBe(true);
+    });
+
+    it("aborts when the user answers no", async () => {
+      const dir = seedDir("corpus", hashTestPath("x.fuzz.ts", "a"));
+      const orphans = findOrphans([]);
+      setTTY(true);
+      const confirm = vi.fn<(q: string) => Promise<boolean>>(async () => false);
+      await prunePaths(orphans, false, false, confirm);
+      expect(confirm).toHaveBeenCalledOnce();
+      expect(existsSync(dir)).toBe(true);
+    });
+
+    it("deletes when the user answers yes", async () => {
+      const dir = seedDir("corpus", hashTestPath("x.fuzz.ts", "a"));
+      const orphans = findOrphans([]);
+      setTTY(true);
+      const confirm = vi.fn<(q: string) => Promise<boolean>>(async () => true);
+      await prunePaths(orphans, false, false, confirm);
+      expect(confirm).toHaveBeenCalledOnce();
+      expect(existsSync(dir)).toBe(false);
+    });
+
+    it("leaves testdata orphans intact unless --all", async () => {
+      const corpusDir = seedDir("corpus", hashTestPath("x.fuzz.ts", "a"));
+      const testDataDir = seedDir("testdata", hashTestPath("x.fuzz.ts", "b"));
+      const orphans = findOrphans([]);
+      await prunePaths(orphans, false, true, vi.fn());
+      expect(existsSync(corpusDir)).toBe(false);
+      expect(existsSync(testDataDir)).toBe(true);
+    });
+
+    it("deletes testdata orphans when --all is set", async () => {
+      const testDataDir = seedDir("testdata", hashTestPath("x.fuzz.ts", "b"));
+      const orphans = findOrphans([]);
+      await prunePaths(orphans, true, true, vi.fn());
+      expect(existsSync(testDataDir)).toBe(false);
+    });
+
+    it("prints a Removed line per target before the summary (audit trail)", async () => {
+      const a = seedDir("corpus", hashTestPath("x.fuzz.ts", "a"));
+      const b = seedDir("corpus", hashTestPath("x.fuzz.ts", "b"));
+      const orphans = findOrphans([]);
+      await prunePaths(orphans, false, true, vi.fn());
+
+      const lines = stdoutSpy.mock.calls.map((c) => String(c[0]));
+      const removedIdx = orphans.map((o) =>
+        lines.findIndex((l) => l.includes(`Removed ${o.path}`)),
+      );
+      const summaryIdx = lines.findIndex((l) => l.startsWith("Pruned "));
+      // Every target has a Removed line, and all precede the summary.
+      expect(removedIdx.every((i) => i >= 0)).toBe(true);
+      expect(Math.max(...removedIdx)).toBeLessThan(summaryIdx);
+      expect(existsSync(a)).toBe(false);
+      expect(existsSync(b)).toBe(false);
+    });
   });
 });
 

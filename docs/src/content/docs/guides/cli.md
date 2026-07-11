@@ -105,6 +105,53 @@ Discovers all `*.fuzz.ts` files, collects their `fuzz()` test names, and creates
 
 The output includes a manifest of discovered tests with their hash directories, which is useful for understanding the on-disk layout.
 
+## Inspecting corpus directories
+
+```bash
+npx vitiate paths
+```
+
+Each fuzz test's seeds, crashes, and corpus live under an opaque content-hash directory (`.vitiate/testdata/<hash>-<slug>/` and `.vitiate/corpus/<hash>-<slug>/`). Because the directory name is a hash of the test's file path and name, you cannot read it back to a test. `vitiate paths` is a read-only inspector that surfaces the mapping: it lists every discovered fuzz test with its seed/crash/timeout counts and its directory. Unlike `init`, it creates nothing.
+
+```bash
+# Filter by a substring of the file, test name, or hash directory
+npx vitiate paths url
+
+# Print only the matched test's directory (must match exactly one test),
+# handy for seeding: cp my-input "$(npx vitiate paths normalize --dir)/seeds/"
+npx vitiate paths normalize --dir
+
+# Machine-readable output for scripting/CI
+npx vitiate paths --json
+
+# Print absolute directory paths instead of project-root-relative ones
+npx vitiate paths --absolute
+```
+
+Passing a substring that matches a hash prefix from a crash path is the way to answer "which test does this directory belong to?".
+
+`--dir`, `--json`, and `--prune` select different output/action modes and are mutually exclusive. `--absolute` only affects the table and `--orphans` list; `--json` and `--dir` always print absolute paths.
+
+### Pruning orphaned directories
+
+When you rename or delete a fuzz test, its old hash directory is left behind. `--orphans` lists these leftovers (across both `testdata/` and `corpus/`), and `--prune` deletes them:
+
+```bash
+# List directories on disk that no longer map to any test
+npx vitiate paths --orphans
+
+# Delete orphaned corpus/ directories (gitignored cache; prompts first)
+npx vitiate paths --prune
+
+# Also delete orphaned testdata/ directories (may hold committed crashes/seeds)
+npx vitiate paths --prune --all
+
+# Skip the confirmation prompt (for non-interactive/CI use)
+npx vitiate paths --prune --force
+```
+
+`--prune` prompts for confirmation before deleting. When stdin is not a TTY (for example in CI) and `--force` is not given, it prints the list and aborts without deleting rather than hanging. Pruning (and `--orphans`) is gated on discovering the current test set: if Vitest is not installed, or if no fuzz tests are discovered at all (for example when run from the wrong directory), `paths` cannot know which directories are still in use, so it refuses to list or delete orphans rather than treating every directory as orphaned.
+
 ## libFuzzer compatibility
 
 The `libfuzzer` subcommand provides a libFuzzer-compatible interface for integration with fuzzing platforms and CI services that expect libFuzzer-style flags and conventions. Unlike the other subcommands, it targets a single test file and accepts positional corpus directories.
