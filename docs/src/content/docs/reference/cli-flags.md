@@ -15,6 +15,7 @@ npx vitiate <subcommand> [options]
 |------------|-------------|
 | `fuzz` | Run fuzz tests via vitest |
 | `regression` | Run regression tests against saved corpus via vitest |
+| `reproduce <file> [flags]` | Replay a single input file once through a fuzz target |
 | `optimize` | Minimize cached corpus via set cover |
 | `libfuzzer <test-file> [corpus-dirs...] [flags]` | libFuzzer-compatible mode |
 | `init` | Discover fuzz tests and create seed directories |
@@ -53,6 +54,37 @@ Spawns `vitest run` filtered to fuzz test files (`*.fuzz.*`) with no special env
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--detectors <spec>` | string | tier 1 | Comma-separated list of bug detectors to enable (see [Detectors syntax](#detectors-syntax)) |
+
+---
+
+## reproduce
+
+```
+npx vitiate reproduce <file> [flags]
+```
+
+Replays a single input file **once** through a fuzz target: `0` on a clean run, and `77` when the input crashes, trips a detector, or times out (the failure's stack trace is printed), matching libFuzzer's single-input reproduce contract. Unlike `regression`, which replays the entire saved corpus, `reproduce` runs exactly one input, making it the tool for reproducing a specific crash artifact.
+
+If the project defines more than one fuzz test, disambiguate with `-test`; otherwise `reproduce` lists the candidates and exits non-zero.
+
+### Positional arguments
+
+| Argument | Description |
+|----------|-------------|
+| `file` | Path to the input byte-file to replay (required) |
+
+### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-test <name>` | string | - | Run only the named fuzz test (required when the project has multiple fuzz tests) |
+| `-timeout <N>` | integer | - | Per-execution timeout in seconds (0 = disabled) |
+
+Example: reproduce a crash artifact written by a fuzzing run.
+
+```
+npx vitiate reproduce .vitiate/testdata/<hashdir>/crashes/crash-<hash> -test parse-url
+```
 
 ---
 
@@ -101,7 +133,7 @@ Runs in libFuzzer-compatible mode. Instruments JS/TS source with edge coverage c
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `-timeout <N>` | integer | `0` | Per-execution timeout in seconds (0 = disabled) |
-| `-runs <N>` | integer | `0` | Total fuzzing iterations (0 = unlimited) |
+| `-runs <N>` | integer | unset | Total fuzzing iterations. A positive value caps main-loop iterations. An explicit `-runs=0` replays the loaded corpus once (no mutation) and exits, matching libFuzzer. Omitting the flag fuzzes without an iteration limit. |
 | `-max_total_time <N>` | integer | `0` | Total fuzzing time limit in seconds (0 = unlimited) |
 | `-test <name>` | string | - | Run only the named fuzz test |
 
@@ -130,14 +162,27 @@ Runs in libFuzzer-compatible mode. Instruments JS/TS source with edge coverage c
 |------|------|---------|-------------|
 | `-merge <0\|1>` | integer | `0` | Corpus minimization mode. Reads all inputs from corpus directories, evaluates coverage, writes minimal set to the first directory. |
 
+### Exit-code flags
+
+Vitiate follows libFuzzer's exit-code conventions out of the box; these flags override the defaults (see [Exit codes](#exit-codes)):
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-error_exitcode <N>` | integer | `77` | Process exit code when a crash is found. |
+| `-timeout_exitcode <N>` | integer | `70` | Process exit code when a timeout is found. |
+
 ### Compatibility flags
 
-These flags are parsed for libFuzzer compatibility but ignored:
+These flags are parsed for libFuzzer compatibility but ignored, so invocations from a fuzzing platform do not abort on an unrecognized flag:
 
 | Flag | Behavior |
 |------|----------|
 | `-fork <N>` | Parsed, ignored (always 1 - Vitiate always uses a single supervised worker) |
 | `-jobs <N>` | Parsed, ignored (always 1 - Vitiate runs a single job at a time) |
+| `-rss_limit_mb <N>` | Parsed, ignored (Vitiate does not enforce an in-process RSS limit) |
+| `-print_final_stats <0\|1>` | Parsed, ignored (Vitiate always prints a run summary) |
+| `-close_fd_mask <N>` | Parsed, ignored (Vitiate does not suppress target stdout/stderr; a non-0 value warns) |
+| `-reload <N>` | Parsed, ignored (single-worker mode has no external corpus to reload) |
 
 ---
 
@@ -153,18 +198,21 @@ Discovers fuzz test files (`*.fuzz.ts`, `*.fuzz.js`, etc.), creates seed directo
 
 ## Exit codes
 
-The `libfuzzer` subcommand runs your target under a supervisor process. The exit code distinguishes a real finding from an environmental or internal failure, so CI can react appropriately:
+The `libfuzzer` subcommand (and the `reproduce` subcommand) run your target under a supervisor process and follow libFuzzer's exit-code conventions, so a fuzzing platform can react appropriately:
 
 | Code | Meaning |
 |------|---------|
-| `0` | Campaign completed with no crash (or a `regression`/`-merge` run succeeded). |
-| `1` | A crash was found. A `crash-*` artifact was written under the artifact prefix. |
+| `0` | Campaign completed with no finding (or a `regression`/`-merge` run succeeded). |
+| `77` | A crash was found. A `crash-*` artifact was written under the artifact prefix. Override with `-error_exitcode`. |
+| `70` | A timeout was found. A `timeout-*` artifact was written. Override with `-timeout_exitcode`. |
 | `78` | vitiate's own fuzzing engine panicked - a bug in vitiate, **not** a crash in your target. No crash artifact is written. Please report it. |
 | `137` | The worker was killed by `SIGKILL` (128 + 9) - typically the OS OOM-killer, a container/cgroup memory limit, a Kubernetes eviction, or a CI step timeout. Treated as an **infrastructure failure**, not a crash. Any in-flight input is preserved under `ooms/` (or `<prefix>oom-*`) for investigation; vitiate does not respawn. |
 
+`77`/`70` match libFuzzer's `error_exitcode`/`timeout_exitcode` defaults. The vitest-driven subcommands (`fuzz`, `regression`) instead exit with vitest's native `0`/`1`, since a failing multi-test run cannot be attributed to a single confirmed crash.
+
 If the worker crashes repeatedly **at startup**, before it ever runs a fuzz input (for example a broken instrumentation step or a module-load error), vitiate stops early - rather than looping up to the respawn limit - and exits with the worker's non-zero exit code. The accompanying stderr message identifies it as a startup/setup failure rather than a target crash.
 
-**Reserved exit codes.** Codes `77` (watchdog timeout) and `78` (engine panic) are used internally to signal the supervisor, and `134` (`SIGABRT`) and `137` (`SIGKILL`/OOM) are interpreted as described above. Avoid having your fuzz target deliberately call `process.exit()` with these values, or the supervisor will interpret the exit specially.
+**Reserved codes.** Internally the worker signals the supervisor with `77` (hard watchdog timeout) and `78` (engine panic), and `134` (`SIGABRT`) / `137` (`SIGKILL`/OOM) are interpreted as above. These are separate from the final process exit code (the supervisor translates them). Avoid having your fuzz target deliberately call `process.exit()` with these values, or the supervisor will interpret the exit specially.
 
 ---
 

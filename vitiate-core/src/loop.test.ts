@@ -356,6 +356,69 @@ describe("fuzz loop", () => {
     expect(result.error!.message).toBe("extra corpus seed hit");
   });
 
+  it("replay-only mode replays the corpus once and reports a crash without fuzzing", async () => {
+    await setupFuzzingMode();
+    const extraDir = path.join(tmpDir, "replay-crash");
+    mkdirSync(extraDir, { recursive: true });
+    writeFileSync(path.join(extraDir, "benign"), "ok");
+    writeFileSync(path.join(extraDir, "boom"), "BOOM");
+
+    let callCount = 0;
+    const target = (data: Buffer): void => {
+      simulateCoverage(data);
+      callCount++;
+      if (data.toString() === "BOOM") {
+        throw new Error("replayed crash");
+      }
+    };
+
+    // No fuzzExecs / fuzzTimeMs: replay-only must terminate on its own after
+    // the finite corpus. If it fell through into the mutation loop (where
+    // maxRuns is Infinity), this call would hang.
+    const result = await runFuzzLoop(
+      target,
+      "replay-crash",
+      "test.fuzz.ts",
+      { replayOnly: true },
+      { corpusDirs: [extraDir] },
+    );
+
+    expect(result.crashed).toBe(true);
+    expect(result.error!.message).toBe("replayed crash");
+    // Only the real corpus entries are replayed (no mutation), so the target
+    // is called at most once per seed.
+    expect(callCount).toBeGreaterThan(0);
+    expect(callCount).toBeLessThanOrEqual(2);
+  });
+
+  it("replay-only mode returns cleanly on a benign corpus, replaying each entry once", async () => {
+    await setupFuzzingMode();
+    const extraDir = path.join(tmpDir, "replay-clean");
+    mkdirSync(extraDir, { recursive: true });
+    writeFileSync(path.join(extraDir, "a"), "one");
+    writeFileSync(path.join(extraDir, "b"), "two");
+    writeFileSync(path.join(extraDir, "c"), "three");
+
+    let callCount = 0;
+    const target = (data: Buffer): void => {
+      simulateCoverage(data);
+      callCount++;
+    };
+
+    const result = await runFuzzLoop(
+      target,
+      "replay-clean",
+      "test.fuzz.ts",
+      { replayOnly: true },
+      { corpusDirs: [extraDir] },
+    );
+
+    expect(result.crashed).toBe(false);
+    // Each of the 3 corpus entries is replayed exactly once, then the loop
+    // exits - it does not fuzz.
+    expect(callCount).toBe(3);
+  });
+
   it("minimizes crash artifact to smaller than the original mutated input", async () => {
     await setupFuzzingMode();
     const covMap = globalThis.__vitiate_cov as Buffer;

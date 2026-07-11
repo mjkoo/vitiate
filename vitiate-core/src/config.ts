@@ -101,6 +101,13 @@ const FuzzOptionsSchema = v.object({
    * not count toward this limit.
    */
   fuzzExecs: v.optional(NonNegativeInteger),
+  /**
+   * Replay-only mode. When `true`, the loaded corpus is executed once each
+   * (no mutation) and the campaign exits; used to honor libFuzzer's
+   * `-runs=0` "replay corpus once" semantics. Distinct from `fuzzExecs: 0`,
+   * which means unlimited.
+   */
+  replayOnly: v.optional(v.boolean()),
   /** RNG seed for reproducible fuzzing. */
   seed: v.optional(AnyInteger),
   /** Maximum target re-executions during crash minimization. Default: 10,000. */
@@ -179,6 +186,12 @@ const CliIpcSchema = v.object({
   artifactPrefix: v.optional(v.string()),
   dictionaryPath: v.optional(v.string()),
   forkExplicit: v.optional(v.boolean()),
+  /**
+   * Absolute path to a single input file to replay, set by the `reproduce`
+   * subcommand. When present, the regression path replays exactly this input
+   * once instead of loading the corpus.
+   */
+  reproduceInputFile: v.optional(v.string()),
 });
 
 export type CliIpc = v.InferOutput<typeof CliIpcSchema>;
@@ -344,6 +357,10 @@ export function getArtifactPrefix(): string | undefined {
 
 export function getCorpusDirs(): string[] | undefined {
   return getCliIpc().corpusDirs;
+}
+
+export function getReproduceInputFile(): string | undefined {
+  return getCliIpc().reproduceInputFile;
 }
 
 export function getMergeControlFile(): string | undefined {
