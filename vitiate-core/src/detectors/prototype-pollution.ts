@@ -56,11 +56,10 @@ function captureSnapshot(name: string, proto: object): PrototypeSnapshot {
   for (const key of Reflect.ownKeys(proto)) {
     const descriptor = Object.getOwnPropertyDescriptor(proto, key);
     if (!descriptor) continue;
-    // Skip function-valued data properties (polyfills) - these are not
-    // pollution targets and should not trigger false positives.
-    if ("value" in descriptor && typeof descriptor.value === "function") {
-      continue;
-    }
+    // Capture every own property - data, accessor, and function-valued
+    // (methods, symbol-keyed methods like Symbol.iterator). This snapshot is
+    // captured once (the pristine table), so retaining the built-in method
+    // references costs O(keys) once rather than per iteration.
     properties.set(key, { ...descriptor });
   }
   return { name, proto, properties };
@@ -158,6 +157,9 @@ export class PrototypePollutionDetector implements Detector {
 
   private snapshots: PrototypeSnapshot[] = [];
   private dirty = true;
+  // Latches true once the pristine table is captured (first beforeIteration).
+  // Orthogonal to `dirty`, which gates per-iteration restore.
+  private captured = false;
   // Dedup for residue warnings. Symbol keys render via formatKey as
   // "Symbol(desc)", so distinct symbols with equal descriptions share a
   // dedup key - acceptable for spam prevention.
@@ -182,9 +184,17 @@ export class PrototypePollutionDetector implements Detector {
 
   beforeIteration(): void {
     this.dirty = true;
+    // Capture the pristine prototype state exactly once, on the first
+    // iteration - after all user modules (and their polyfills) have loaded,
+    // before any target executes. Built-in prototypes do not legitimately
+    // change mid-campaign, so this fixed table is the oracle for every
+    // subsequent iteration; rebuilding it per iteration would retain hundreds
+    // of function references on the hot path.
+    if (this.captured) return;
     this.snapshots = MONITORED_PROTOTYPES.map(({ name, proto }) =>
       captureSnapshot(name, proto),
     );
+    this.captured = true;
   }
 
   afterIteration(targetReturnValue?: unknown): void {
@@ -193,16 +203,12 @@ export class PrototypePollutionDetector implements Detector {
     for (const snapshot of this.snapshots) {
       const { name, proto, properties } = snapshot;
       const currentKeys = Reflect.ownKeys(proto);
+      const currentKeySet = new Set(currentKeys);
 
       // Check for added or modified properties
       for (const key of currentKeys) {
         const descriptor = Object.getOwnPropertyDescriptor(proto, key);
         if (!descriptor) continue;
-        // Skip function-valued data properties (polyfills) - matching
-        // the captureSnapshot filter.
-        if ("value" in descriptor && typeof descriptor.value === "function") {
-          continue;
-        }
 
         const prev = properties.get(key);
         if (prev === undefined) {
@@ -229,10 +235,12 @@ export class PrototypePollutionDetector implements Detector {
         }
       }
 
-      // Check for deleted properties. getOwnPropertyDescriptor works for
-      // both string and symbol keys, unlike hasOwnProperty.
+      // Check for deleted properties. A pristine key is deleted iff it is
+      // absent from the current own keys; the Set (built from Reflect.ownKeys,
+      // which covers string and symbol keys) avoids re-allocating a descriptor
+      // per pristine key on every iteration.
       for (const key of properties.keys()) {
-        if (Object.getOwnPropertyDescriptor(proto, key) === undefined) {
+        if (!currentKeySet.has(key)) {
           firstFinding ??= new VulnerabilityError(
             this.name,
             "Prototype Pollution",
@@ -273,6 +281,9 @@ export class PrototypePollutionDetector implements Detector {
 
   teardown(): void {
     this.snapshots = [];
+    // Clear the latch so a reused instance re-captures a fresh pristine table
+    // on its next campaign's first beforeIteration.
+    this.captured = false;
   }
 
   /**
@@ -289,13 +300,9 @@ export class PrototypePollutionDetector implements Detector {
   private restorePrototype(snapshot: PrototypeSnapshot): void {
     const { name, proto, properties } = snapshot;
 
-    // Remove added non-function properties.
+    // Remove any property absent from the pristine table (added during the
+    // iteration), functions included.
     for (const key of Reflect.ownKeys(proto)) {
-      const descriptor = Object.getOwnPropertyDescriptor(proto, key);
-      if (!descriptor) continue;
-      if ("value" in descriptor && typeof descriptor.value === "function") {
-        continue;
-      }
       if (!properties.has(key) && !Reflect.deleteProperty(proto, key)) {
         this.warnResidue(
           name,
@@ -305,10 +312,15 @@ export class PrototypePollutionDetector implements Detector {
       }
     }
 
-    // Restore all snapshotted properties unconditionally.
-    // defineProperty with the original descriptor is idempotent for
-    // unchanged properties.
+    // Restore pristine descriptors, but only where the current descriptor
+    // actually differs. Redefining every method each reset is wasteful, and an
+    // identical redefine of a non-configurable built-in (e.g.
+    // Function.prototype[Symbol.hasInstance]) is a legal no-op we can skip.
     for (const [key, descriptor] of properties) {
+      const current = Object.getOwnPropertyDescriptor(proto, key);
+      if (current !== undefined && !descriptorChanged(current, descriptor)) {
+        continue;
+      }
       try {
         Object.defineProperty(proto, key, descriptor);
       } catch (e) {

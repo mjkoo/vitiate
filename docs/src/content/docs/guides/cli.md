@@ -93,6 +93,8 @@ Minimizes the cached corpus for all fuzz tests by evaluating each input's covera
 
 The `--detectors` flag works the same as in `vitiate fuzz`. Unrecognized flags are forwarded to Vitest.
 
+Pass `--timeout <seconds>` to bound each corpus entry's replay: an entry that exceeds the limit is skipped with a warning instead of hanging the run. This overrides any per-test `timeoutMs` option; `--timeout 0` disables the watchdog. Without it, replay relies on the per-test `timeoutMs` (if set), and an unbounded entry falls back to the process-wide watchdog kill.
+
 ## Project setup
 
 ```bash

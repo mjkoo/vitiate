@@ -1,8 +1,4 @@
-## Purpose
-
-Bug detector that monitors built-in JavaScript prototypes for unauthorized modifications during fuzz target execution, using a snapshot-and-diff approach.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Prototype pollution detection via snapshot diffing
 
@@ -69,32 +65,6 @@ The detector SHALL have `name: "prototype-pollution"` and `tier: 2`.
 - **THEN** the detector SHALL throw a `VulnerabilityError` for the snapshot-diff finding (`changeType: "added"` or `"modified"`)
 - **AND** the reference leak finding SHALL NOT be reported
 
-### Requirement: Monitored prototypes
-
-The detector SHALL monitor the following built-in prototypes:
-
-- `Object.prototype`
-- `Array.prototype`
-- `String.prototype`
-- `Number.prototype`
-- `Boolean.prototype`
-- `Function.prototype`
-- `RegExp.prototype`
-- `Date.prototype`
-- `Map.prototype`
-- `Set.prototype`
-- `Promise.prototype`
-- `Error.prototype`
-- `WeakMap.prototype`
-- `WeakSet.prototype`
-- `ArrayBuffer.prototype`
-- `Int8Array.prototype`, `Uint8Array.prototype`, `Int16Array.prototype`, `Uint16Array.prototype`, `Int32Array.prototype`, `Uint32Array.prototype`, `Float32Array.prototype`, `Float64Array.prototype`, `BigInt64Array.prototype`, `BigUint64Array.prototype`
-
-#### Scenario: All monitored prototypes are checked
-
-- **WHEN** `afterIteration()` runs
-- **THEN** the detector SHALL compare all listed prototypes against their `beforeIteration()` snapshots
-
 ### Requirement: Prototype state restoration after detection
 
 The prototype pollution detector SHALL separate detection from restoration:
@@ -138,21 +108,3 @@ Because the pristine table is captured once and not re-baselined, a mutation tha
 - **WHEN** one iteration pollutes a monitored prototype, is detected, and is reset
 - **AND** a later iteration in the same campaign introduces a fresh pollution
 - **THEN** the later pollution SHALL still be detected against the pristine table captured on the first iteration (the table is not cleared between iterations)
-
-### Requirement: Prototype pollution dictionary tokens
-
-The detector's `getTokens()` SHALL return tokens that guide the mutator toward producing prototype-pollution-triggering inputs:
-
-- `__proto__`
-- `constructor`
-- `prototype`
-- `__defineGetter__`
-- `__defineSetter__`
-- `__lookupGetter__`
-- `__lookupSetter__`
-
-#### Scenario: Tokens are returned as Uint8Array
-
-- **WHEN** `getTokens()` is called
-- **THEN** each token SHALL be returned as a UTF-8 encoded `Uint8Array`
-- **AND** the returned array SHALL contain at least the seven tokens listed above

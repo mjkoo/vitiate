@@ -865,6 +865,59 @@ describe("regression and optimize subcommand flags", () => {
     expect(fuzzOptions.detectors.pathTraversal).toBe(true);
   });
 
+  it("optimize --timeout sets VITIATE_OPTIONS.timeoutMs in milliseconds", async () => {
+    process.argv = ["node", "vitiate", "optimize", "--timeout", "5"];
+    mockSpawnSuccess();
+    await main();
+    const mockSpawnSync = vi.mocked(spawnSync);
+    expect(mockSpawnSync).toHaveBeenCalledOnce();
+    const [, , options] = mockSpawnSync.mock.calls[0]!;
+    const env = (options as { env: Record<string, string> }).env;
+    expect(env["VITIATE_OPTIMIZE"]).toBe("1");
+    const fuzzOptions = JSON.parse(env["VITIATE_OPTIONS"]!);
+    // CLI seconds are converted to internal milliseconds.
+    expect(fuzzOptions.timeoutMs).toBe(5000);
+  });
+
+  it("optimize --timeout 0 disables the watchdog (timeoutMs 0)", async () => {
+    process.argv = ["node", "vitiate", "optimize", "--timeout", "0"];
+    mockSpawnSuccess();
+    await main();
+    const [, , options] = vi.mocked(spawnSync).mock.calls[0]!;
+    const env = (options as { env: Record<string, string> }).env;
+    const fuzzOptions = JSON.parse(env["VITIATE_OPTIONS"]!);
+    expect(fuzzOptions.timeoutMs).toBe(0);
+  });
+
+  it("optimize combines --timeout and --detectors in one VITIATE_OPTIONS", async () => {
+    process.argv = [
+      "node",
+      "vitiate",
+      "optimize",
+      "--timeout",
+      "3",
+      "--detectors",
+      "pathTraversal",
+    ];
+    mockSpawnSuccess();
+    await main();
+    const [, , options] = vi.mocked(spawnSync).mock.calls[0]!;
+    const env = (options as { env: Record<string, string> }).env;
+    const fuzzOptions = JSON.parse(env["VITIATE_OPTIONS"]!);
+    expect(fuzzOptions.timeoutMs).toBe(3000);
+    expect(fuzzOptions.detectors.pathTraversal).toBe(true);
+  });
+
+  it("optimize without --timeout omits timeoutMs", async () => {
+    process.argv = ["node", "vitiate", "optimize"];
+    mockSpawnSuccess();
+    await main();
+    const [, , options] = vi.mocked(spawnSync).mock.calls[0]!;
+    const env = (options as { env: Record<string, string> }).env;
+    // No options flags -> VITIATE_OPTIONS is not set at all.
+    expect(env["VITIATE_OPTIONS"]).toBeUndefined();
+  });
+
   it("regression forwards unknown flags to vitest", async () => {
     process.argv = ["node", "vitiate", "regression", "--reporter", "dot"];
     mockSpawnSuccess();

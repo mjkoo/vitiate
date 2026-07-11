@@ -69,6 +69,7 @@ Sets `VITIATE_OPTIMIZE=1` and spawns `vitest run` filtered to fuzz test files (`
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--detectors <spec>` | string | tier 1 | Comma-separated list of bug detectors to enable (see [Detectors syntax](#detectors-syntax)) |
+| `--timeout <seconds>` | integer | per-test `timeoutMs` | Per-entry replay timeout in seconds; a slower entry is skipped with a warning. Overrides the per-test `timeoutMs`. `0` disables the watchdog. |
 
 ---
 
