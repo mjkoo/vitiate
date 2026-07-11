@@ -472,6 +472,14 @@ function registerFuzzTest(
             shmem,
             relativeTestFilePath,
             testName: name,
+            // Pin the forks pool so the fuzz loop runs in a forked pool
+            // worker (a disposable child process) rather than a worker
+            // thread sharing the orchestrator. This keeps the topology the
+            // supervisor's recovery protocol assumes deterministic
+            // regardless of the user's configured pool, and matches the
+            // pool `reproduce` replays under so findings reproduce in the
+            // same environment they were found in. forks is vitest's
+            // default, so this is a no-op for the common case.
             spawnChild: () =>
               spawn(
                 process.execPath,
@@ -481,6 +489,7 @@ function registerFuzzTest(
                   testFilePath,
                   "--test-name-pattern",
                   testNamePattern,
+                  "--pool=forks",
                   ...(configFile ? ["--config", configFile] : []),
                 ],
                 {

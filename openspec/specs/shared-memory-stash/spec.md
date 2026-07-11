@@ -72,6 +72,24 @@ The stash operation MAY be invoked from either JavaScript (via `ShmemHandle.stas
 - **WHEN** `fuzzer.stashInput(input)` is called (for calibration or stage stashing)
 - **THEN** the input is written to the owned ShmemHandle using the same seqlock protocol
 
+### Requirement: Orderly-shutdown stash clearing
+
+`Fuzzer.shutdown()` SHALL reset the stash generation counter to 0. The fuzz loop calls `shutdown()` in its finally block, so every orderly child exit - clean completion, in-band crash findings, in-band soft timeouts, or a JS error unwinding through the loop - clears the stash. Abrupt deaths (native crash, watchdog `_exit`, SIGKILL) skip the finally block and leave the stash intact, making a surviving stash a reliable death certificate: the supervisor treats a valid stash after a child exit as evidence the fuzz loop died mid-execution (see the parent-supervisor capability).
+
+There is no race with the watchdog's `_exit` path: the watchdog only fires while armed, and it is disarmed whenever the loop is able to reach its finally block.
+
+#### Scenario: Shutdown clears the stash
+
+- **WHEN** the fuzz loop completes and its finally block calls `fuzzer.shutdown()`
+- **THEN** the stash generation is reset to 0
+- **AND** a subsequent `read_consistent()` returns nothing (no stale death certificate)
+
+#### Scenario: Abrupt death leaves the stash intact
+
+- **WHEN** the child process dies mid-execution without reaching the fuzz loop's finally block
+- **THEN** the stash still holds the in-flight input with an even, non-zero generation
+- **AND** the parent can recover it as a crash/timeout artifact
+
 ### Requirement: Parent-side shmem read
 
 After the child dies, the parent SHALL read the crashing input from the shmem region. The parent SHALL read `generation` with acquire semantics, then read `input_len` and `input_buf`. Since the parent only reads after `waitpid` returns (child is dead), there is no concurrent writer -- the acquire/release semantics provide ordering guarantees against the child's last write.

@@ -122,7 +122,7 @@ The subcommand SHALL:
 
 1. Resolve the input file to an absolute path; if it does not exist, print an error to stderr and exit with code 1 without running any test.
 2. Discover the project's fuzz tests (globbing `*.fuzz.*` and collecting fully-qualified names). When `-test` is provided, filter to the exactly-matching name. If no test matches, print an error and exit 1; if more than one matches, list the candidate `file :: name` pairs and exit 1.
-3. Spawn `vitest run <testFile> --test-name-pattern ^<name>$` **once** (single process, no supervisor/shmem), passing the absolute input path to the worker via the `reproduceInputFile` field of the `VITIATE_CLI_IPC` JSON blob and the `-timeout` value (converted to ms) via `VITIATE_OPTIONS`. When `-timeout` is omitted it SHALL default to libFuzzer's `-timeout` default (1200 seconds) so the replay runs under the watchdog and a hung input is bounded by the watchdog's `_exit` fallback rather than only vitest's `testTimeout`; `-timeout 0` disables the watchdog. It SHALL NOT set `VITIATE_FUZZ`, `VITIATE_OPTIMIZE`, or `VITIATE_SUPERVISOR`, so the worker takes the regression replay path.
+3. Spawn `vitest run <testFile> --test-name-pattern ^<name>$ --pool=forks` **once** (single process, no supervisor/shmem), passing the absolute input path to the worker via the `reproduceInputFile` field of the `VITIATE_CLI_IPC` JSON blob and the `-timeout` value (converted to ms) via `VITIATE_OPTIONS`. It SHALL pin the `forks` pool so the replay runs on a child-process main thread and the watchdog is available (under `pool: 'threads'` the watchdog is disabled and only vitest's `testTimeout` bounds a hang). When `-timeout` is omitted it SHALL default to an interactive replay timeout of 30 seconds (deliberately not libFuzzer's batch `-timeout` default of 1200 seconds) so the replay runs under the watchdog and a hung input is bounded by the watchdog's `_exit` fallback rather than only vitest's `testTimeout`; `-timeout 0` disables the watchdog. It SHALL NOT set `VITIATE_FUZZ`, `VITIATE_OPTIMIZE`, or `VITIATE_SUPERVISOR`, so the worker takes the regression replay path.
 4. Map the spawned vitest status to the final exit code: `0` when vitest succeeds, otherwise the crash exit code (`77`).
 
 When `reproduceInputFile` is present, the worker's regression path SHALL replay exactly that input once via `replayCorpusEntry` (skipping corpus loading), so a crash, detector finding, or timeout throws with the failure's stack trace.
@@ -140,7 +140,7 @@ When `reproduceInputFile` is present, the worker's regression path SHALL replay 
 #### Scenario: Default replay timeout when -timeout is omitted
 
 - **WHEN** `npx vitiate reproduce ./input.bin -test parse-url` is executed without `-timeout`
-- **THEN** vitest SHALL be spawned with a `VITIATE_OPTIONS` JSON containing `timeoutMs: 1200000` (libFuzzer's 1200s default) so the replay runs under the watchdog
+- **THEN** vitest SHALL be spawned with a `VITIATE_OPTIONS` JSON containing `timeoutMs: 30000` (the interactive replay default) so the replay runs under the watchdog
 
 #### Scenario: Disabling the replay watchdog
 
@@ -165,15 +165,22 @@ The subcommand SHALL set `VITIATE_OPTIMIZE=1` in the environment, then spawn `vi
 
 Both positional arguments and unrecognized option-like arguments SHALL be forwarded to vitest. The `--` separator SHALL force all subsequent tokens to be forwarded verbatim.
 
+The spawn SHALL pin the `forks` pool (`--pool=forks`) so replay and minimization run on a child-process main thread where the replay watchdog is available and `--timeout` is honored (under `pool: 'threads'` the watchdog is disabled). When the forwarded arguments already contain a `--pool` flag, the pin SHALL be omitted (vitest's CLI rejects a repeated `--pool`), letting the explicit user pool win.
+
 #### Scenario: Basic optimize invocation
 
 - **WHEN** `npx vitiate optimize` is executed
-- **THEN** `vitest run .fuzz.ts` SHALL be spawned with `VITIATE_OPTIMIZE=1`
+- **THEN** `vitest run .fuzz.ts` SHALL be spawned with `VITIATE_OPTIMIZE=1` and `--pool=forks`
 
 #### Scenario: Optimize with per-entry timeout
 
 - **WHEN** `npx vitiate optimize --timeout 5` is executed
 - **THEN** vitest SHALL be spawned with `VITIATE_OPTIMIZE=1` and a `VITIATE_OPTIONS` JSON containing `timeoutMs: 5000`
+
+#### Scenario: Optimize with an explicit user pool
+
+- **WHEN** `npx vitiate optimize --pool=threads` is executed
+- **THEN** vitest SHALL be spawned with `--pool=threads` and without `--pool=forks`
 
 ### Requirement: libfuzzer subcommand
 

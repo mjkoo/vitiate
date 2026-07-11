@@ -23,6 +23,7 @@ mod pipeline;
 mod redqueen;
 mod scheduling;
 mod seed_evaluation;
+mod shutdown;
 mod stage_lifecycle;
 mod token_promotion;
 mod unicode;

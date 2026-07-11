@@ -82,9 +82,11 @@ export interface SupervisorResult {
   crashed: boolean;
   /**
    * Path to the crash/timeout artifact written by the parent from shmem.
-   * Only populated for signal-death and watchdog-timeout crashes (where the
-   * parent recovers the input). For JS-level crashes (exit code 1), the
-   * child writes the artifact directly and this field is undefined.
+   * Only populated for abrupt child deaths (signal death, watchdog timeout,
+   * or a pool worker dying with its shmem stash intact) where the parent
+   * recovers the input. For in-band findings (exit code 1 with a cleared
+   * stash), the child writes the artifact directly and this field is
+   * undefined.
    */
   crashArtifactPath?: string;
   signal?: string;
@@ -154,6 +156,16 @@ export function waitForChild(
  * Run the supervisor wait/respawn loop. Spawns a child process, waits for
  * it to exit, handles crashes (signal death, watchdog timeout), writes
  * crash artifacts from shmem, and respawns.
+ *
+ * Two observation channels cover the two places a death can surface:
+ * - **Direct child exit code / signal** (waitpid): covers deaths of the
+ *   spawned process itself - the vitest orchestrator, or any topology where
+ *   the fuzz loop runs in the direct child's process.
+ * - **Shmem stash + artifacts**: covers deaths of the orchestrator's pool
+ *   worker (the forks-pool process that actually hosts the fuzz loop),
+ *   which the orchestrator absorbs and re-reports as plain exit code 1. A
+ *   stash that survives the child is the worker's death certificate; see
+ *   the exit-code-1 branch below.
  */
 export async function runSupervisor(
   options: SupervisorOptions,
@@ -373,12 +385,46 @@ export async function runSupervisor(
       }
 
       if (code === 1) {
-        // Check whether the child actually wrote new crash artifacts.
-        // Exit code 1 without new artifacts typically means a vitest
-        // infrastructure failure (worker timeout, module resolution, etc.).
         const newArtifacts = listCrashArtifacts().filter(
           (f) => !preExistingCrashes.has(f),
         );
+
+        // Abrupt worker death detection. The direct child is a vitest
+        // orchestrator; the fuzz loop runs in its (forks) pool worker one
+        // level below, and the orchestrator absorbs the worker's death -
+        // signal, watchdog `_exit`, or SIGKILL - reporting plain exit code 1.
+        // The stash is the channel that survives: every input is stashed to
+        // shmem before execution and the child clears the stash on orderly
+        // shutdown (`Fuzzer::shutdown` in the fuzz loop's finally block), so
+        // a stash outliving the child means the worker died mid-execution.
+        // Classify via artifacts: the watchdog writes its `timeout-*`
+        // artifact before `_exit`, so all-timeout new artifacts mean a hard
+        // timeout; anything else is a crash. Recover the input and respawn,
+        // exactly as if the death had been observed directly. (A worker-level
+        // OOM SIGKILL is indistinguishable from a crash here; it classifies
+        // as a crash with the input preserved, rather than the `ooms/`
+        // diagnosis used when the direct child is SIGKILLed.)
+        if (shmem.readConsistent() !== null) {
+          const kind: ArtifactKind =
+            newArtifacts.length > 0 &&
+            newArtifacts.every((f) => f.startsWith("timeout-"))
+              ? "timeout"
+              : "crash";
+          process.stderr.write(
+            `vitiate: child worker died abruptly mid-execution ` +
+              `(in-flight input recovered from shmem); treating as ${kind}\n`,
+          );
+          const outcome = respawnAfterRecovery(kind, { exitCode: 1 });
+          if (outcome !== null) return outcome;
+          continue;
+        }
+
+        // No surviving stash: the child completed its campaign (or failed
+        // before fuzzing). Check whether it actually wrote new crash
+        // artifacts. Exit code 1 without new artifacts typically means a
+        // vitest infrastructure failure (worker timeout, module resolution,
+        // etc.).
+        //
         // A soft timeout (in-loop watchdog / async idle) also exits the child
         // with code 1, but writes a `timeout-*` artifact rather than `crash-*`.
         // When the only new artifacts are timeouts, classify the finding as a

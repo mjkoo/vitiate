@@ -6,6 +6,7 @@ export default defineConfig({
       "test/e2e-fuzz.test.ts",
       "test/e2e-detectors.test.ts",
       "test/e2e-reproduce.test.ts",
+      "test/e2e-supervisor-recovery.test.ts",
     ],
   },
 });

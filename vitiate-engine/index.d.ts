@@ -97,13 +97,23 @@ get didWatchdogFire(): boolean
  */
 disarmWatchdog(): void
 /**
- * Disable CmpLog recording and shut down the owned watchdog thread.
+ * Disable CmpLog recording, shut down the owned watchdog thread, and
+ * clear the shmem stash.
  *
  * Disables CmpLog recording so non-deterministic GC of this Fuzzer
  * cannot interfere with a future Fuzzer's CmpLog state. Signals the
  * background watchdog thread to exit, wakes it via condvar, and joins
  * it. No-op for the watchdog if none was provided at construction or
  * if already shut down. Called from the fuzz loop's finally block.
+ *
+ * Clearing the stash makes a surviving stash a reliable abrupt-death
+ * certificate for the supervisor: every input is stashed before
+ * execution, and this shutdown runs on every orderly exit (including
+ * in-band crash findings), so a stash that outlives the child process
+ * means it died mid-execution (native crash, watchdog `_exit`,
+ * SIGKILL) without reaching the fuzz loop's finally block. There is no
+ * race with the watchdog's fire path: the watchdog is disarmed
+ * whenever the loop is able to reach its finally block.
  */
 shutdown(): void
 /**

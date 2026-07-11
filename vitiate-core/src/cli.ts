@@ -701,19 +701,27 @@ export const DEFAULT_TIMEOUT_EXITCODE = 70;
 
 /**
  * Default per-execution replay timeout (seconds) for the `reproduce`
- * subcommand when `-timeout` is omitted, matching libFuzzer's `-timeout`
- * default. Without it the single-input replay runs with no vitiate watchdog
- * and a hung input is bounded only by vitest's `testTimeout` (which cannot
- * interrupt a synchronous loop). Defaulting arms the watchdog so any hang is
- * bounded by its `_exit` fallback and attributed with a `timeout-*` artifact.
- * Pass `-timeout 0` to disable the watchdog.
+ * subcommand when `-timeout` is omitted. Without it the single-input replay
+ * runs with no vitiate watchdog and a hung input is bounded only by vitest's
+ * `testTimeout` (which cannot interrupt a synchronous loop). Defaulting arms
+ * the watchdog so any hang is bounded by its `_exit` fallback.
+ *
+ * Sized for interactive single-input replay, not libFuzzer's batch `-timeout`
+ * default (1200s): a fuzz-target execution is sub-millisecond by construction,
+ * so 30s never false-positives on a real terminating input while still
+ * surfacing a hang to a waiting human quickly. A synchronous hang is
+ * interrupted at ~this value; an async idle-await hang - which V8
+ * `TerminateExecution` cannot interrupt - surfaces at the watchdog's `_exit`
+ * fallback, roughly `5x` this value (the engine's `exit_timeout_multiplier`).
+ * Pass `-timeout 1200` for libFuzzer parity or `-timeout 0` to disable.
  */
-export const DEFAULT_REPRODUCE_TIMEOUT_SECONDS = 1200;
+export const DEFAULT_REPRODUCE_TIMEOUT_SECONDS = 30;
 
 /**
  * Resolve the `reproduce` replay timeout (milliseconds) from the parsed
- * `-timeout` flag (seconds). Omitted arms the watchdog at libFuzzer's default;
- * an explicit value wins; `0` stays `0` and disables the watchdog.
+ * `-timeout` flag (seconds). Omitted arms the watchdog at the interactive
+ * default ({@link DEFAULT_REPRODUCE_TIMEOUT_SECONDS}); an explicit value wins;
+ * `0` stays `0` and disables the watchdog.
  *
  * :param timeoutSeconds: the parsed `-timeout` value in seconds, or undefined.
  * :returns: the timeout in milliseconds for `FuzzOptions.timeoutMs`.
@@ -836,6 +844,12 @@ async function runMergeChildMode(
     {
       include: [testFile],
       testTimeout: 0,
+      // Pin the forks pool so merge replay runs on a forked pool worker's
+      // main thread (`isMainThread === true`), letting the replay watchdog
+      // arm regardless of the user's configured pool (see `makeReplayRunner`
+      // in fuzz.ts). forks is vitest's default, so this is a no-op for the
+      // common case.
+      pool: "forks",
       ...(testName
         ? { testNamePattern: `^${escapeStringRegexp(testName)}$` }
         : {}),
@@ -889,6 +903,12 @@ async function runChildMode(
     {
       include: [testFile],
       testTimeout: 0,
+      // Pin the forks pool so the fuzz loop runs in a forked pool worker (a
+      // disposable child process), keeping the topology the supervisor's
+      // recovery protocol assumes deterministic regardless of the user's
+      // configured pool, and matching the pool `reproduce` replays under.
+      // forks is vitest's default, so this is a no-op for the common case.
+      pool: "forks",
       ...(testName
         ? { testNamePattern: `^${escapeStringRegexp(testName)}$` }
         : {}),
@@ -1645,8 +1665,9 @@ async function runReproduceSubcommand(
     return;
   }
 
-  // Default to libFuzzer's `-timeout` value so a hung single-input replay is
-  // bounded by the watchdog's `_exit` fallback rather than relying on vitest's
+  // Arm the watchdog by default (an interactive-scale timeout, see
+  // DEFAULT_REPRODUCE_TIMEOUT_SECONDS) so a hung single-input replay is bounded
+  // by the watchdog's `_exit` fallback rather than relying on vitest's
   // `testTimeout` (which a synchronous loop never yields to). An explicit
   // `-timeout` wins; `-timeout 0` disables the watchdog.
   const options: FuzzOptions = {
@@ -1661,9 +1682,24 @@ async function runReproduceSubcommand(
 
   const targetFilePath = path.join(getProjectRoot(), target.file);
   const testNamePattern = `^${escapeStringRegexp(target.name)}$`;
+  // Pin the forks pool so the replay runs on a child-process main thread
+  // (`isMainThread === true`), which is what lets the regression path arm the
+  // watchdog (see `makeReplayRunner` in fuzz.ts). Under `pool: 'threads'` the
+  // watchdog is disabled because its `_exit` fallback would kill sibling test
+  // threads - but reproduce is a one-shot single-input replay in a disposable
+  // process with no siblings, so forcing forks is safe and makes the default
+  // timeout apply regardless of the user's configured pool. forks is vitest's
+  // default, so this is a no-op for the common case.
   const result = spawnSync(
     process.execPath,
-    [vitestCli, "run", targetFilePath, "--test-name-pattern", testNamePattern],
+    [
+      vitestCli,
+      "run",
+      targetFilePath,
+      "--test-name-pattern",
+      testNamePattern,
+      "--pool=forks",
+    ],
     { env, stdio: "inherit" },
   );
 
@@ -1692,7 +1728,21 @@ function runOptimizeSubcommand(
     options.timeoutMs = parsed.timeout * 1000;
   }
   Object.assign(env, buildOptionsEnv(options));
-  spawnVitestWrapper(env, [...parsed.vitestArgs, ...parsed.positionalArgs]);
+  // Pin the forks pool so optimize's replay/minimization runs on a forked
+  // pool worker's main thread (`isMainThread === true`), letting the replay
+  // watchdog arm - and `--timeout` be honored - regardless of the user's
+  // configured pool (see `makeReplayRunner` in fuzz.ts). An explicit user
+  // `--pool` in the passthrough args wins: vitest's CLI rejects a repeated
+  // `--pool`, so the pin is only added when the user did not set one. forks
+  // is vitest's default, so this is a no-op for the common case.
+  const forwardedArgs = [...parsed.vitestArgs, ...parsed.positionalArgs];
+  const userSetPool = forwardedArgs.some(
+    (arg) => arg === "--pool" || arg.startsWith("--pool="),
+  );
+  spawnVitestWrapper(
+    env,
+    userSetPool ? forwardedArgs : ["--pool=forks", ...forwardedArgs],
+  );
 }
 
 export async function main(): Promise<void> {

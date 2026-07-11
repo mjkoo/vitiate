@@ -33,12 +33,14 @@ unsafe extern "C" {
     ) -> i32;
 }
 
-/// Initialize the V8 isolate cache. Must be called from the main thread.
+/// Initialize the V8 isolate cache. Must be called from the JS thread that
+/// runs the fuzz loop (`Isolate::GetCurrent()` is thread-local, so the
+/// caching thread determines which isolate the watchdog terminates).
 /// Returns `true` if the isolate was cached successfully.
 pub(crate) fn v8_init() -> bool {
-    // SAFETY: Called once from the main thread during Watchdog construction.
-    // The C++ shim caches `v8::Isolate::GetCurrent()` which is valid on the
-    // main thread where Node.js runs.
+    // SAFETY: Called once during Watchdog construction, on the JS thread
+    // that will run the fuzz targets. The C++ shim caches
+    // `v8::Isolate::GetCurrent()`, which is valid on that thread.
     unsafe { vitiate_v8_init() == 1 }
 }
 
@@ -47,16 +49,17 @@ pub(crate) fn v8_init() -> bool {
 /// Returns `true` if the call succeeded.
 pub(crate) fn v8_terminate() -> bool {
     // SAFETY: `TerminateExecution` is documented as thread-safe in V8.
-    // The cached isolate pointer was set by `v8_init` on the main thread.
+    // The cached isolate pointer was set by `v8_init` on the JS thread
+    // running the fuzz loop, which outlives the watchdog's armed windows.
     unsafe { vitiate_v8_terminate() == 1 }
 }
 
 /// Call `v8::Isolate::CancelTerminateExecution()` on the cached isolate.
-/// Called from the main thread to clear a pending termination flag.
+/// Called from the fuzz loop's JS thread to clear a pending termination flag.
 /// Returns `true` if the call succeeded.
 pub(crate) fn v8_cancel_terminate() -> bool {
-    // SAFETY: Called from the main thread during `disarm()`. The isolate
-    // pointer is valid for the lifetime of the Node.js process.
+    // SAFETY: Called from the fuzz loop's JS thread during `disarm()`. The
+    // isolate pointer is valid for the lifetime of that thread's isolate.
     unsafe { vitiate_v8_cancel_terminate() == 1 }
 }
 
