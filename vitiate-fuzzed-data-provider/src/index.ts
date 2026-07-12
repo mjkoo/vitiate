@@ -13,6 +13,8 @@
  *   - Uses DataView instead of Buffer read methods
  *   - consumeBytes/consumeRemainingAsBytes return Uint8Array instead of number[]
  *   - String methods use an options object instead of positional parameters
+ *     (a positional encoding/printable argument throws a TypeError rather than
+ *     being silently ignored)
  *   - Uses standard TypeError/RangeError instead of custom FloatLengthError
  */
 
@@ -64,6 +66,28 @@ function assertNonNegativeInteger(value: number, name: string): void {
   }
   if (value < 0) {
     throw new RangeError(`${name} must be non-negative`);
+  }
+}
+
+/**
+ * Reject a non-object `options` argument for the string methods.
+ *
+ * jazzer.js uses a positional `consumeString(maxLength, encoding, printable)`
+ * signature; this provider uses an options object instead. A ported harness
+ * passing a positional string encoding would otherwise land it in `options`,
+ * be silently ignored, and change behavior with no error. Throwing turns that
+ * migration hazard into an explicit, actionable failure at the call site.
+ */
+function assertStringOptions(options: unknown): void {
+  if (
+    options !== undefined &&
+    (typeof options !== "object" || options === null)
+  ) {
+    throw new TypeError(
+      'string options must be an object like { encoding: "ascii" }, not a ' +
+        "positional argument; jazzer.js-style positional encoding/printable " +
+        "arguments are not supported",
+    );
   }
 }
 
@@ -484,6 +508,7 @@ export class FuzzedDataProvider {
 
   consumeString(maxLength: number, options?: StringOptions): string {
     assertNonNegativeInteger(maxLength, "maxLength");
+    assertStringOptions(options);
 
     const encoding = options?.encoding ?? "utf-8";
     const printable = options?.printable ?? false;
@@ -520,6 +545,7 @@ export class FuzzedDataProvider {
   ): string[] {
     assertNonNegativeInteger(maxArrayLength, "maxArrayLength");
     assertNonNegativeInteger(maxStringLength, "maxStringLength");
+    assertStringOptions(options);
 
     const result: string[] = [];
     while (result.length < maxArrayLength && this.remainingBytes > 0) {

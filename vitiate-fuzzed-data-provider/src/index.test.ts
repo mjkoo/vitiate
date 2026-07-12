@@ -587,6 +587,21 @@ describe("FuzzedDataProvider", () => {
     it("throws TypeError for non-integer maxLength", () => {
       expect(() => fdp(0xff).consumeString(2.5)).toThrow(TypeError);
     });
+
+    it("throws TypeError for a jazzer.js-style positional encoding argument", () => {
+      const loose = fdp(0x41, 0x42) as unknown as {
+        consumeString(maxLength: number, options?: unknown): string;
+      };
+      expect(() => loose.consumeString(10, "ascii")).toThrow(TypeError);
+    });
+
+    it("throws TypeError for a positional non-object options argument", () => {
+      const loose = fdp(0x41, 0x42) as unknown as {
+        consumeString(maxLength: number, options?: unknown): string;
+      };
+      expect(() => loose.consumeString(10, true)).toThrow(TypeError);
+      expect(() => loose.consumeString(10, null)).toThrow(TypeError);
+    });
   });
 
   describe("consumeRemainingAsString", () => {
@@ -642,6 +657,19 @@ describe("FuzzedDataProvider", () => {
     it("throws TypeError for non-integer parameters", () => {
       expect(() => fdp(0xff).consumeStringArray(1.5, 5)).toThrow(TypeError);
       expect(() => fdp(0xff).consumeStringArray(3, 1.5)).toThrow(TypeError);
+    });
+
+    it("throws TypeError for a positional encoding argument, even with an empty array", () => {
+      const loose = fdp(0x41, 0x42) as unknown as {
+        consumeStringArray(
+          maxArrayLength: number,
+          maxStringLength: number,
+          options?: unknown,
+        ): string[];
+      };
+      // Guard fires before the loop, so it throws even when maxArrayLength is 0.
+      expect(() => loose.consumeStringArray(3, 5, "ascii")).toThrow(TypeError);
+      expect(() => loose.consumeStringArray(0, 5, "ascii")).toThrow(TypeError);
     });
   });
 

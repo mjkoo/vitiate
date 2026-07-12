@@ -17,7 +17,7 @@ Vitiate loads inputs from two locations. Both use a **hash directory** name: a b
 
 For example, a test named `"parse does not crash"` would have its seed corpus at `.vitiate/testdata/vxr4kpqyb12fza1gv81bjj8k3i64mlqn-parse_does_not_crash/seeds/`.
 
-Files you create manually to give the fuzzer a starting point. Good seeds exercise different code paths in your target. Crash and timeout artifacts are stored in sibling directories (`crashes/` and `timeouts/`).
+Files you create manually to give the fuzzer a starting point. Good seeds exercise different code paths in your target. Crash, timeout, and out-of-memory artifacts are stored in sibling directories (`crashes/`, `timeouts/`, and `ooms/`).
 
 The easiest way to discover the directory path is to run `npx vitiate init`, which creates seed directories for all discovered fuzz tests. You can also list existing directories with `ls .vitiate/testdata/` (see the [Tutorial](/getting-started/tutorial/#step-7-add-seed-inputs-optional) for a walkthrough).
 
@@ -89,6 +89,8 @@ When the fuzzer finds a crashing input, it:
 Commit crash artifacts to version control. They are small, deterministic, and serve as documentation of bugs that were found and fixed.
 
 Timeout artifacts follow the same pattern: `.vitiate/testdata/<hashdir>/timeouts/timeout-<sha256>`.
+
+Out-of-memory artifacts (inputs that triggered a SIGKILL/OOM) go to `.vitiate/testdata/<hashdir>/ooms/oom-<sha256>`. Unlike seeds, crashes, and timeouts, `ooms/` entries are not replayed during regression or reseeding: a SIGKILL/OOM is ambiguous (a real memory-exhaustion input versus an environmental kill) and is not a confirmed reproducer, so inspect these inputs by hand rather than gating the regression suite on them.
 
 A crash artifact is written even when the crash did not reproduce on the fuzzer's immediate replay of the same input (the fuzz failure will say "crash not reproduced on replay"). Replay determinism is the target's responsibility - if your target depends on `Math.random()`, the clock, or accumulated state, pin those down (e.g. a seeded RNG) or the saved artifact may fail regression runs intermittently. A persistently flaky artifact should be inspected and, if the underlying bug is fixed or unreproducible, removed by hand.
 

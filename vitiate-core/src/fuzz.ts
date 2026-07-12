@@ -615,7 +615,7 @@ type FuzzFn = {
  *
  * @example
  * ```ts
- * import { fuzz } from "vitiate";
+ * import { fuzz } from "@vitiate/core";
  *
  * fuzz("parses without crashing", (data) => {
  *   JSON.parse(data.toString());

@@ -9,8 +9,10 @@ The `vitiate` CLI is the primary interface for fuzzing, regression testing, and 
 |------------|-------------|
 | `vitiate fuzz` | Run all fuzz tests with coverage-guided mutation |
 | `vitiate regression` | Replay saved corpus and crash inputs as regression tests |
+| `vitiate reproduce` | Replay a single input file once through a fuzz target |
 | `vitiate optimize` | Minimize cached corpus via set cover |
 | `vitiate init` | Discover fuzz tests and create seed directories |
+| `vitiate paths` | Map fuzz tests to their on-disk corpus/artifact directories (read-only inspector) |
 | `vitiate libfuzzer` | libFuzzer-compatible mode for platform integration |
 
 ## Fuzzing
@@ -19,7 +21,7 @@ The `vitiate` CLI is the primary interface for fuzzing, regression testing, and 
 npx vitiate fuzz
 ```
 
-This runs all `*.fuzz.ts` files with coverage-guided fuzzing. The fuzzer runs indefinitely until you press Ctrl+C, a crash is found, or a configured limit is reached.
+This runs all `*.fuzz.ts` files with coverage-guided fuzzing. By default the fuzzer keeps running after a crash - recording each crash artifact and continuing - until you press Ctrl+C or hit a configured limit (`--fuzz-time`, `--fuzz-execs`, or `--max-crashes`, which defaults to 1000). Set `stopOnCrash: true` in `FuzzOptions` to stop at the first crash instead.
 
 ### Setting limits
 
@@ -217,15 +219,15 @@ The first positional directory is the output; the rest are inputs. For integrate
 
 ### Supervisor architecture
 
-The CLI runs a supervisor (parent) process that manages crash recovery. When the worker process crashes, the supervisor reads the crashing input from shared memory, writes the crash artifact to disk, and spawns a new worker to continue fuzzing. This means the fuzzer is resilient to crashes and keeps going until you stop it or it hits a configured limit.
+The CLI runs a supervisor (parent) process that manages crash recovery. When the worker process crashes, the supervisor reads the crashing input from shared memory and writes the crash artifact to disk. By default, `vitiate libfuzzer` then stops at the first crash and exits with code 77, matching libFuzzer. Pass `-fork=N` (or set `stopOnCrash: false`) to switch to continue-after-crash mode, where the supervisor spawns a fresh worker and keeps fuzzing - collecting up to `maxCrashes` artifacts - until you stop it or it hits a configured limit.
 
 ### Compatibility flags
 
-All flags use the libFuzzer naming scheme (`-max_total_time`, `-runs`, `-dict`, etc.). The following flags are parsed for compatibility but ignored since they do not apply to Vitiate's architecture:
+All flags use the libFuzzer naming scheme (`-max_total_time`, `-runs`, `-dict`, etc.). The following flags never enable parallel execution - Vitiate always uses a single supervised worker - but `-fork` additionally affects crash handling:
 
 | Flag | Behavior |
 |------|----------|
-| `-fork` | Parsed, ignored (always 1 - Vitiate uses a single supervised worker) |
+| `-fork` | No parallel workers, but any `-fork=N` switches the run to continue-after-crash mode (equivalent to `stopOnCrash: false`) instead of the default of stopping at the first crash. |
 | `-jobs` | Parsed, ignored (always 1 - Vitiate runs a single job at a time) |
 
 See the [CLI Flags Reference](/reference/cli-flags/) for the complete list of libFuzzer-compatible flags.

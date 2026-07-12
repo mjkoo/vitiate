@@ -17,8 +17,10 @@ Seeds are example inputs that give the fuzzer a starting point. Place them in yo
 │   └── seed-edge-case
 ├── crashes/
 │   └── crash-abc123...    (crash artifacts, auto-generated)
-└── timeouts/
-    └── timeout-def456...  (timeout artifacts, auto-generated)
+├── timeouts/
+│   └── timeout-def456...  (timeout artifacts, auto-generated)
+└── ooms/
+    └── oom-789abc...      (out-of-memory artifacts, auto-generated)
 ```
 
 The directory name is a base32 encoded hash followed by the test name (e.g., `vxr4kpqyb12fza1gv81bjj8k3i64mlqn-parse_url`). Run `npx vitiate init` to create the directories, then add your seeds to the `seeds/` subdirectory.
@@ -104,6 +106,21 @@ npx vitiate libfuzzer test/parser.fuzz.ts -dict path/to/custom.dict
 ### Detector Tokens
 
 When detectors are active, they automatically contribute relevant tokens to the dictionary. For example, the command injection detector adds shell metacharacters and the prototype pollution detector adds `__proto__` and `constructor`. You do not need to include these manually.
+
+### Detector Seeds
+
+Some detectors also contribute *seed inputs* that exercise their bug class, so the fuzzer starts probing for that vulnerability even without user seeds. The prototype pollution detector, for example, contributes these JSON seeds:
+
+```
+{"__proto__":1}
+[{"__proto__":1}]
+{"constructor":{"prototype":{}}}
+["__proto__"]
+```
+
+Detector seeds are used only when the fuzzer starts with no corpus of its own - no seed files, and no cached corpus or saved crash/timeout artifacts from previous runs. In that cold-start case Vitiate queues the detector seeds first, then its built-in default seeds. As soon as any corpus entry exists, both the detector seeds and the default seeds are suppressed and only your inputs are used. Either way, auto-seeds (detector and default) are excluded from the corpus scan that auto-detects mutation strategies, so they never skew that decision.
+
+Detector seeds and the built-in default seeds are both governed by the `autoSeed` option (`FuzzOptions`), which defaults to `true`. Set `autoSeed: false` to suppress both; the fuzzer then starts from a single empty seed unless you supply your own corpus.
 
 ### Tips
 

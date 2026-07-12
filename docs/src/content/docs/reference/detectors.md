@@ -70,7 +70,9 @@ Detects attacker-controlled strings evaluated as code.
 
 Detects modifications to built-in JavaScript prototypes.
 
-**How it works:** Snapshots all built-in prototypes (Object, Array, String, Number, Boolean, Function, RegExp, Date, Map, Set, WeakMap, WeakSet, Promise, Error, ArrayBuffer, Int8Array, Uint8Array, Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array, BigInt64Array, BigUint64Array, and subtypes) before each fuzzing iteration. After execution, diffs property descriptors to detect additions, modifications, or deletions.
+**How it works:** Snapshots all built-in prototypes (Object, Array, String, Number, Boolean, Function, RegExp, Date, Map, Set, WeakMap, WeakSet, Promise, Error, ArrayBuffer, Int8Array, Uint8Array, Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array, BigInt64Array, BigUint64Array, and subtypes) before each fuzzing iteration. After execution, diffs property descriptors to detect additions, modifications, or deletions. Each finding's `changeType` is `"added"`, `"modified"`, or `"deleted"`.
+
+In addition, when the target returns without throwing, the detector walks the return value and compares each reachable object against the monitored prototypes by strict identity (`===`). If any reachable value *is* a built-in prototype, that is reported as a leaked reference with `changeType: "leaked-reference"`, `prototype` set to the matched prototype name (e.g. `"Array.prototype"`), and `keyPath` set to the dot-joined path from the root (`""` when the return value itself is the prototype). The walk descends at most 3 levels, is cycle-safe, and follows only own enumerable string-keyed properties (symbol-keyed, non-enumerable, and `Map`/`Set` entries are not traversed). A direct-mutation (snapshot-diff) finding takes priority over a reference leak in the same iteration.
 
 **Tokens contributed:** `__proto__`, `constructor`, `prototype`, `__defineGetter__`, `__defineSetter__`, `__lookupGetter__`, `__lookupSetter__`
 

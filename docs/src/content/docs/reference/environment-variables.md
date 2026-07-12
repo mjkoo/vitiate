@@ -20,6 +20,10 @@ When neither is set, `fuzz()` runs in [regression mode](/concepts/corpus/#regres
 | `VITIATE_FUZZ_EXECS` | integer | Maximum fuzzing iterations. Overrides `fuzzExecs` from code and `-runs` from CLI. |
 | `VITIATE_DEBUG` | `1` | Enable debug output (logs mode, coverage map size, and internal state). |
 | `VITIATE_MAX_CRASHES` | integer | Maximum crashes to collect before stopping. Overrides `maxCrashes` from code. |
+| `VITIATE_RESULTS_FILE` | string (path) | When set to a non-empty path, the fuzz loop writes a JSON results summary (crash count, artifact paths, exec and coverage counts, elapsed time) to this file after the campaign finishes. Unset or empty disables it. |
+| `VITIATE_OPTIONS` | JSON object | A `FuzzOptions` object encoded as JSON, merged over per-test options. Invalid JSON, non-objects, and schema-invalid keys are dropped with a warning. Usually set by the CLI from parsed flags; may be set manually to pass options to worker processes. |
+| `VITIATE_TRACE_CALLS` | `1` | Experimental, off by default. Enables the [`traceCalls`](/reference/plugin-options/#coverage-granularity-experimental) plugin option (a call-site coverage counter). Usually set by the plugin's `config` hook from the option so workers match, but may be set directly to enable it without editing config; an explicit `traceCalls` option takes precedence. |
+| `VITIATE_TRACE_STMT_BLOCKS` | `1` | Experimental, off by default. Enables the [`traceStmtBlocks`](/reference/plugin-options/#coverage-granularity-experimental) plugin option (an inter-statement coverage counter). Set by the plugin's `config` hook from the option, or directly; an explicit `traceStmtBlocks` option takes precedence. |
 
 ## Internal
 
@@ -29,9 +33,11 @@ These are set by Vitiate internally. Do not set them manually unless building a 
 |----------|------|-------------|
 | `VITIATE_SUPERVISOR` | `1` | Indicates the process is a supervised child worker. Set by the supervisor. |
 | `VITIATE_SHMEM` | string | Shared memory handle for coverage map. Set by the supervisor. |
+| `VITIATE_SHMEM_SIZE` | integer | Byte size of the shared-memory region named by `VITIATE_SHMEM`, set as its companion when the supervisor exports the region and read when the worker attaches. Set automatically; do not set manually. |
 | `VITIATE_PROJECT_ROOT` | string | Resolved project root. Exported by the plugin's `config` hook so test worker processes (where no plugin hook runs) resolve the same root as the main process. Set automatically; do not set manually. |
 | `VITIATE_DATA_DIR` | string | Resolved test data directory (absolute). Exported by the plugin's `config` hook so worker processes read and write artifacts under the same directory. Set automatically; do not set manually. |
 | `VITIATE_COVERAGE_MAP_SIZE` | integer | Resolved [`coverageMapSize`](/reference/plugin-options/#coveragemapsize). Exported by the plugin's `config` hook so worker processes allocate a coverage map matching the size the instrumentation was compiled against. Set automatically; do not set manually. |
+| `VITIATE_CLI_IPC` | JSON object | Internal CLI-to-worker channel carrying fields such as the reproduce input file and merge control file. Invalid JSON or non-object values are ignored with a warning. Set automatically; do not set manually. |
 
 ## Precedence
 

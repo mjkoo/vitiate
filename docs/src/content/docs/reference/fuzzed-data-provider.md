@@ -82,6 +82,8 @@ Creates a provider that consumes bytes from `data`. A `Buffer` (which extends `U
 | `encoding` | `string` | `"utf-8"` | String encoding |
 | `printable` | `boolean` | `false` | Restrict to printable ASCII characters |
 
+The string methods take an options object. Passing a positional `encoding` or `printable` argument (as jazzer.js does) throws a `TypeError` rather than being silently ignored.
+
 ## Element Picking
 
 | Method | Return Type | Description |

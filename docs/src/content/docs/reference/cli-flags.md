@@ -37,7 +37,7 @@ Sets `VITIATE_FUZZ=1` and spawns `vitest run` filtered to fuzz test files (`*.fu
 |------|------|---------|-------------|
 | `--fuzz-time <N>` | integer | - | Total fuzzing time limit in seconds |
 | `--fuzz-execs <N>` | integer | - | Total number of fuzzing iterations |
-| `--max-crashes <N>` | integer | - | Maximum crashes to collect |
+| `--max-crashes <N>` | integer | 1000 | Maximum crashes to collect (0 = unlimited); only effective when the run continues after a crash |
 | `--detectors <spec>` | string | tier 1 | Comma-separated list of bug detectors to enable (see [Detectors syntax](#detectors-syntax)) |
 
 ---
@@ -178,11 +178,11 @@ Vitiate follows libFuzzer's exit-code conventions out of the box; these flags ov
 
 ### Compatibility flags
 
-These flags are parsed for libFuzzer compatibility but ignored, so invocations from a fuzzing platform do not abort on an unrecognized flag:
+These flags are parsed for libFuzzer compatibility so invocations from a fuzzing platform do not abort on an unrecognized flag. Most are ignored; `-fork` additionally affects crash handling (see below):
 
 | Flag | Behavior |
 |------|----------|
-| `-fork <N>` | Parsed, ignored (always 1 - Vitiate always uses a single supervised worker) |
+| `-fork <N>` | No parallel workers - Vitiate always uses a single supervised worker (`-fork=0` or `-fork=N` for N>1 warns). But passing any `-fork=N` switches the default crash behavior to continue-after-crash (equivalent to `stopOnCrash: false`) instead of the non-fork default of stopping at the first crash. |
 | `-jobs <N>` | Parsed, ignored (always 1 - Vitiate runs a single job at a time) |
 | `-rss_limit_mb <N>` | Parsed, ignored (Vitiate does not enforce an in-process RSS limit) |
 | `-print_final_stats <0\|1>` | Parsed, ignored (Vitiate always prints a run summary) |

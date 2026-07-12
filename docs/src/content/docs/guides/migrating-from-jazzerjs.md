@@ -129,7 +129,7 @@ See [fuzz() API](/reference/fuzz-api/) for the complete API reference.
 
 ## Migrate FuzzedDataProvider
 
-The import path changes but the API is compatible - both follow the same LLVM FuzzedDataProvider design:
+The import path changes and both follow the same LLVM FuzzedDataProvider design, but Vitiate has a few intentional API differences you must account for when porting harnesses:
 
 **Jazzer.js:**
 
@@ -142,6 +142,13 @@ import { FuzzedDataProvider } from "@jazzer.js/core";
 ```ts
 import { FuzzedDataProvider } from "@vitiate/fuzzed-data-provider";
 ```
+
+Account for these intentional differences when porting a harness:
+
+- **Byte methods return `Uint8Array`, not `number[]`.** `consumeBytes()` and `consumeRemainingAsBytes()` return a `Uint8Array`. Code that relied on `Array.isArray()`, `.push()`, `.concat()`, or on `JSON.stringify()` producing a JSON array will behave differently. Wrap with `Array.from(...)` if you need a plain array.
+- **String methods take an options object, not positional arguments.** Jazzer.js uses `consumeString(maxLength, encoding, printable)`; Vitiate uses `consumeString(maxLength, { encoding, printable })` (and likewise for `consumeRemainingAsString` and `consumeStringArray`). Passing a positional `encoding` or `printable` argument throws a `TypeError` rather than being silently ignored, so any call you miss fails loudly at the call site instead of quietly changing behavior. The default encoding also differs: Vitiate defaults to `"utf-8"`, Jazzer.js defaults to `"ascii"`.
+- **Different error types.** For a non-integer length Vitiate throws the standard `TypeError` (and `RangeError` for a negative length) where Jazzer.js throws its custom `FloatLengthError`. Vitiate also throws `RangeError` for an unsupported encoding.
+- **The constructor accepts a `Uint8Array`.** A `Buffer` still works because `Buffer` extends `Uint8Array`, so harnesses that pass a `Buffer` need no change.
 
 See [FuzzedDataProvider Reference](/reference/fuzzed-data-provider/) for the full API.
 
@@ -186,7 +193,7 @@ cp old-crashes/* .vitiate/testdata/<hashdir>/crashes/
 cp old-seeds/* .vitiate/testdata/<hashdir>/seeds/
 ```
 
-The `<hashdir>` is a hash-based directory name shown by `npx vitiate init`. Each test gets its own directory. Timeout artifacts go in the sibling `timeouts/` directory.
+The `<hashdir>` is a hash-based directory name shown by `npx vitiate init`. Each test gets its own directory. Timeout and out-of-memory artifacts go in the sibling `timeouts/` and `ooms/` directories.
 
 ### Update .gitignore
 
