@@ -4,7 +4,11 @@
  */
 import { spawnSync } from "node:child_process";
 import type { InferValue } from "@optique/core/parser";
-import { resolveVitestCli, type FuzzOptions } from "../config.js";
+import {
+  mergeCliOptionsWithEnv,
+  resolveVitestCli,
+  type FuzzOptions,
+} from "../config.js";
 import {
   fuzzParser,
   regressionParser,
@@ -41,12 +45,14 @@ function spawnVitestWrapper(
 
 /**
  * Serialize a `FuzzOptions` object into the `VITIATE_OPTIONS` env var read by
- * the child (see `getCliOptions` in config.ts). Returns an empty record when
+ * the child (see `getCliOptions` in config.ts), merged over any pre-existing
+ * `VITIATE_OPTIONS` value (CLI wins per key). Returns an empty record when
  * there is nothing to pass, so callers can `Object.assign` unconditionally.
  */
 export function buildOptionsEnv(options: FuzzOptions): Record<string, string> {
-  return Object.keys(options).length > 0
-    ? { VITIATE_OPTIONS: JSON.stringify(options) }
+  const merged = mergeCliOptionsWithEnv(options);
+  return Object.keys(merged).length > 0
+    ? { VITIATE_OPTIONS: JSON.stringify(merged) }
     : {};
 }
 

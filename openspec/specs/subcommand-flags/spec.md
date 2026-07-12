@@ -83,6 +83,20 @@ The `vitiate optimize` subcommand SHALL accept a `--timeout <N>` flag specifying
 - **WHEN** `npx vitiate optimize --timeout 0` is executed
 - **THEN** vitest SHALL be spawned with a `VITIATE_OPTIONS` JSON containing `timeoutMs: 0`, disabling the per-entry timeout
 
+### Requirement: VITIATE_OPTIONS merge semantics
+
+When a subcommand serializes CLI-derived options into the `VITIATE_OPTIONS` JSON environment variable, it SHALL merge them over any pre-existing `VITIATE_OPTIONS` value rather than replacing it wholesale. CLI-derived keys SHALL take precedence per top-level key; env-provided keys with no CLI counterpart SHALL survive. A pre-existing value that fails validation SHALL be warned about and ignored (matching `getCliOptions` behavior), leaving only the CLI-derived options.
+
+#### Scenario: Env options coexist with CLI flags
+
+- **WHEN** `VITIATE_OPTIONS='{"quiet":true}' npx vitiate fuzz --detectors prototypePollution` is executed
+- **THEN** the spawned vitest process SHALL receive a `VITIATE_OPTIONS` JSON containing both `quiet: true` and the parsed `detectors` configuration
+
+#### Scenario: CLI flag overrides the same env key
+
+- **WHEN** `VITIATE_OPTIONS='{"timeoutMs":1000}' npx vitiate optimize --timeout 5` is executed
+- **THEN** the spawned vitest process SHALL receive a `VITIATE_OPTIONS` JSON containing `timeoutMs: 5000`
+
 ### Requirement: Vitest flag forwarding via passThrough
 
 All three vitest-wrapper subcommands (`fuzz`, `regression`, `optimize`) SHALL use `@optique`'s `passThrough()` to collect unrecognized arguments. Unrecognized arguments SHALL be forwarded to the spawned vitest process, appended after `vitest run .fuzz.ts`.

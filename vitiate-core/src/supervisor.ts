@@ -215,12 +215,30 @@ export async function runSupervisor(
           path.join(getTestDataDir(relativeTestFilePath, testName), "timeouts"),
         ];
 
+  // A file-style artifactPrefix (e.g. `bug-`) prepends its basename portion to
+  // every artifact filename, so kind matching must include it. Empty when the
+  // prefix is a directory (ends in a separator) or unset.
+  const artifactFilePrefix =
+    artifactPrefix === undefined
+      ? ""
+      : artifactPrefix.slice(
+          Math.max(
+            artifactPrefix.lastIndexOf("/"),
+            artifactPrefix.lastIndexOf(path.sep),
+          ) + 1,
+        );
+
+  /** Whether an artifact filename is of the given kind under the active prefix. */
+  function isArtifactOfKind(f: string, kind: ArtifactKind): boolean {
+    return f.startsWith(`${artifactFilePrefix}${kind}-`);
+  }
+
   /** List crash/timeout artifact filenames across the artifact directories. */
   function listCrashArtifacts(): string[] {
     return artifactDirs.flatMap((dir) => {
       if (!existsSync(dir)) return [];
       return readdirSync(dir).filter(
-        (f) => f.startsWith("crash-") || f.startsWith("timeout-"),
+        (f) => isArtifactOfKind(f, "crash") || isArtifactOfKind(f, "timeout"),
       );
     });
   }
@@ -407,7 +425,7 @@ export async function runSupervisor(
         if (shmem.readConsistent() !== null) {
           const kind: ArtifactKind =
             newArtifacts.length > 0 &&
-            newArtifacts.every((f) => f.startsWith("timeout-"))
+            newArtifacts.every((f) => isArtifactOfKind(f, "timeout"))
               ? "timeout"
               : "crash";
           process.stderr.write(
@@ -431,7 +449,7 @@ export async function runSupervisor(
         // timeout so the exit-code mapping can emit timeout_exitcode.
         const timedOut =
           newArtifacts.length > 0 &&
-          newArtifacts.every((f) => f.startsWith("timeout-"));
+          newArtifacts.every((f) => isArtifactOfKind(f, "timeout"));
         return {
           crashed: true,
           exitCode: 1,

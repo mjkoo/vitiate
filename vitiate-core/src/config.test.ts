@@ -15,6 +15,7 @@ import {
   setCliIpc,
   warnUnknownVitiateEnvVars,
   getCliOptions,
+  mergeCliOptionsWithEnv,
   getFuzzExecs,
   getFuzzTime,
   getMaxCrashes,
@@ -872,6 +873,66 @@ describe("config", () => {
       } finally {
         process.stderr.write = originalWrite;
       }
+    });
+  });
+
+  describe("mergeCliOptionsWithEnv", () => {
+    const originalOpts = process.env["VITIATE_OPTIONS"];
+
+    afterEach(() => {
+      if (originalOpts === undefined) {
+        delete process.env["VITIATE_OPTIONS"];
+      } else {
+        process.env["VITIATE_OPTIONS"] = originalOpts;
+      }
+    });
+
+    it("returns CLI options unchanged when env var is not set", () => {
+      delete process.env["VITIATE_OPTIONS"];
+      expect(mergeCliOptionsWithEnv({ maxLen: 64 })).toEqual({ maxLen: 64 });
+    });
+
+    it("preserves env keys with no CLI counterpart", () => {
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({ quiet: true });
+      expect(mergeCliOptionsWithEnv({ maxLen: 64 })).toEqual({
+        quiet: true,
+        maxLen: 64,
+      });
+    });
+
+    it("lets CLI flags win per key over env values", () => {
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({
+        seed: 1,
+        quiet: true,
+      });
+      expect(mergeCliOptionsWithEnv({ seed: 42 })).toEqual({
+        seed: 42,
+        quiet: true,
+      });
+    });
+
+    it("does not let undefined-valued CLI keys erase env values", () => {
+      process.env["VITIATE_OPTIONS"] = JSON.stringify({ seed: 1 });
+      expect(mergeCliOptionsWithEnv({ seed: undefined, maxLen: 64 })).toEqual({
+        seed: 1,
+        maxLen: 64,
+      });
+    });
+
+    it("ignores an invalid env value and keeps CLI options", () => {
+      process.env["VITIATE_OPTIONS"] = "not json";
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+      try {
+        expect(mergeCliOptionsWithEnv({ maxLen: 64 })).toEqual({ maxLen: 64 });
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+      expect(chunks.join("")).toContain("invalid VITIATE_OPTIONS JSON");
     });
   });
 
