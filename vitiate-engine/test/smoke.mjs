@@ -8,6 +8,7 @@ import {
   IterationResult,
   cmplogGetSlotBuffer,
   cmplogGetWritePointer,
+  cmplogSlotSize,
   v8ShimAvailable,
 } from "../index.js";
 
@@ -175,10 +176,18 @@ assert.equal(
 
 // Verify slot buffer and write pointer allocation, and cross-validate
 // constants that must match between JS (globals.ts) and Rust (cmplog.rs).
+// The 80 / 256 KB literals here are what globals.ts hardcodes; the engine's
+// own values come from cmplogSlotSize() and the returned buffer length.
 {
   const SLOT_SIZE_JS = 80;
   const SLOT_BUFFER_SIZE_JS = 256 * 1024;
   const MAX_SLOTS_JS = (SLOT_BUFFER_SIZE_JS / SLOT_SIZE_JS) | 0;
+
+  assert.equal(
+    cmplogSlotSize(),
+    SLOT_SIZE_JS,
+    `SLOT_SIZE mismatch: Rust reports ${cmplogSlotSize()}, JS expects ${SLOT_SIZE_JS}`,
+  );
 
   const slotBuffer = cmplogGetSlotBuffer();
   assert.ok(
@@ -211,8 +220,13 @@ assert.equal(
 // Rust: entries are written at specific byte offsets by JS, then deserialized by
 // Rust's drain(). A mismatch in SLOT_SIZE or field offsets would produce wrong
 // type tags, corrupted values, or incorrect entry counts.
+//
+// The hand-written slot writes below deliberately duplicate the byte offsets
+// (this file is plain-node and cannot import vitiate-core); the authoritative
+// layout pin is vitiate-core/src/cmplog-boundary.test.ts, which round-trips
+// the real createCmplogWriteFunctions writer through cmplogDrainTestEntries.
 {
-  const SLOT_SIZE = 80;
+  const SLOT_SIZE = cmplogSlotSize();
   const slotBuffer = cmplogGetSlotBuffer();
   const writePointerBuf = cmplogGetWritePointer();
   const buf = new Uint8Array(

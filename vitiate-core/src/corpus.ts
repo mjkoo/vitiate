@@ -298,6 +298,25 @@ const SUBDIR_BY_KIND: Record<ArtifactKind, string> = {
 };
 
 /**
+ * Filename prefix `<kind>-` that starts every artifact of the given kind.
+ * Used by the supervisor to classify artifacts found on disk.
+ */
+export function artifactFileNamePrefix(kind: ArtifactKind): string {
+  return `${kind}-`;
+}
+
+/**
+ * Artifact basename `<kind>-<sha256hex>` for content-addressed dedup.
+ * This convention is a cross-language contract: the Rust engine's watchdog
+ * and Windows exception handler build the same name via `artifact_file_name`
+ * in vitiate-engine/src/lib.rs, pinned by matching fixture tests in both
+ * suites (see "cross-language artifact naming fixture" in corpus.test.ts).
+ */
+export function artifactFileName(kind: ArtifactKind, hash: string): string {
+  return `${artifactFileNamePrefix(kind)}${hash}`;
+}
+
+/**
  * Write a crash, timeout, or OOM artifact to the testdata directory.
  * Crashes go to `<dataDir>/testdata/<hashdir>/crashes/crash-<contenthash>`.
  * Timeouts go to `<dataDir>/testdata/<hashdir>/timeouts/timeout-<contenthash>`.
@@ -316,7 +335,7 @@ export function writeArtifact(
   const dir = path.join(testDataDir, subdir);
   mkdirSync(dir, { recursive: true });
   const hash = contentHash(data);
-  const fileName = `${kind}-${hash}`;
+  const fileName = artifactFileName(kind, hash);
   const filePath = path.join(dir, fileName);
   writeExclusive(filePath, data);
   return filePath;
@@ -328,7 +347,7 @@ export function writeArtifactWithPrefix(
   kind: ArtifactKind = "crash",
 ): string {
   const hash = contentHash(data);
-  const filePath = `${prefix}${kind}-${hash}`;
+  const filePath = `${prefix}${artifactFileName(kind, hash)}`;
   const parentDir = path.dirname(filePath);
   if (parentDir !== ".") {
     mkdirSync(parentDir, { recursive: true });
@@ -349,7 +368,7 @@ export function replaceArtifact(
 ): string {
   const hash = contentHash(newData);
   const dir = path.dirname(oldPath);
-  const newFileName = `${kind}-${hash}`;
+  const newFileName = artifactFileName(kind, hash);
   const newPath = path.join(dir, newFileName);
 
   // Write to temp file in same directory (ensures same-filesystem rename)

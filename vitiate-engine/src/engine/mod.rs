@@ -263,7 +263,10 @@ pub struct Fuzzer {
 // The `ShmemView` field contains a raw pointer into OS-level shared memory
 // that is valid for the lifetime of the parent `ShmemHandle` (which outlives
 // the Fuzzer in the fuzz loop). The `Fuzzer` is only ever used on the Node.js
-// main thread and is never sent across threads.
+// main thread and is never sent across threads. Holding `&mut self` across
+// the JS callback in `run_batch` (napi_call_function) is sound only because
+// of the documented no-reentrancy invariant: the callback never calls back
+// into this (or any) Fuzzer, so the exclusive borrow is never aliased.
 unsafe impl Send for Fuzzer {}
 
 #[napi]
@@ -814,6 +817,13 @@ impl Fuzzer {
     /// The callback receives `(inputBuffer, inputLength)` and returns an
     /// `ExitKind` number (0=Ok, 1=Crash). Invalid return values are treated
     /// as Ok. The callback MUST NOT retain a reference to `inputBuffer`.
+    ///
+    /// Reentrancy: the callback MUST NOT call any method on this `Fuzzer`
+    /// (or any other `Fuzzer` on this thread). `runBatch` holds an exclusive
+    /// (`&mut self`) borrow across the callback invocation, so re-entering
+    /// through NAPI would alias that borrow - undefined behavior on the Rust
+    /// side - and corrupt the thread-local CmpLog state mid-drain. The
+    /// callback must confine itself to running the target and detectors.
     #[napi]
     pub fn run_batch(
         &mut self,

@@ -126,6 +126,13 @@ shutdown(): void
  * The callback receives `(inputBuffer, inputLength)` and returns an
  * `ExitKind` number (0=Ok, 1=Crash). Invalid return values are treated
  * as Ok. The callback MUST NOT retain a reference to `inputBuffer`.
+ *
+ * Reentrancy: the callback MUST NOT call any method on this `Fuzzer`
+ * (or any other `Fuzzer` on this thread). `runBatch` holds an exclusive
+ * (`&mut self`) borrow across the callback invocation, so re-entering
+ * through NAPI would alias that borrow - undefined behavior on the Rust
+ * side - and corrupt the thread-local CmpLog state mid-drain. The
+ * callback must confine itself to running the target and detectors.
  */
 runBatch(callback: (inputBuffer: Buffer, inputLength: number) => number, batchSize: number, timeoutMs: number): BatchResult
 }
@@ -260,7 +267,7 @@ export interface BatchResult {
    */
   executionsCompleted: number
   /** Why the batch ended: `"completed"`, `"interesting"`, `"solution"`, or `"error"`. */
-  exitReason: string
+  exitReason: 'completed' | 'interesting' | 'solution' | 'error'
   /**
    * Copy of the input that caused early exit. Present when `exitReason`
    * is not `"completed"`.
@@ -272,6 +279,16 @@ export interface BatchResult {
    */
   solutionExitKind?: number
 }
+
+/**
+ * Drain the CmpLog slot buffer at slot granularity, one entry per slot.
+ *
+ * For boundary tests; not part of the fuzzing API. Decodes each slot with
+ * the same deserialization path as the production `drain()` and resets the
+ * write pointer, but reports pre-`serialize_pair` operands so a JS write can
+ * be asserted value-for-value. See `cmplog-boundary.test.ts` in vitiate-core.
+ */
+export declare function cmplogDrainTestEntries(): Array<CmplogTestEntry>
 
 /**
  * Return a 256 KB Buffer backed by the CmpLog slot buffer's Rust-owned memory.
@@ -296,6 +313,48 @@ export declare function cmplogGetSlotBuffer(): Buffer
  * The Buffer has no release callback because Rust owns the memory.
  */
 export declare function cmplogGetWritePointer(): Buffer
+
+/**
+ * The CmpLog slot size in bytes (80).
+ *
+ * For boundary tests; not part of the fuzzing API. Asserted equal to
+ * `SLOT_SIZE` in `vitiate-core/src/globals.ts` by the cross-language
+ * boundary test.
+ */
+export declare function cmplogSlotSize(): number
+
+/**
+ * One decoded CmpLog slot, as returned by `cmplogDrainTestEntries()`.
+ *
+ * For boundary tests; not part of the fuzzing API. Values are
+ * string-encoded to avoid f64/u64 precision loss across the NAPI boundary.
+ */
+export interface CmplogTestEntry {
+  /** The comparison-site ID from slot offset 0. */
+  cmpId: number
+  /** Operator decoded from the slot's op ID. */
+  operator: 'equal' | 'not_equal' | 'less' | 'greater'
+  /** Left operand kind. */
+  leftKind: 'num' | 'str' | 'skip'
+  /**
+   * Left operand: JS `Number.toString()` form for numbers, lossy UTF-8
+   * for strings, empty for skip.
+   */
+  left: string
+  /** Right operand kind. */
+  rightKind: 'num' | 'str' | 'skip'
+  /** Right operand, encoded like `left`. */
+  right: string
+}
+
+/**
+ * The write-pointer sentinel value that disables CmpLog (0xFFFFFFFF).
+ *
+ * For boundary tests; not part of the fuzzing API. Asserted equal to
+ * `WRITE_PTR_DISABLED` in `vitiate-core/src/globals.ts` by the
+ * cross-language boundary test.
+ */
+export declare function cmplogWritePtrDisabled(): number
 
 export declare function createCoverageMap(size: number): Buffer
 

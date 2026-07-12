@@ -31,7 +31,10 @@ const MAX_ENTRIES: usize = 4096;
 /// # Slot layout (80 bytes)
 ///
 /// These offsets must stay in sync with `createCmplogWriteFunctions()` in
-/// `vitiate-core/src/globals.ts`, which serializes slots from JS.
+/// `vitiate-core/src/globals.ts`, which serializes slots from JS. The
+/// cross-language boundary test `vitiate-core/src/cmplog-boundary.test.ts`
+/// pins the layout by round-tripping the real JS writer through
+/// `drain_test_entries()` over the real shared buffers.
 ///
 /// ```text
 /// Offset  Size  Field
@@ -46,7 +49,7 @@ const MAX_ENTRIES: usize = 4096;
 /// 41..73   32   rightData  (f64 LE at 41..49, or UTF-8 bytes)
 /// 73..80    7   (padding)
 /// ```
-const SLOT_SIZE: usize = 80;
+pub(crate) const SLOT_SIZE: usize = 80;
 
 /// Total size of the shared slot buffer (256 KB).
 ///
@@ -61,7 +64,7 @@ const MAX_SLOTS: usize = SLOT_BUFFER_SIZE / SLOT_SIZE;
 /// Sentinel value for the write pointer indicating CmpLog is disabled.
 /// Any value >= MAX_SLOTS causes the JS write function's overflow check
 /// to return early, so 0xFFFFFFFF acts as a disabled flag for free.
-const WRITE_PTR_DISABLED: u32 = 0xFFFF_FFFF;
+pub(crate) const WRITE_PTR_DISABLED: u32 = 0xFFFF_FFFF;
 
 /// Largest integer JavaScript can represent exactly (`2^53 - 1`).
 const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
@@ -347,6 +350,68 @@ pub fn drain() -> Vec<CmpLogEntry> {
     })
 }
 
+/// One slot decoded by [`drain_test_entries()`], pre-`serialize_pair()`.
+pub(crate) struct DecodedSlot {
+    pub cmp_id: u32,
+    pub operator: CmpLogOperator,
+    pub left: ExtractedValue,
+    pub right: ExtractedValue,
+}
+
+/// Drain the slot buffer at the `ExtractedValue` level, for boundary tests.
+///
+/// A diagnostic twin of [`drain()`] that stops before `serialize_pair()`:
+/// each slot yields exactly one [`DecodedSlot`], so a JS-side write can be
+/// asserted byte-for-byte against what Rust decoded (production `drain()`
+/// expands one numeric slot into multiple `CmpValues` entries, which hides
+/// layout corruption behind aggregate counts). Uses the same
+/// `deserialize_slot_operand` + `CmpLogOperator::from_id` decode path as
+/// `drain()`, resets the write pointer, and leaves the entries accumulator
+/// untouched. Slots with unknown operator IDs are skipped, matching `drain()`.
+///
+/// Not part of the fuzzing pipeline; exposed to JS via
+/// `cmplogDrainTestEntries()` in trace.rs.
+pub(crate) fn drain_test_entries() -> Vec<DecodedSlot> {
+    CMPLOG_STATE.with(|s| {
+        let mut state = s.borrow_mut();
+
+        let write_ptr = state.read_write_ptr() as usize;
+        if write_ptr > MAX_SLOTS {
+            return Vec::new();
+        }
+
+        // SAFETY: Single-threaded; JS does not execute during this synchronous
+        // NAPI call. The UnsafeCell ensures the raw pointer JS holds is not
+        // invalidated by this borrow.
+        let slot_buffer = unsafe { &*state.slot_buffer.get() };
+
+        let mut out = Vec::with_capacity(write_ptr);
+        for i in 0..write_ptr {
+            let base = i * SLOT_SIZE;
+            let cmp_id = u32::from_le_bytes(
+                slot_buffer[base..base + 4]
+                    .try_into()
+                    .expect("4-byte slice from fixed-size buffer is always valid"),
+            );
+            let operator_id = slot_buffer[base + 4] as u32;
+            let Some(operator) = CmpLogOperator::from_id(operator_id) else {
+                continue;
+            };
+            let left = deserialize_slot_operand(slot_buffer, base + 5, base + 7, base + 8);
+            let right = deserialize_slot_operand(slot_buffer, base + 6, base + 40, base + 41);
+            out.push(DecodedSlot {
+                cmp_id,
+                operator,
+                left,
+                right,
+            });
+        }
+
+        state.set_write_ptr(0);
+        out
+    })
+}
+
 /// Create a `CmplogBytes` from a byte slice, truncating to 32 bytes.
 fn to_cmplog_bytes(data: &[u8]) -> CmplogBytes {
     let len = data.len().min(32) as u8;
@@ -396,7 +461,7 @@ pub fn serialize_pair(left: &ExtractedValue, right: &ExtractedValue) -> Option<V
 /// Uses `ryu_js` which implements the full ECMAScript `Number::toString`
 /// algorithm, including exponential notation thresholds, negative zero,
 /// NaN, and ±Infinity.
-fn format_f64(v: f64) -> String {
+pub(crate) fn format_f64(v: f64) -> String {
     let mut buf = ryu_js::Buffer::new();
     buf.format(v).to_string()
 }

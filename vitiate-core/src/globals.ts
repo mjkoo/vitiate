@@ -25,6 +25,14 @@ export const SLOT_BUFFER_SIZE = 256 * 1024;
  */
 export const MAX_SLOTS = (SLOT_BUFFER_SIZE / SLOT_SIZE) | 0;
 
+/**
+ * Write-pointer sentinel indicating CmpLog is disabled.
+ * Must match `WRITE_PTR_DISABLED` in `vitiate-engine/src/cmplog.rs`.
+ * Any value >= MAX_SLOTS makes the write function's overflow check return
+ * early, so the sentinel disables writes for free.
+ */
+export const WRITE_PTR_DISABLED = 0xffffffff;
+
 /** Maximum entries per comparison site per iteration. */
 export const MAX_ENTRIES_PER_SITE = 8;
 

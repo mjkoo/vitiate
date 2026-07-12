@@ -150,8 +150,8 @@ mod seh {
 
         // Zero-length inputs are real inputs: write their artifact like any
         // other (empty-input symmetry, matching the watchdog's behavior).
-        let hash = crate::artifact_hash(&input);
-        let artifact_path = format!("{}crash-{hash}", ctx.artifact_prefix);
+        let artifact_path =
+            crate::artifact_file_name(&ctx.artifact_prefix, crate::ARTIFACT_KIND_CRASH, &input);
         let path = std::path::Path::new(&artifact_path);
 
         // Best-effort I/O: we're in an exception handler that will propagate

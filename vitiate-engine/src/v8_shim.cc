@@ -66,7 +66,10 @@ typedef enum {
 
 // Result struct returned to Rust
 struct VitiateRunTargetResult {
-    int32_t exit_kind;    // 0=Ok, 1=Crash, 2=Timeout
+    // 0=Ok, 1=Crash, 2=Timeout. Must match the Rust `ExitKind` enum in
+    // types.rs, whose const-assertion block pins these values at compile
+    // time and names this struct.
+    int32_t exit_kind;
     napi_value value;     // The result object { exitKind, error? }
     napi_value fn_result; // Raw return value from napi_call_function (Promise for async targets)
 };
@@ -302,7 +305,7 @@ int vitiate_run_target(
         // Previously, set_prop_value was used here but its return was unchecked,
         // causing silent failures on Windows where the Promise was lost and
         // async target coverage was never awaited.
-        out->exit_kind = 0;
+        out->exit_kind = 0; // ExitKind::Ok (pinned by const assert in types.rs)
         out->value = obj;
         out->fn_result = result_value;
         return 1;
@@ -327,7 +330,7 @@ int vitiate_run_target(
             if (set_prop_u32(env, obj, "exitKind", 2) != vitiate_napi_ok) {
                 return 0;
             }
-            out->exit_kind = 2;
+            out->exit_kind = 2; // ExitKind::Timeout (pinned by const assert in types.rs)
 
             // Create a regular timeout Error for JS — best-effort; the exitKind
             // is already set so the caller can distinguish timeout without it.
@@ -360,7 +363,7 @@ int vitiate_run_target(
             if (exc_status == vitiate_napi_ok) {
                 set_prop_value(env, obj, "error", exception);
             }
-            out->exit_kind = 1;
+            out->exit_kind = 1; // ExitKind::Crash (pinned by const assert in types.rs)
             out->value = obj;
             return 1;
         }
@@ -384,7 +387,7 @@ int vitiate_run_target(
         }
     }
 
-    out->exit_kind = 1;
+    out->exit_kind = 1; // ExitKind::Crash (pinned by const assert in types.rs)
     out->value = obj;
     return 1;
 }

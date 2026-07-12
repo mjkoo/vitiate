@@ -21,6 +21,8 @@ import {
   writeArtifact,
   writeArtifactWithPrefix,
   replaceArtifact,
+  artifactFileName,
+  artifactFileNamePrefix,
   loadCorpusFromDirs,
   discoverDictionaries,
   loadTestDataCorpus,
@@ -238,6 +240,30 @@ describe("corpus", () => {
       const loaded = loadCachedCorpus("test.fuzz.ts", "parse");
       expect(loaded).toHaveLength(1);
       expect(loaded[0]).toEqual(data);
+    });
+  });
+
+  describe("artifactFileName", () => {
+    // Cross-language artifact naming fixture: these exact literals are also
+    // asserted in vitiate-engine/src/lib.rs
+    // (artifact_file_name_matches_cross_language_fixture). The duplicated
+    // fixture is the deliberate cross-language pin for the
+    // `<prefix><kind>-<sha256hex>` convention that the Rust watchdog and
+    // exception handler must produce and the JS supervisor must recognize.
+    it("matches the Rust engine's artifact_file_name fixture", () => {
+      const hash = createHash("sha256").update("test").digest("hex");
+      expect(`p/${artifactFileName("timeout", hash)}`).toBe(
+        "p/timeout-9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      );
+      expect(`bug-${artifactFileName("crash", hash)}`).toBe(
+        "bug-crash-9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      );
+    });
+
+    it("prefix helper agrees with the full name", () => {
+      expect(artifactFileName("oom", "abc")).toBe(
+        `${artifactFileNamePrefix("oom")}abc`,
+      );
     });
   });
 

@@ -12,11 +12,9 @@ import {
   MAX_SLOTS,
   MAX_ENTRIES_PER_SITE,
   SITE_COUNT_SLOTS,
+  WRITE_PTR_DISABLED,
   type CmplogWriteFunctions,
 } from "./globals.js";
-
-/** Disabled sentinel (matches Rust WRITE_PTR_DISABLED). */
-const WRITE_PTR_DISABLED = 0xffffffff;
 
 interface TestContext {
   slotBuffer: Uint8Array;

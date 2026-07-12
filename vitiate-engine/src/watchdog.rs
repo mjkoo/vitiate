@@ -16,6 +16,7 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
 use crate::shmem_stash::{ShmemHandle, ShmemView};
+use crate::types::ExitKind;
 use crate::v8_shim;
 
 /// Exit code used by the watchdog's `_exit` fallback for timeouts.
@@ -195,8 +196,11 @@ fn exit_with_input_capture(shared: &WatchdogShared) {
         && let Some(input) = view.read_consistent()
     {
         // Write timeout artifact
-        let hash = crate::artifact_hash(&input);
-        let artifact_path = format!("{}timeout-{hash}", shared.artifact_prefix);
+        let artifact_path = crate::artifact_file_name(
+            &shared.artifact_prefix,
+            crate::ARTIFACT_KIND_TIMEOUT,
+            &input,
+        );
         let path = std::path::Path::new(&artifact_path);
 
         // Best-effort I/O: we're about to call _exit, so there is no caller to
@@ -556,7 +560,7 @@ fn build_call_result_object<'a>(
     let mut obj = Object::from_raw(raw_env, raw_obj);
 
     if call_status == napi::sys::Status::napi_ok {
-        obj.set("exitKind", 0u32)?;
+        obj.set("exitKind", ExitKind::Ok as u32)?;
         obj.set("result", result_value)?;
         Ok(obj)
     } else if call_status == napi::sys::Status::napi_pending_exception {
@@ -564,7 +568,7 @@ fn build_call_result_object<'a>(
         let exc_status =
             unsafe { napi::sys::napi_get_and_clear_last_exception(raw_env, &mut exception) };
         if timed_out {
-            obj.set("exitKind", 2u32)?;
+            obj.set("exitKind", ExitKind::Timeout as u32)?;
 
             let msg = "fuzz target timed out";
             let mut js_msg: napi::sys::napi_value = std::ptr::null_mut();
@@ -592,7 +596,7 @@ fn build_call_result_object<'a>(
                 }
             }
         } else {
-            obj.set("exitKind", 1u32)?;
+            obj.set("exitKind", ExitKind::Crash as u32)?;
             if exc_status == napi::sys::Status::napi_ok {
                 obj.set("error", exception)?;
             }
