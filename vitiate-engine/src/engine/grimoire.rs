@@ -1,13 +1,12 @@
 use libafl::HasMetadata;
 use libafl::corpus::{Corpus, CorpusId};
-use libafl::executors::ExitKind as LibaflExitKind;
 use libafl::inputs::GeneralizedInputMetadata;
 use libafl::mutators::Mutator;
-use libafl::state::{HasCorpus, HasExecutions, HasRand};
+use libafl::state::{HasCorpus, HasRand};
 use libafl_bolts::rands::Rand;
 use napi::bindgen_prelude::*;
 
-use super::{Fuzzer, STAGE_MAX_ITERATIONS, StageState};
+use super::{Fuzzer, STAGE_MAX_ITERATIONS, StageKind, StageState};
 
 impl Fuzzer {
     /// Begin the Grimoire mutational stage for a corpus entry that has
@@ -62,54 +61,24 @@ impl Fuzzer {
             _ => return Ok(None),
         };
 
-        // Drain CmpLog (discard - Grimoire doesn't use CmpLog data).
-        let _ = crate::cmplog::drain();
-
-        // Reset stage state before the fallible evaluate_coverage call. On error,
-        // the stage is cleanly abandoned (no zombie state). On success, stage_state
-        // is overwritten below with the next iteration or StageState::None.
-        self.stage_state = StageState::None;
-        let stage_input = self
-            .last_stage_input
-            .take()
-            .ok_or_else(|| Error::from_reason("advanceGrimoire: no stashed stage input"))?;
-
-        // The target was invoked - count the execution before the fallible
-        // evaluate_coverage call so counters stay accurate on error.
-        self.total_execs += 1;
-        *self.state.executions_mut() += 1;
-
-        let _eval = self.evaluate_coverage(
-            &stage_input,
-            exec_time_ns,
-            LibaflExitKind::Ok,
-            Some(corpus_id),
-        )?;
-
-        let next_iteration = iteration + 1;
-        if next_iteration >= max_iterations {
-            // Grimoire complete - try unicode, then JSON.
-            // stage_state is already StageState::None (reset before evaluate_coverage above).
-            if let Some(buf) = self.begin_unicode(corpus_id)? {
-                return Ok(Some(buf));
-            }
-            if let Some(buf) = self.begin_json(corpus_id)? {
-                return Ok(Some(buf));
-            }
-            return Ok(None);
-        }
-
-        // Generate next Grimoire candidate.
-        let bytes = self.grimoire_mutate_one(corpus_id)?;
-        self.last_stage_input = Some(bytes.clone());
-
-        self.stage_state = StageState::Grimoire {
+        self.advance_multi_iteration_stage(
+            StageKind::Grimoire,
             corpus_id,
-            iteration: next_iteration,
+            iteration,
             max_iterations,
-        };
-
-        Ok(Some(Buffer::from(bytes)))
+            exec_time_ns,
+            |f, next_iteration| {
+                let bytes = f.grimoire_mutate_one(corpus_id)?;
+                Ok((
+                    bytes,
+                    StageState::Grimoire {
+                        corpus_id,
+                        iteration: next_iteration,
+                        max_iterations,
+                    },
+                ))
+            },
+        )
     }
 
     /// Clone GeneralizedInputMetadata from a corpus entry, apply the Grimoire

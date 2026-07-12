@@ -12,7 +12,7 @@ use libafl::state::{HasCorpus, HasExecutions, HasRand};
 use libafl_bolts::rands::Rand;
 use napi::bindgen_prelude::*;
 
-use super::Fuzzer;
+use super::{Fuzzer, StageKind};
 
 /// Maximum input size for colorization. Inputs exceeding this are skipped.
 pub(super) const MAX_COLORIZATION_LEN: usize = 4096;
@@ -572,6 +572,6 @@ impl Fuzzer {
     /// Skips I2S (REDQUEEN ran) and falls through to generalization → Grimoire →
     /// unicode → None.
     fn transition_after_redqueen(&mut self, corpus_id: CorpusId) -> Result<Option<Buffer>> {
-        self.begin_post_i2s_stages(corpus_id)
+        self.begin_stages_after(corpus_id, StageKind::I2S)
     }
 }

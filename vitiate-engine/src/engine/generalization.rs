@@ -6,7 +6,7 @@ use libafl::inputs::GeneralizedInputMetadata;
 use libafl::state::{HasCorpus, HasExecutions};
 use napi::bindgen_prelude::*;
 
-use super::{Fuzzer, MAX_GENERALIZED_LEN, StageState};
+use super::{Fuzzer, MAX_GENERALIZED_LEN, StageKind, StageState};
 
 /// Offset values for the offset-based gap-finding passes.
 const GENERALIZATION_OFFSETS: [usize; 5] = [255, 127, 63, 31, 0];
@@ -654,14 +654,11 @@ impl Fuzzer {
         tc.add_metadata(metadata);
         drop(tc);
 
-        // Transition to next stage: try Grimoire, then Unicode.
+        // Transition to the next stage in the pipeline (Grimoire → unicode →
+        // JSON) via the single next-stage table. Routing through
+        // begin_stages_after (rather than an inline Grimoire→unicode tail)
+        // ensures JSON is still reached when both Grimoire and unicode decline.
         self.stage_state = StageState::None;
-        if let Some(buf) = self.begin_grimoire(corpus_id)? {
-            return Ok(Some(buf));
-        }
-        if let Some(buf) = self.begin_unicode(corpus_id)? {
-            return Ok(Some(buf));
-        }
-        Ok(None)
+        self.begin_stages_after(corpus_id, StageKind::Generalization)
     }
 }

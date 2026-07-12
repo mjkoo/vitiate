@@ -5,14 +5,9 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { fuzz, buildTestNamePatternFromNames } from "./fuzz.js";
-import {
-  isFuzzingMode,
-  getProjectRoot,
-  setDataDir,
-  resetDataDir,
-  resolveVitestCli,
-} from "./config.js";
+import { isFuzzingMode, getProjectRoot, resolveVitestCli } from "./config.js";
 import { hashTestPath } from "./nix-base32.js";
+import { makeTestDataDir } from "./test-utils.js";
 
 describe("fuzz API", () => {
   it("fuzz is a function", () => {
@@ -44,11 +39,11 @@ describe("fuzz regression mode - smoke test with no corpus", () => {
 });
 
 describe("fuzz regression mode - replay corpus files", () => {
-  const tmpDir = path.join(
-    tmpdir(),
-    `vitiate-fuzz-api-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-  );
+  let tmpDir: string;
+  let cleanup: () => void;
+
   beforeAll(() => {
+    ({ dir: tmpDir, cleanup } = makeTestDataDir("fuzz-api-test"));
     // Set project root so the relative test file path is predictable
     const projectRoot = getProjectRoot();
     const thisFile = fileURLToPath(import.meta.url);
@@ -57,12 +52,10 @@ describe("fuzz regression mode - replay corpus files", () => {
     const seedDir = path.join(tmpDir, "testdata", hashDir, "seeds");
     mkdirSync(seedDir, { recursive: true });
     writeFileSync(path.join(seedDir, "seed-hello"), "hello");
-    setDataDir(tmpDir);
   });
 
   afterAll(() => {
-    resetDataDir();
-    rmSync(tmpDir, { recursive: true, force: true });
+    cleanup();
   });
 
   fuzz("regression-replay", (data) => {

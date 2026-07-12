@@ -6,11 +6,9 @@ import {
   existsSync,
   readFileSync,
   readdirSync,
-  rmSync,
   chmodSync,
 } from "node:fs";
 import path from "node:path";
-import { tmpdir } from "node:os";
 import {
   loadCachedCorpus,
   loadCachedCorpusWithPaths,
@@ -40,23 +38,19 @@ import {
   resetDataDir,
   getDataDir,
 } from "./config.js";
+import { makeTestDataDir } from "./test-utils.js";
 import { hashTestPath } from "./nix-base32.js";
 
 describe("corpus", () => {
   let tmpDir: string;
+  let cleanup: () => void;
 
   beforeEach(() => {
-    tmpDir = path.join(
-      tmpdir(),
-      `vitiate-corpus-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    );
-    mkdirSync(tmpDir, { recursive: true });
-    setDataDir(tmpDir);
+    ({ dir: tmpDir, cleanup } = makeTestDataDir("corpus-test"));
   });
 
   afterEach(() => {
-    resetDataDir();
-    rmSync(tmpDir, { recursive: true, force: true });
+    cleanup();
   });
 
   describe("loadTestDataCorpus with seeds only", () => {

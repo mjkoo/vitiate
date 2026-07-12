@@ -37,9 +37,10 @@ import {
 } from "./cli/paths.js";
 import type { TestManifestRow } from "./cli/discover.js";
 import type { SupervisorResult } from "./supervisor.js";
-import { getCliOptions, setDataDir, resetDataDir } from "./config.js";
+import { getCliOptions } from "./config.js";
 import { getTestDataDir, getCorpusDir } from "./corpus.js";
 import { hashTestPath } from "./nix-base32.js";
+import { makeTestDataDir } from "./test-utils.js";
 
 vi.mock("node:child_process", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:child_process")>();
@@ -566,13 +567,10 @@ describe("resolveOrphans (empty-set safety gate)", () => {
     };
   }
 
+  let cleanup: () => void;
+
   beforeEach(() => {
-    tmpDir = path.join(
-      tmpdir(),
-      `vitiate-resolve-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    );
-    mkdirSync(tmpDir, { recursive: true });
-    setDataDir(tmpDir);
+    ({ dir: tmpDir, cleanup } = makeTestDataDir("resolve-test"));
     // Seed an on-disk dir that would look orphaned against an empty manifest.
     mkdirSync(path.join(tmpDir, "corpus", hashTestPath("gone.fuzz.ts", "x")), {
       recursive: true,
@@ -580,8 +578,7 @@ describe("resolveOrphans (empty-set safety gate)", () => {
   });
 
   afterEach(() => {
-    resetDataDir();
-    rmSync(tmpDir, { recursive: true, force: true });
+    cleanup();
   });
 
   it("refuses --prune on an empty manifest and does NOT scan disk", () => {
@@ -683,18 +680,14 @@ describe("paths orphan detection and prune", () => {
     return dir;
   }
 
+  let cleanup: () => void;
+
   beforeEach(() => {
-    tmpDir = path.join(
-      tmpdir(),
-      `vitiate-paths-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    );
-    mkdirSync(tmpDir, { recursive: true });
-    setDataDir(tmpDir);
+    ({ dir: tmpDir, cleanup } = makeTestDataDir("paths-test"));
   });
 
   afterEach(() => {
-    resetDataDir();
-    rmSync(tmpDir, { recursive: true, force: true });
+    cleanup();
   });
 
   it("reports on-disk dirs with no matching test as orphans", () => {

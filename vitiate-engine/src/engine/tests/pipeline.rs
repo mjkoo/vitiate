@@ -563,6 +563,69 @@ fn test_finalize_generalization_falls_through_to_unicode() {
 }
 
 #[test]
+fn test_finalize_generalization_falls_through_to_json() {
+    let _cmplog_cleanup = cmplog::TestCleanupGuard;
+    // Regression: when generalization finalizes and both Grimoire and unicode
+    // decline, the pipeline must still reach the JSON stage. The former
+    // finalize_generalization tail chained only Grimoire -> unicode and silently
+    // skipped JSON; the single next-stage table (begin_stages_after) closes that
+    // gap.
+    let input = br#"{"x":"1","y":"22"}"#;
+    let novelty_indices = vec![10, 20];
+    let (mut fuzzer, corpus_id) = TestFuzzerBuilder::new(256)
+        .grimoire(true)
+        .unicode(false)
+        .json_mutations(true)
+        .build_with_corpus_entry(input, &novelty_indices);
+
+    // Begin generalization.
+    let first = fuzzer.begin_generalization(corpus_id).unwrap();
+    assert!(first.is_some());
+    assert!(matches!(
+        fuzzer.stage_state,
+        StageState::Generalization { .. }
+    ));
+
+    // Disable Grimoire mid-flight so finalize_generalization can't start
+    // Grimoire; unicode is already disabled. Only the JSON stage remains
+    // applicable.
+    fuzzer.features.grimoire_enabled = false;
+
+    // Drive generalization to completion.
+    let mut count = 0;
+    loop {
+        unsafe {
+            for &idx in &novelty_indices {
+                *fuzzer.map_ptr.add(idx) = 1;
+            }
+        }
+        let next = fuzzer.advance_stage(ExitKind::Ok, 50_000.0).unwrap();
+        match &fuzzer.stage_state {
+            StageState::Json { .. } => {
+                assert!(next.is_some(), "JSON transition should return a candidate");
+                break;
+            }
+            StageState::None if next.is_none() => {
+                panic!(
+                    "finalize_generalization returned None - should have fallen through to JSON"
+                );
+            }
+            _ => {}
+        }
+        count += 1;
+        assert!(
+            count <= 200,
+            "should complete generalization within 200 iterations"
+        );
+    }
+
+    assert!(
+        matches!(fuzzer.stage_state, StageState::Json { .. }),
+        "stage should have transitioned to JSON after generalization"
+    );
+}
+
+#[test]
 fn test_pipeline_full_four_stage_lifecycle() {
     let _cmplog_cleanup = cmplog::TestCleanupGuard;
     // I2S → Generalization → Grimoire → Unicode → None.

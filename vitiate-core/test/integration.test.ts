@@ -2,37 +2,28 @@
  * Integration tests for corpus loading and crash replay.
  */
 import { describe, it, expect, afterEach, beforeEach } from "vitest";
-import { existsSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { tmpdir } from "node:os";
 import { initGlobals } from "../src/globals.js";
 import {
   loadTestDataCorpus,
   writeArtifact,
   getTestDataDir,
 } from "../src/corpus.js";
-import { setDataDir, resetDataDir } from "../src/config.js";
+import { makeTestDataDir } from "../src/test-utils.js";
 import { parseCommand } from "./parser-target.js";
 
 const TEST_RELATIVE_PATH = "test/integration.test.ts";
 
 describe("regression mode with seeded corpus", () => {
-  let tmpDir: string;
+  let cleanup: () => void;
 
   beforeEach(() => {
-    tmpDir = path.join(
-      tmpdir(),
-      `vitiate-integ-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    );
-    mkdirSync(tmpDir, { recursive: true });
-    setDataDir(tmpDir);
+    ({ cleanup } = makeTestDataDir("integ"));
   });
 
   afterEach(() => {
-    resetDataDir();
-    if (tmpDir) {
-      rmSync(tmpDir, { recursive: true, force: true });
-    }
+    cleanup();
   });
 
   it("runs all seed corpus entries without crashing", () => {
@@ -58,7 +49,7 @@ describe("regression mode with seeded corpus", () => {
 });
 
 describe("fuzzing mode discovers planted bug", () => {
-  let tmpDir: string;
+  let cleanup: (() => void) | undefined;
   const originalFuzz = process.env["VITIATE_FUZZ"];
   const originalCov = globalThis.__vitiate_cov;
   const originalTrace = globalThis.__vitiate_cmplog_write;
@@ -70,13 +61,11 @@ describe("fuzzing mode discovers planted bug", () => {
     } else {
       process.env["VITIATE_FUZZ"] = originalFuzz;
     }
-    resetDataDir();
     globalThis.__vitiate_cov = originalCov;
     globalThis.__vitiate_cmplog_write = originalTrace;
     globalThis.__vitiate_cmplog_reset_counts = originalResetCounts;
-    if (tmpDir) {
-      rmSync(tmpDir, { recursive: true, force: true });
-    }
+    cleanup?.();
+    cleanup = undefined;
   });
 
   it("crash artifact replays as a failing regression test", async () => {
@@ -84,12 +73,7 @@ describe("fuzzing mode discovers planted bug", () => {
     process.env["VITIATE_FUZZ"] = "1";
     await initGlobals();
 
-    tmpDir = path.join(
-      tmpdir(),
-      `vitiate-e2e-replay-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    );
-    mkdirSync(tmpDir, { recursive: true });
-    setDataDir(tmpDir);
+    ({ cleanup } = makeTestDataDir("integ"));
 
     // Write a known crash input as a crash artifact
     const crashInput = Buffer.from("GET!");

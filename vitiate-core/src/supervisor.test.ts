@@ -2,14 +2,12 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { spawn } from "node:child_process";
 import {
   mkdirSync,
-  rmSync,
   readdirSync,
   existsSync,
   readFileSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import { tmpdir } from "node:os";
 import type { ShmemHandle } from "@vitiate/engine";
 import {
   runSupervisor,
@@ -20,7 +18,7 @@ import {
   MAX_STARTUP_FAILURES,
 } from "./supervisor.js";
 import { hashTestPath } from "./nix-base32.js";
-import { setDataDir, resetDataDir } from "./config.js";
+import { makeTestDataDir } from "./test-utils.js";
 
 /**
  * Create a mock ShmemHandle for testing. The supervisor recovers crashing
@@ -56,24 +54,16 @@ const TEST_RELATIVE_PATH = "tests/example.fuzz.ts";
 
 describe("runSupervisor", () => {
   let tmpDir: string;
+  let cleanup: (() => void) | undefined;
 
   afterEach(() => {
     vi.restoreAllMocks();
-    resetDataDir();
-    if (tmpDir) {
-      rmSync(tmpDir, { recursive: true, force: true });
-    }
+    cleanup?.();
+    cleanup = undefined;
   });
 
   function makeTmpDir(): string {
-    tmpDir = mkdirSync(
-      path.join(
-        tmpdir(),
-        `vitiate-supervisor-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      ),
-      { recursive: true },
-    ) as string;
-    setDataDir(tmpDir);
+    ({ dir: tmpDir, cleanup } = makeTestDataDir("supervisor-test"));
     return tmpDir;
   }
 

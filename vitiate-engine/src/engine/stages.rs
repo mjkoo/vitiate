@@ -101,6 +101,48 @@ pub(crate) enum StageState {
     },
 }
 
+/// The mutational stages driven by the shared pipeline, in canonical execution
+/// order. Used as the single source of truth for stage ordering by
+/// [`Fuzzer::begin_stages_after`], replacing the previously duplicated per-stage
+/// completion tails.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StageKind {
+    /// The I2S stage. It precedes the post-I2S chain; passing it as the `after`
+    /// argument to `begin_stages_after` begins the whole chain from the top.
+    I2S,
+    Generalization,
+    Grimoire,
+    Unicode,
+    Json,
+}
+
+impl StageKind {
+    /// Position in the canonical stage order. `begin_stages_after` begins only
+    /// the stages ranked strictly higher than a given kind.
+    fn rank(self) -> u8 {
+        match self {
+            StageKind::I2S => 0,
+            StageKind::Generalization => 1,
+            StageKind::Grimoire => 2,
+            StageKind::Unicode => 3,
+            StageKind::Json => 4,
+        }
+    }
+
+    /// Tag used in the "no stashed stage input" error raised by
+    /// `advance_multi_iteration_stage`. Matches the pre-refactor per-stage
+    /// messages so existing diagnostics are unchanged.
+    fn advance_error_tag(self) -> &'static str {
+        match self {
+            StageKind::I2S => "advanceStage",
+            StageKind::Generalization => "advanceGeneralization",
+            StageKind::Grimoire => "advanceGrimoire",
+            StageKind::Unicode => "advanceUnicode",
+            StageKind::Json => "advanceJson",
+        }
+    }
+}
+
 impl Fuzzer {
     /// Decide whether the current interesting entry should run the expensive
     /// stages (colorization/REDQUEEN and the structure-aware post-I2S stages).
@@ -183,7 +225,7 @@ impl Fuzzer {
         // Step 3: Fall through to the structure-aware stages (Grimoire/unicode/
         // json/generalization), also gated as expensive.
         if run_expensive {
-            self.begin_post_i2s_stages(corpus_id)
+            self.begin_stages_after(corpus_id, StageKind::I2S)
         } else {
             Ok(None)
         }
@@ -228,23 +270,108 @@ impl Fuzzer {
         Ok(Some(Buffer::from(bytes)))
     }
 
-    /// Attempt to begin the post-I2S stages: generalization → Grimoire → unicode → JSON.
-    pub(super) fn begin_post_i2s_stages(&mut self, corpus_id: CorpusId) -> Result<Option<Buffer>> {
+    /// Begin the first applicable mutational stage ranked after `after` in the
+    /// canonical order (generalization → Grimoire → unicode → JSON), returning
+    /// its first input, or `None` if none apply.
+    ///
+    /// This is the single source of truth for post-I2S stage ordering:
+    /// `begin_stage_impl`, the colorization/REDQUEEN tail,
+    /// `finalize_generalization`, and every multi-iteration stage's completion
+    /// all route through it. Passing `StageKind::I2S` begins the whole chain
+    /// from the top (the former `begin_post_i2s_stages`).
+    pub(super) fn begin_stages_after(
+        &mut self,
+        corpus_id: CorpusId,
+        after: StageKind,
+    ) -> Result<Option<Buffer>> {
+        let after_rank = after.rank();
+
+        // Generalization and Grimoire are gated behind grimoire_enabled.
         if self.features.grimoire_enabled {
-            if let Some(buf) = self.begin_generalization(corpus_id)? {
+            if after_rank < StageKind::Generalization.rank()
+                && let Some(buf) = self.begin_generalization(corpus_id)?
+            {
                 return Ok(Some(buf));
             }
-            if let Some(buf) = self.begin_grimoire(corpus_id)? {
+            if after_rank < StageKind::Grimoire.rank()
+                && let Some(buf) = self.begin_grimoire(corpus_id)?
+            {
                 return Ok(Some(buf));
             }
         }
-        if let Some(buf) = self.begin_unicode(corpus_id)? {
+        if after_rank < StageKind::Unicode.rank()
+            && let Some(buf) = self.begin_unicode(corpus_id)?
+        {
             return Ok(Some(buf));
         }
-        if let Some(buf) = self.begin_json(corpus_id)? {
+        if after_rank < StageKind::Json.rank()
+            && let Some(buf) = self.begin_json(corpus_id)?
+        {
             return Ok(Some(buf));
         }
         Ok(None)
+    }
+
+    /// Shared body of the four multi-iteration mutational stages (I2S, Grimoire,
+    /// unicode, JSON). The caller destructures its own `StageState` variant
+    /// (preserving each stage's mismatch handling and any extra fields, e.g.
+    /// unicode's `metadata`) and passes the common fields plus a `next_step`
+    /// closure that produces the next candidate bytes and the rebuilt
+    /// `StageState` for the following iteration.
+    ///
+    /// On completion (`next_iteration >= max_iterations`), transitions to the
+    /// next stage via [`Self::begin_stages_after`] keyed on `kind`.
+    pub(super) fn advance_multi_iteration_stage(
+        &mut self,
+        kind: StageKind,
+        corpus_id: CorpusId,
+        iteration: usize,
+        max_iterations: usize,
+        exec_time_ns: f64,
+        next_step: impl FnOnce(&mut Self, usize) -> Result<(Vec<u8>, StageState)>,
+    ) -> Result<Option<Buffer>> {
+        // Drain and discard CmpLog: these stages mutate already-interesting
+        // inputs, so their comparison slots are noise (do not promote tokens or
+        // update CmpValuesMetadata).
+        let _ = crate::cmplog::drain();
+
+        // Clear stage state before the fallible evaluate_coverage call so an
+        // error cleanly abandons the stage (no zombie state). Idempotent for
+        // callers that already cleared it via mem::replace.
+        self.stage_state = StageState::None;
+
+        let stage_input = self.last_stage_input.take().ok_or_else(|| {
+            Error::from_reason(format!(
+                "{}: no stashed stage input",
+                kind.advance_error_tag()
+            ))
+        })?;
+
+        // The target was invoked - count the execution before the fallible
+        // evaluate_coverage call so counters stay accurate on error.
+        self.total_execs += 1;
+        *self.state.executions_mut() += 1;
+
+        let _eval = self.evaluate_coverage(
+            &stage_input,
+            exec_time_ns,
+            LibaflExitKind::Ok,
+            Some(corpus_id),
+        )?;
+
+        let next_iteration = iteration + 1;
+        if next_iteration >= max_iterations {
+            // Stage complete - advance to the next stage in the pipeline.
+            // stage_state is already StageState::None (reset above).
+            return self.begin_stages_after(corpus_id, kind);
+        }
+
+        // Generate the next candidate and rebuild the stage state for it.
+        let (bytes, next_state) = next_step(self, next_iteration)?;
+        self.last_stage_input = Some(bytes.clone());
+        self.stage_state = next_state;
+
+        Ok(Some(Buffer::from(bytes)))
     }
 
     /// Implementation of `advance_stage` - processes stage result, returns next input.
@@ -298,63 +425,40 @@ impl Fuzzer {
             }
         };
 
-        // Drain and discard CmpLog accumulator (do not update CmpValuesMetadata
-        // or promote tokens - stage CmpLog data is noise from I2S-mutated inputs).
-        let _ = crate::cmplog::drain();
-
-        // Reset stage state before the fallible evaluate_coverage call. On error,
-        // the stage is cleanly abandoned (no zombie state). On success, stage_state
-        // is overwritten below with the next iteration or StageState::None.
-        self.stage_state = StageState::None;
-        let stage_input = self
-            .last_stage_input
-            .take()
-            .ok_or_else(|| Error::from_reason("advanceStage: no stashed stage input"))?;
-        // The target was invoked - count the execution before the fallible
-        // evaluate_coverage call so counters stay accurate on error.
-        self.total_execs += 1;
-        *self.state.executions_mut() += 1;
-
-        let _eval = self.evaluate_coverage(
-            &stage_input,
-            exec_time_ns,
-            LibaflExitKind::Ok,
-            Some(corpus_id),
-        )?;
-
-        let next_iteration = iteration + 1;
-        if next_iteration >= max_iterations {
-            // I2S stage complete - try transitioning to Generalization, Grimoire, or Unicode.
-            // stage_state is already StageState::None (reset before evaluate_coverage above).
-            return self.begin_post_i2s_stages(corpus_id);
-        }
-
-        // Generate next I2S candidate: clone original corpus entry, mutate.
-        let mut input = self
-            .state
-            .corpus()
-            .cloned_input_for_id(corpus_id)
-            .map_err(|e| Error::from_reason(format!("Failed to clone corpus entry: {e}")))?;
-
-        let _ = self
-            .i2s_mutator
-            .mutate(&mut self.state, &mut input)
-            .map_err(|e| Error::from_reason(format!("I2S mutation failed: {e}")))?;
-
-        let mut bytes: Vec<u8> = input.into();
-        bytes.truncate(self.max_input_len as usize);
-
-        // Store for next advanceStage() call.
-        self.last_stage_input = Some(bytes.clone());
-
-        // Update iteration counter.
-        self.stage_state = StageState::I2S {
+        self.advance_multi_iteration_stage(
+            StageKind::I2S,
             corpus_id,
-            iteration: next_iteration,
+            iteration,
             max_iterations,
-        };
+            exec_time_ns,
+            |f, next_iteration| {
+                // Generate next I2S candidate: clone original corpus entry, mutate.
+                let mut input = f
+                    .state
+                    .corpus()
+                    .cloned_input_for_id(corpus_id)
+                    .map_err(|e| {
+                        Error::from_reason(format!("Failed to clone corpus entry: {e}"))
+                    })?;
 
-        Ok(Some(Buffer::from(bytes)))
+                let _ = f
+                    .i2s_mutator
+                    .mutate(&mut f.state, &mut input)
+                    .map_err(|e| Error::from_reason(format!("I2S mutation failed: {e}")))?;
+
+                let mut bytes: Vec<u8> = input.into();
+                bytes.truncate(f.max_input_len as usize);
+
+                Ok((
+                    bytes,
+                    StageState::I2S {
+                        corpus_id,
+                        iteration: next_iteration,
+                        max_iterations,
+                    },
+                ))
+            },
+        )
     }
 
     /// Implementation of `abort_stage` - cleanly terminates the current stage.
