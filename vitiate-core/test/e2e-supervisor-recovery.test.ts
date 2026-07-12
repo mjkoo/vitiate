@@ -83,66 +83,77 @@ function findCrashArtifacts(dir: string): string[] {
   return readdirSync(dir).filter((f) => f.startsWith("crash-"));
 }
 
-describe("libfuzzer supervisor: recovers an absorbed abrupt worker death", () => {
-  let tmpDir: string;
-  let corpusDir: string;
-  let artifactDir: string;
-  let markerPath: string;
+// The recovery fixture fakes an uncatchable abrupt worker death with
+// `process.kill(process.pid, "SIGSEGV")`. Windows has no POSIX signals, so
+// Node throws `kill ENOSYS` instead of faulting the process; the throw is
+// caught as an ordinary in-band crash and the stash-recovery path never fires.
+// There is no Windows equivalent for a process self-delivering an uncatchable
+// fault, so this topology is Unix-only. The merge suite below stays portable.
+describe.skipIf(process.platform === "win32")(
+  "libfuzzer supervisor: recovers an absorbed abrupt worker death",
+  () => {
+    let tmpDir: string;
+    let corpusDir: string;
+    let artifactDir: string;
+    let markerPath: string;
 
-  beforeEach(() => {
-    tmpDir = mkdtempSync(path.join(tmpdir(), "vitiate-recovery-"));
-    corpusDir = path.join(tmpDir, "corpus");
-    // The fixture crashes on inputs beginning with "BOOM"; seed one so it
-    // replays on generation 0 (seeds replay before mutation).
-    writeFileSync(path.join(mkdirp(corpusDir), "trigger"), "BOOM!");
-    // Direct crash artifacts into the temp dir (libFuzzer defaults to the cwd,
-    // which is the tracked example dir) so the assertion has a deterministic
-    // location and the example dir stays clean.
-    artifactDir = mkdirp(path.join(tmpDir, "artifacts"));
-    // A non-existent marker path: the fixture creates it on the first crash.
-    markerPath = path.join(tmpDir, "marker");
-    rmSync(CORPUS_CACHE_DIR, { recursive: true, force: true });
-  });
+    beforeEach(() => {
+      tmpDir = mkdtempSync(path.join(tmpdir(), "vitiate-recovery-"));
+      corpusDir = path.join(tmpDir, "corpus");
+      // The fixture crashes on inputs beginning with "BOOM"; seed one so it
+      // replays on generation 0 (seeds replay before mutation).
+      writeFileSync(path.join(mkdirp(corpusDir), "trigger"), "BOOM!");
+      // Direct crash artifacts into the temp dir (libFuzzer defaults to the cwd,
+      // which is the tracked example dir) so the assertion has a deterministic
+      // location and the example dir stays clean.
+      artifactDir = mkdirp(path.join(tmpDir, "artifacts"));
+      // A non-existent marker path: the fixture creates it on the first crash.
+      markerPath = path.join(tmpDir, "marker");
+      rmSync(CORPUS_CACHE_DIR, { recursive: true, force: true });
+    });
 
-  afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
-    rmSync(CORPUS_CACHE_DIR, { recursive: true, force: true });
-  });
+    afterEach(() => {
+      rmSync(tmpDir, { recursive: true, force: true });
+      rmSync(CORPUS_CACHE_DIR, { recursive: true, force: true });
+    });
 
-  it("detects the surviving stash, recovers the input, and reports the crash", async () => {
-    const result = await runLibfuzzer(
-      [
-        "test/abrupt-crash.fuzz.ts",
-        corpusDir,
-        "-test",
-        "abrupt-crash",
-        "-runs",
-        "200",
-        `-artifact_prefix=${artifactDir}${path.sep}`,
-      ],
-      { ...process.env, E2E_ABRUPT_CRASH_MARKER: markerPath },
-    );
+    it("detects the surviving stash, recovers the input, and reports the crash", async () => {
+      const result = await runLibfuzzer(
+        [
+          "test/abrupt-crash.fuzz.ts",
+          corpusDir,
+          "-test",
+          "abrupt-crash",
+          "-runs",
+          "200",
+          `-artifact_prefix=${artifactDir}${path.sep}`,
+        ],
+        { ...process.env, E2E_ABRUPT_CRASH_MARKER: markerPath },
+      );
 
-    if (
-      result.exitCode !== 77 ||
-      !result.output.includes("died abruptly mid-execution")
-    ) {
-      dumpOutput("supervisor-recovery", result.output);
-    }
+      if (
+        result.exitCode !== 77 ||
+        !result.output.includes("died abruptly mid-execution")
+      ) {
+        dumpOutput("supervisor-recovery", result.output);
+      }
 
-    // The stash-recovery branch fired end-to-end (generation 0), then the
-    // supervisor respawned to continue fuzzing.
-    expect(result.output).toContain("child worker died abruptly mid-execution");
-    expect(result.output).toContain("respawning child to continue fuzzing");
+      // The stash-recovery branch fired end-to-end (generation 0), then the
+      // supervisor respawned to continue fuzzing.
+      expect(result.output).toContain(
+        "child worker died abruptly mid-execution",
+      );
+      expect(result.output).toContain("respawning child to continue fuzzing");
 
-    // Generation 1 re-found the input in-band, so the campaign exits with the
-    // libFuzzer crash exit code.
-    expect(result.exitCode).toBe(77);
+      // Generation 1 re-found the input in-band, so the campaign exits with the
+      // libFuzzer crash exit code.
+      expect(result.exitCode).toBe(77);
 
-    // The in-flight input was recovered to a crash artifact, not discarded.
-    expect(findCrashArtifacts(artifactDir).length).toBeGreaterThanOrEqual(1);
-  }, 120_000);
-});
+      // The in-flight input was recovered to a crash artifact, not discarded.
+      expect(findCrashArtifacts(artifactDir).length).toBeGreaterThanOrEqual(1);
+    }, 120_000);
+  },
+);
 
 describe("libfuzzer merge: runs the forks-pinned merge child to completion", () => {
   let tmpDir: string;

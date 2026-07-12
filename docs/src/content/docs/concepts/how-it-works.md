@@ -46,7 +46,7 @@ Each fuzzing iteration follows this cycle:
 2. **Reset coverage:** The coverage map is zeroed so this iteration's coverage is measured in isolation.
 3. **Run the target:** The fuzz target function is called with the input bytes.
 4. **Report result:** JavaScript calls `reportResult()` with the outcome (ok, crash, or timeout). The Rust engine reads the coverage map to evaluate feedback.
-5. **Evaluate feedback:** If the input triggered a new maximum hit count for any edge (reaching an edge for the first time, or hitting it more times than any previous input), it is added to the corpus. If it caused a crash, it is saved as a solution.
+5. **Evaluate feedback:** Each edge's hit count is classified into an AFL-style bucket (1, 2, 3, 4-7, 8-15, 16-31, 32-127, 128+). If the input produced any (edge, bucket) pair never seen before - reaching an edge for the first time, or hitting a known edge a bucketed number of times it has never been hit - it is added to the corpus. If it caused a crash, it is saved as a solution.
 
 ### Mutation Strategies
 

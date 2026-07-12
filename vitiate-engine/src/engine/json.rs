@@ -707,8 +707,8 @@ mod tests {
     use super::*;
     use libafl::HasMetadata;
     use libafl::corpus::InMemoryCorpus;
+    use libafl::feedbacks::AflMapFeedback;
     use libafl::feedbacks::CrashFeedback;
-    use libafl::feedbacks::MaxMapFeedback;
     use libafl::inputs::BytesInput;
     use libafl::mutators::Tokens;
     use libafl::observers::StdMapObserver;
@@ -941,7 +941,7 @@ mod tests {
         let map: &'static mut [u8] = Box::leak(vec![0u8; 64].into_boxed_slice());
         let ptr = map.as_mut_ptr();
         let observer = unsafe { StdMapObserver::from_mut_ptr("test_edges", ptr, 64) };
-        let mut feedback = MaxMapFeedback::new(&observer);
+        let mut feedback = AflMapFeedback::new(&observer);
         let mut objective = CrashFeedback::new();
         let mut state = StdState::new(
             StdRand::with_seed(seed),

@@ -472,11 +472,11 @@ The helper SHALL accept the following parameters:
 
 The helper SHALL:
 
-1. Classify the coverage map in place into AFL-style hit-count buckets before any feedback or novelty read. Each raw count SHALL be replaced by its bucket representative (`0 -> 0`, `1 -> 1`, `2 -> 2`, `3 -> 3`, `4-7 -> 4`, `8-15 -> 8`, `16-31 -> 16`, `32-127 -> 32`, `128-255 -> 128`). The representative SHALL be a fixed point of the display bucket index, so a history map storing classified values yields the same `ft` feature count as one storing raw counts. Nonzero counts SHALL remain nonzero so that `bitmap_size` and `MapIndexesMetadata` are unaffected. Because admission keys on the classified map, `MaxMapFeedback` admits an input when it reaches a new (edge, hit-count-bucket), not merely a new raw per-edge maximum.
+1. Classify the coverage map in place into AFL-style hit-count bucket bits before any feedback or novelty read. Each raw count SHALL be replaced by the one-hot bit identifying its bucket (`0 -> 0`, `1 -> 0x01`, `2 -> 0x02`, `3 -> 0x04`, `4-7 -> 0x08`, `8-15 -> 0x10`, `16-31 -> 0x20`, `32-127 -> 0x40`, `128-255 -> 0x80`), matching AFL's `count_class_lookup8`. Nonzero counts SHALL remain nonzero so that `bitmap_size` and `MapIndexesMetadata` are unaffected. Because admission uses OR-reduction feedback (`AflMapFeedback`) over the classified map, an input is interesting when it produces any (edge, hit-count-bucket) feature absent from the feedback's history - including a bucket lower than any previously observed for that edge - matching AFL's virgin-bitmap and libFuzzer's feature-set semantics. The feedback's history map SHALL accumulate, per edge, the bitwise OR of all bucket bits seen.
 2. Mask unstable edges (zero coverage map entries at indices in the unstable entries set).
 3. Construct a `StdMapObserver` from `map_ptr`.
 4. Evaluate crash/timeout objective (`CrashFeedback`, `TimeoutFeedback`) using `exit_kind`. For `ExitKind::Ok` (the only value used by `advance_stage()`), objective evaluation will return "not a solution" - this is expected and the evaluation is still performed for uniformity.
-5. Evaluate coverage feedback (`MaxMapFeedback::is_interesting()`). During the coverage map iteration that computes `MapNoveltiesMetadata`, also collect the indices of all nonzero entries into `MapIndexesMetadata`.
+5. Evaluate coverage feedback (`AflMapFeedback::is_interesting()`). During the coverage map iteration that computes `MapNoveltiesMetadata`, also collect the indices of all nonzero entries into `MapIndexesMetadata`.
 6. If interesting: create a `Testcase` from the provided `input` bytes, set `exec_time` to `Duration::from_nanos(exec_time_ns as u64)`, add `SchedulerTestcaseMetadata` with the following fields:
    - `depth`: `parent_corpus_id`'s depth + 1.
    - `bitmap_size`: number of non-zero entries in the coverage map.
@@ -491,19 +491,20 @@ The helper SHALL:
 
 `advance_stage()` SHALL call this helper (passing the internally-stashed stage input, `exec_time_ns`, `exit_kind`, and `StageState::I2S.corpus_id` as parent) and additionally: drain and discard CmpLog, increment `total_execs` and `state.executions`, generate the next stage candidate. The `is_solution` flag from the helper is ignored during stage execution (since `exit_kind` is always `Ok`, it will always be `false`).
 
-#### Scenario: Admission keys on hit-count bucket, not raw maximum
+#### Scenario: Admission keys on a never-seen hit-count-bucket feature
 
-- **WHEN** an edge's history holds a count in the bucket `[4,7]` (e.g. a classified value of 4)
+- **WHEN** an edge's history holds the bucket `[4,7]` (bit `0x08`)
 - **AND** a later execution produces a raw count of 5 at that edge (still bucket `[4,7]`) with no other new coverage
-- **THEN** the input SHALL NOT be interesting (same hit-count bucket)
-- **AND WHEN** a later execution instead produces a raw count of 8 (bucket `[8,15]`)
-- **THEN** the input SHALL be interesting (a new hit-count bucket)
+- **THEN** the input SHALL NOT be interesting (an already-seen bucket)
+- **AND WHEN** a later execution instead produces a raw count of 8 (bucket `[8,15]`, bit `0x10`)
+- **THEN** the input SHALL be interesting (a never-seen bucket)
+- **AND WHEN** a later execution produces a raw count of 2 (bucket `[2,2]`, bit `0x02`), lower than every previously observed count at that edge
+- **THEN** the input SHALL be interesting (a never-seen bucket, regardless of being lower than the running maximum)
 
-#### Scenario: Classification preserves bitmap_size and ft
+#### Scenario: Classification preserves bitmap_size
 
 - **WHEN** `evaluate_coverage()` classifies the coverage map
 - **THEN** the number of nonzero entries (and thus `bitmap_size` and `MapIndexesMetadata`) SHALL be unchanged from the raw map
-- **AND** `compute_coverage_features()` over the classified history SHALL yield the same `ft` as over the equivalent raw history
 
 #### Scenario: Helper correctly identifies interesting inputs during stage
 
@@ -515,7 +516,7 @@ The helper SHALL:
 #### Scenario: MapIndexesMetadata stored alongside MapNoveltiesMetadata
 
 - **WHEN** `evaluate_coverage()` processes an interesting input whose coverage map has nonzero values at indices {10, 20, 30, 40, 50}
-- **AND** only indices {40, 50} are novel (exceed the global max map)
+- **AND** only indices {40, 50} are novel (contribute a bucket bit absent from the history map)
 - **THEN** the corpus entry SHALL have `MapNoveltiesMetadata` containing {40, 50}
 - **AND** the corpus entry SHALL have `MapIndexesMetadata` containing {10, 20, 30, 40, 50}
 
@@ -568,7 +569,7 @@ The system SHALL provide `fuzzer.stats` (getter) returning a `FuzzerStats` objec
 - `solutionCount` (number): Number of crash/timeout inputs found. Includes both main-loop crashes (via `reportResult()`) and stage-discovered crashes (via `abortStage()` with `ExitKind.Crash` or `ExitKind.Timeout`).
 - `coverageEdges` (number): Number of distinct coverage map positions that have been
   observed nonzero across all iterations.
-- `coverageFeatures` (number): Count of (edge, hit-count-bucket) pairs derived from the feedback's history map. For each non-zero entry in the history map, the raw max hit count is classified into an AFL-style bucket (1->1, 2->2, 3->3, 4-7->4, 8-15->5, 16-31->6, 32-127->7, 128-255->8). Each edge contributes its bucket index as the number of features (since lower buckets are necessarily crossed). Sum across all edges gives `coverageFeatures >= coverageEdges`. Analogous to libFuzzer's `ft` metric.
+- `coverageFeatures` (number): Count of distinct (edge, hit-count-bucket) features observed, computed as the sum of population counts (set bits) over the feedback's history map. Because the history map holds, per edge, the bitmask of all AFL hit-count buckets seen, each set bit is one feature. `coverageFeatures >= coverageEdges` (each nonzero edge contributes at least one bucket bit). This is libFuzzer's `ft` metric: features counted are those actually observed, not implicitly-crossed lower buckets.
 - `execsPerSec` (number): Executions per second since Fuzzer creation (based on `totalExecs` only).
 
 #### Scenario: Stats at creation
@@ -589,10 +590,12 @@ The system SHALL provide `fuzzer.stats` (getter) returning a `FuzzerStats` objec
 - **THEN** `stats.calibrationExecs` increases by 3
 - **AND** `stats.totalExecs` is unchanged by the calibration runs
 
-#### Scenario: Features count with varying hit counts
+#### Scenario: Features count distinct buckets seen per edge
 
-- **WHEN** the coverage map has edges with hit counts [1, 5, 200]
-- **THEN** `stats.coverageFeatures` equals 1 + 4 + 8 = 13 (bucket indices summed)
+- **WHEN** three edges have each been seen in exactly one bucket - hit counts observed at 1 (bucket `[1,1]`), 5 (bucket `[4,7]`), and 200 (bucket `[128,255]`)
+- **THEN** `stats.coverageFeatures` equals 1 + 1 + 1 = 3 (one set bit per edge)
+- **AND WHEN** one of those edges is later also seen at a second bucket
+- **THEN** that edge contributes 2 features and `stats.coverageFeatures` increases by 1
 
 ### Requirement: End-to-end fuzzing loop
 

@@ -7,7 +7,7 @@ use libafl::corpus::{Corpus, CorpusId, InMemoryCorpus, SchedulerTestcaseMetadata
 use libafl::executors::ExitKind as LibaflExitKind;
 use libafl::feedbacks::map::MapFeedbackMetadata;
 use libafl::feedbacks::{
-    CrashFeedback, MapIndexesMetadata, MaxMapFeedback, StateInitializer, TimeoutFeedback,
+    AflMapFeedback, CrashFeedback, MapIndexesMetadata, StateInitializer, TimeoutFeedback,
 };
 use libafl::inputs::BytesInput;
 use libafl::mutators::Tokens;
@@ -115,7 +115,7 @@ const MAX_GENERALIZATION_EXECS: u32 = 2048;
 type CovObserver = StdMapObserver<'static, u8, false>;
 /// CovObserver with index tracking enabled, needed by `MinimizerScheduler`.
 type TrackingCovObserver = ExplicitTracking<CovObserver, true, false>;
-type FuzzerFeedback = MaxMapFeedback<CovObserver, CovObserver>;
+type FuzzerFeedback = AflMapFeedback<CovObserver, CovObserver>;
 type CrashObjective = CrashFeedback;
 type TimeoutObjective = TimeoutFeedback;
 type FuzzerBaseScheduler = ProbabilitySamplingScheduler<CorpusPowerTestcaseScore>;
@@ -311,7 +311,7 @@ impl Fuzzer {
         let temp_observer =
             unsafe { StdMapObserver::from_mut_ptr(EDGES_OBSERVER_NAME, map_ptr, map_len) };
 
-        let mut feedback = MaxMapFeedback::new(&temp_observer);
+        let mut feedback = AflMapFeedback::new(&temp_observer);
         let mut crash_objective = CrashFeedback::new();
         let mut timeout_objective = TimeoutFeedback::new();
 
@@ -1133,27 +1133,32 @@ impl Fuzzer {
     }
 }
 
-/// AFL-style hit-count bucket index for coverage feature computation.
+/// AFL's hit-count bucket bit for feature-set corpus admission
+/// (`count_class_lookup8`).
 ///
-/// Maps a raw edge hit count (0-255) to its bucket index (0-8):
-/// - 0 -> 0 (not hit)
-/// - 1 -> 1, 2 -> 2, 3 -> 3, 4-7 -> 4, 8-15 -> 5, 16-31 -> 6, 32-127 -> 7, 128-255 -> 8
+/// Maps a raw edge hit count (0-255) to a one-hot bit identifying its bucket:
+/// - 0 -> 0, 1 -> 0x01, 2 -> 0x02, 3 -> 0x04, 4-7 -> 0x08, 8-15 -> 0x10,
+///   16-31 -> 0x20, 32-127 -> 0x40, 128-255 -> 0x80
 ///
-/// Each edge contributes `bucket_index` features because lower buckets are necessarily
-/// crossed on the way to the max. Summing across all edges gives `features >= edges`.
-const FEATURE_BUCKET_INDEX: [u8; 256] = {
+/// Applying it in place to the coverage map before feedback evaluation lets
+/// `AflMapFeedback` (OR-reduction) admit an input exactly when it produces a
+/// never-seen (edge, hit-count-bucket) feature - including a bucket *lower*
+/// than any previously observed for that edge - matching AFL's virgin-bitmap
+/// and libFuzzer's feature-set semantics. The feedback's history map therefore
+/// holds, per edge, the bitmask of all buckets seen so far.
+const CLASSIFY_BUCKET_BIT: [u8; 256] = {
     let mut table = [0u8; 256];
     let mut i = 1usize;
     while i < 256 {
         table[i] = match i {
-            1 => 1,
-            2 => 2,
-            3 => 3,
-            4..=7 => 4,
-            8..=15 => 5,
-            16..=31 => 6,
-            32..=127 => 7,
-            128..=255 => 8,
+            1 => 0x01,
+            2 => 0x02,
+            3 => 0x04,
+            4..=7 => 0x08,
+            8..=15 => 0x10,
+            16..=31 => 0x20,
+            32..=127 => 0x40,
+            128..=255 => 0x80,
             _ => unreachable!(),
         };
         i += 1;
@@ -1161,62 +1166,26 @@ const FEATURE_BUCKET_INDEX: [u8; 256] = {
     table
 };
 
-/// AFL-style hit-count bucket representative for corpus admission.
+/// Classify a coverage map in place into AFL-style hit-count bucket bits.
 ///
-/// Maps a raw edge hit count (0-255) to the lower bound of its bucket:
-/// - 0 -> 0, 1 -> 1, 2 -> 2, 3 -> 3, 4-7 -> 4, 8-15 -> 8, 16-31 -> 16,
-///   32-127 -> 32, 128-255 -> 128
-///
-/// Unlike [`FEATURE_BUCKET_INDEX`] (which yields a 0-8 *index* for the `ft`
-/// display stat), this yields a *representative value* that is a fixed point of
-/// the bucketing: `CLASSIFY_COUNT[CLASSIFY_COUNT[n]] == CLASSIFY_COUNT[n]`, and
-/// `FEATURE_BUCKET_INDEX[CLASSIFY_COUNT[n]] == FEATURE_BUCKET_INDEX[n]`. Applying
-/// it in place to the coverage map before feedback evaluation makes
-/// `MaxMapFeedback` admit on a new (edge, hit-count-bucket) - matching AFL /
-/// libFuzzer - rather than on a raw per-edge maximum, while keeping the `ft`
-/// stat consistent when computed over the (now classified) history map.
-const CLASSIFY_COUNT: [u8; 256] = {
-    let mut table = [0u8; 256];
-    let mut i = 1usize;
-    while i < 256 {
-        table[i] = match i {
-            1 => 1,
-            2 => 2,
-            3 => 3,
-            4..=7 => 4,
-            8..=15 => 8,
-            16..=31 => 16,
-            32..=127 => 32,
-            128..=255 => 128,
-            _ => unreachable!(),
-        };
-        i += 1;
-    }
-    table
-};
-
-/// Classify a coverage map in place into AFL-style hit-count buckets.
-///
-/// Each raw count is replaced by its bucket representative (see
-/// [`CLASSIFY_COUNT`]). Nonzero counts stay nonzero, so `bitmap_size` and
-/// covered-index computations are unaffected; only the *granularity* of the
-/// per-edge value changes, so corpus admission keys on hit-count buckets.
+/// Each raw count is replaced by its one-hot bucket bit (see
+/// [`CLASSIFY_BUCKET_BIT`]). Nonzero counts stay nonzero, so `bitmap_size` and
+/// covered-index computations are unaffected. Must only be applied to a map of
+/// raw counts (it is not idempotent); the coverage map is zeroed after every
+/// evaluation, so each classification starts from raw counts.
 pub(super) fn classify_counts_in_place(map: &mut [u8]) {
     for slot in map.iter_mut() {
-        *slot = CLASSIFY_COUNT[*slot as usize];
+        *slot = CLASSIFY_BUCKET_BIT[*slot as usize];
     }
 }
 
 /// Compute coverage features from a feedback history map.
 ///
-/// For each non-zero entry, the bucket index represents how many distinct
-/// hit-count thresholds that edge has crossed. Summing these gives a feature
-/// count analogous to libFuzzer's `ft` metric.
+/// The history map holds, per edge, the bitmask of hit-count buckets seen so
+/// far, so the popcount is the number of distinct (edge, bucket) features -
+/// exactly libFuzzer's `ft` metric.
 pub(crate) fn compute_coverage_features(history_map: &[u8]) -> u32 {
-    history_map
-        .iter()
-        .map(|&count| FEATURE_BUCKET_INDEX[count as usize] as u32)
-        .sum()
+    history_map.iter().map(|&bits| bits.count_ones()).sum()
 }
 
 /// Internal result of generating the next input (seed or mutation).

@@ -10,7 +10,7 @@ use libafl::corpus::{Corpus, CorpusId, InMemoryCorpus, SchedulerTestcaseMetadata
 use libafl::events::NopEventManager;
 use libafl::executors::ExitKind as LibaflExitKind;
 use libafl::feedbacks::{
-    CrashFeedback, Feedback, MapIndexesMetadata, MapNoveltiesMetadata, MaxMapFeedback,
+    AflMapFeedback, CrashFeedback, Feedback, MapIndexesMetadata, MapNoveltiesMetadata,
     StateInitializer, TimeoutFeedback,
 };
 use libafl::inputs::{BytesInput, GeneralizedInputMetadata};
@@ -61,7 +61,7 @@ pub(super) fn make_state_and_feedback(
 ) -> (FuzzerState, FuzzerFeedback, CrashObjective) {
     // SAFETY: map_ptr/map_len come from caller's Vec; observer is dropped before returning.
     let observer = unsafe { StdMapObserver::from_mut_ptr(EDGES_OBSERVER_NAME, map_ptr, map_len) };
-    let mut feedback = MaxMapFeedback::new(&observer);
+    let mut feedback = AflMapFeedback::new(&observer);
     let mut objective = CrashFeedback::new();
 
     let mut state = StdState::new(
@@ -122,7 +122,7 @@ pub(super) fn make_fuzzer(
 ) {
     // SAFETY: map_ptr/map_len come from caller's Vec; observer consumed by track_indices below.
     let observer = unsafe { StdMapObserver::from_mut_ptr(EDGES_OBSERVER_NAME, map_ptr, map_len) };
-    let mut feedback = MaxMapFeedback::new(&observer);
+    let mut feedback = AflMapFeedback::new(&observer);
     let mut crash_objective = CrashFeedback::new();
 
     let mut state = StdState::new(

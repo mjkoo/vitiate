@@ -114,54 +114,49 @@ fn test_duplicate_coverage_not_interesting() {
 }
 
 #[test]
-fn test_classify_counts_bucketing_is_consistent() {
-    // The classification table used for bucketed admission must be a fixed point
-    // of the bucketing (idempotent) and agree with the display-stat bucket index,
-    // so the `ft` stat stays correct when computed over a classified history map.
-    use crate::engine::{FEATURE_BUCKET_INDEX, classify_counts_in_place};
+fn test_classify_counts_bucket_bits() {
+    // The classification table maps each raw count to a one-hot bit identifying
+    // its AFL hit-count bucket (count_class_lookup8), so OR-reduction feedback
+    // admits on any never-seen (edge, bucket) feature.
+    use crate::engine::classify_counts_in_place;
 
     let mut map: Vec<u8> = (0..=255u16).map(|v| v as u8).collect();
     classify_counts_in_place(&mut map);
 
-    // Known bucket representatives (lower bound of each AFL bucket).
+    // One-hot bucket bits at each AFL bucket boundary.
     assert_eq!(map[0], 0);
-    assert_eq!(map[1], 1);
-    assert_eq!(map[2], 2);
-    assert_eq!(map[3], 3);
-    assert_eq!(map[4], 4);
-    assert_eq!(map[7], 4);
-    assert_eq!(map[8], 8);
-    assert_eq!(map[15], 8);
-    assert_eq!(map[16], 16);
-    assert_eq!(map[31], 16);
-    assert_eq!(map[32], 32);
-    assert_eq!(map[127], 32);
-    assert_eq!(map[128], 128);
-    assert_eq!(map[255], 128);
+    assert_eq!(map[1], 0x01);
+    assert_eq!(map[2], 0x02);
+    assert_eq!(map[3], 0x04);
+    assert_eq!(map[4], 0x08);
+    assert_eq!(map[7], 0x08);
+    assert_eq!(map[8], 0x10);
+    assert_eq!(map[15], 0x10);
+    assert_eq!(map[16], 0x20);
+    assert_eq!(map[31], 0x20);
+    assert_eq!(map[32], 0x40);
+    assert_eq!(map[127], 0x40);
+    assert_eq!(map[128], 0x80);
+    assert_eq!(map[255], 0x80);
 
-    for raw in 0..=255usize {
-        let rep = map[raw];
+    for (raw, &bit) in map.iter().enumerate() {
         // Nonzero counts stay nonzero (preserves bitmap_size / covered indices).
-        assert_eq!(rep == 0, raw == 0, "nonzero-ness preserved at {raw}");
-        // Idempotent: classifying a representative yields itself.
-        let mut single = [rep];
-        classify_counts_in_place(&mut single);
-        assert_eq!(single[0], rep, "classify not idempotent at {raw}");
-        // The `ft` display bucket index agrees for raw and classified values.
-        assert_eq!(
-            FEATURE_BUCKET_INDEX[raw], FEATURE_BUCKET_INDEX[rep as usize],
-            "feature bucket index diverges at {raw}"
-        );
+        assert_eq!(bit == 0, raw == 0, "nonzero-ness preserved at {raw}");
+        // Exactly one bucket bit per nonzero count.
+        if raw > 0 {
+            assert_eq!(bit.count_ones(), 1, "not one-hot at {raw}");
+        }
     }
 }
 
 #[test]
-fn test_admission_keys_on_hitcount_bucket() {
+fn test_admission_keys_on_hitcount_bucket_features() {
     let _cmplog_cleanup = cmplog::TestCleanupGuard;
-    // C3: corpus admission keys on AFL-style hit-count buckets, not the raw
-    // per-edge maximum. An input that raises an edge's count within the same
-    // bucket must NOT be admitted (raw-max feedback would wrongly admit it);
-    // an input that crosses into a higher bucket MUST be admitted.
+    // Corpus admission keys on the set of (edge, hit-count-bucket) features
+    // seen so far, matching AFL's virgin bitmap / libFuzzer's feature set. An
+    // input that raises an edge's count within an already-seen bucket must NOT
+    // be admitted; any never-seen bucket - higher OR lower than previous
+    // observations - MUST be admitted.
     let mut fuzzer = TestFuzzerBuilder::new(256).build();
     fuzzer.add_seed(Buffer::from(b"seed".to_vec())).unwrap();
 
@@ -176,7 +171,7 @@ fn test_admission_keys_on_hitcount_bucket() {
     assert_eq!(fuzzer.state.corpus().count(), 1);
 
     // Iteration 2: same edge, count 5 -> raw 5 > 4, but still bucket [4,7].
-    // Bucketed admission must reject this.
+    // Feature-set admission must reject this.
     let _input = fuzzer.get_next_input().unwrap();
     unsafe {
         *fuzzer.map_ptr.add(10) = 5;
@@ -204,7 +199,37 @@ fn test_admission_keys_on_hitcount_bucket() {
         IterationResult::Interesting,
         "crossing into a higher hit-count bucket must be admitted"
     );
+    fuzzer.calibrate_finish().unwrap();
     assert_eq!(fuzzer.state.corpus().count(), 2);
+
+    // Iteration 4: same edge, count 2 -> bucket [2,2]. Lower than every
+    // previous observation, but a never-seen feature: set semantics MUST admit
+    // it (max-over-buckets admission wrongly rejected exactly this case).
+    let _input = fuzzer.get_next_input().unwrap();
+    unsafe {
+        *fuzzer.map_ptr.add(10) = 2;
+    }
+    let r4 = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
+    assert_eq!(
+        r4,
+        IterationResult::Interesting,
+        "a never-seen lower hit-count bucket must be admitted"
+    );
+    fuzzer.calibrate_finish().unwrap();
+    assert_eq!(fuzzer.state.corpus().count(), 3);
+
+    // Iteration 5: count 2 again - the bucket is now seen, so no re-admission.
+    let _input = fuzzer.get_next_input().unwrap();
+    unsafe {
+        *fuzzer.map_ptr.add(10) = 2;
+    }
+    let r5 = fuzzer.report_result(ExitKind::Ok, 100_000.0).unwrap();
+    assert_eq!(
+        r5,
+        IterationResult::None,
+        "an already-seen bucket must not be re-admitted"
+    );
+    assert_eq!(fuzzer.state.corpus().count(), 3);
 }
 
 #[test]
