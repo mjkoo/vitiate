@@ -36,20 +36,23 @@ Detects file system access outside allowed directories.
 
 **How it works:** Hooks `fs` and `fs/promises` functions (`readFile`, `readFileSync`, `writeFile`, `writeFileSync`, `mkdir`, `mkdirSync`, `unlink`, `unlinkSync`, `stat`, `statSync`, `access`, `accessSync`, `readdir`, `readdirSync`, `open`, `openSync`, `rename`, `renameSync`). Resolves paths and checks against deny/allow lists.
 
-**Tokens contributed:** `../`, `../../`, `../../../`, `%2e%2e`, `%2f`, null byte, `/etc/passwd`, `/etc/shadow`
+**Tokens contributed:** `../`, `../../`, `../../../`, `..\`, null byte, `%2e%2e%2f`, `%2e%2e/`, `..%2f`, plus each resolved `deniedPaths` entry (by default the platform canary path).
 
 **Options:**
 
 ```ts
 interface PathTraversalOptions {
-  allowedPaths?: string[];  // Allowed path prefixes
-  deniedPaths?: string[];   // Denied paths (checked before allowed)
+  allowedPaths?: string[];  // Allowed path prefixes (default: ["/"])
+  deniedPaths?: string[];   // Denied paths, checked before allowed
+                            // (default: platform canary path)
 }
 ```
 
-Evaluation order: denied paths are checked first, then allowed paths, then default deny.
+**Defaults:** `allowedPaths` defaults to `["/"]` (allow everything) and `deniedPaths` defaults to a single canary: `/etc/passwd` on POSIX, `C:\Windows\System32\drivers\etc\hosts` on Windows. Under the defaults the detector fires only on access to that canary path. Set `allowedPaths` to confine access to specific directories.
 
-**Platform note:** Tier 2 (disabled by default) on Windows. Case-insensitive filesystem matching and cross-drive path resolution (e.g., `D:\` vs `\\?\`) make the default deny policy prone to false positives.
+Evaluation order: each resolved path is checked against `deniedPaths` first (match → finding), then `allowedPaths` (match → allowed). A path matching neither is a finding, but under the default `allowedPaths` of `["/"]` every path matches, so this fall-through deny is unreachable unless `allowedPaths` is narrowed.
+
+**Platform note:** Tier 2 (disabled by default) on Windows. Case-insensitive filesystem matching and cross-drive path resolution (e.g., `D:\` vs `\\?\`) make a narrowed allow-list policy prone to false positives.
 
 ### unsafeEval
 

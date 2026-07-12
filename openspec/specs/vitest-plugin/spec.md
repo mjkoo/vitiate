@@ -156,7 +156,7 @@ Precedence (highest wins): `VITIATE_FUZZ_TIME` > `VITIATE_OPTIONS.fuzzTimeMs` > 
 
 The plugin's `config()` hook SHALL resolve the Vite project root and store it as module-scoped state via `setProjectRoot()`. The project root SHALL be obtained from the Vite config's `root` property (which defaults to `process.cwd()` when not explicitly configured).
 
-This value is consumed by the corpus management module to anchor the cache directory. No environment variable is needed because the plugin and corpus module run in the same process.
+This value is consumed by the corpus management module to anchor the cache directory. Within the same process it is read from module-scoped state; it is also exported to worker processes via `VITIATE_PROJECT_ROOT` (see the worker-propagation requirement below).
 
 #### Scenario: Project root is set from Vite config
 
@@ -168,6 +168,25 @@ This value is consumed by the corpus management module to anchor the cache direc
 - **WHEN** the plugin's `config()` hook runs
 - **AND** Vite's `root` is not configured
 - **THEN** the project root is set to `process.cwd()`
+
+### Requirement: Resolved config propagation to worker processes
+
+The plugin's `config()` hook runs only in the Vitest main process. The fuzz loop, corpus access, and coverage map allocation run in a Vitest worker process (and, under the CLI, a supervisor child) where no plugin hook executes and module-scoped state is unset. The `config()` hook SHALL therefore export the resolved project root, data directory (absolute), and coverage map size as the environment variables `VITIATE_PROJECT_ROOT`, `VITIATE_DATA_DIR`, and `VITIATE_COVERAGE_MAP_SIZE`, which worker processes inherit.
+
+These SHALL always be written (overwriting any inherited value) using the values resolved by this hook, so a stale inherited value is replaced rather than re-propagated. The corresponding getters (`getProjectRoot()`, `getDataDir()`, `getCoverageMapSize()`) SHALL resolve module-scoped state first, then the environment variable, then the built-in default. These three variables are internal and SHALL NOT be documented in the user-facing CLI guide.
+
+#### Scenario: Config hook exports resolved values
+
+- **WHEN** the plugin's `config()` hook runs with `dataDir` and `coverageMapSize` set
+- **THEN** `VITIATE_PROJECT_ROOT` is the resolved project root
+- **AND** `VITIATE_DATA_DIR` is the absolute resolved data directory
+- **AND** `VITIATE_COVERAGE_MAP_SIZE` is the configured coverage map size
+
+#### Scenario: Config hook overwrites stale inherited values
+
+- **WHEN** `VITIATE_DATA_DIR` or `VITIATE_COVERAGE_MAP_SIZE` is already set in the environment
+- **AND** the plugin's `config()` hook runs
+- **THEN** each variable is overwritten with the value resolved by this hook
 
 ### Requirement: Transform hook instruments code via SWC
 

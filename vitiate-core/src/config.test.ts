@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import {
   isFuzzingMode,
   isOptimizeMode,
@@ -27,7 +27,14 @@ import {
   setConfigFile,
   getConfigFile,
   resetConfigFile,
+  getProjectRoot,
+  setProjectRoot,
+  resetProjectRoot,
+  getDataDir,
+  setDataDir,
+  resetDataDir,
 } from "./config.js";
+import path from "node:path";
 
 describe("config", () => {
   const originalEnv = process.env["VITIATE_FUZZ"];
@@ -459,6 +466,9 @@ describe("config", () => {
         "VITIATE_OPTIONS",
         "VITIATE_CLI_IPC",
         "VITIATE_RESULTS_FILE",
+        "VITIATE_PROJECT_ROOT",
+        "VITIATE_DATA_DIR",
+        "VITIATE_COVERAGE_MAP_SIZE",
       ];
       const saved: Record<string, string | undefined> = {};
       for (const v of knownVars) {
@@ -1393,12 +1403,64 @@ describe("config", () => {
   });
 
   describe("getCoverageMapSize / setCoverageMapSize", () => {
+    const savedCovEnv = process.env["VITIATE_COVERAGE_MAP_SIZE"];
+
+    beforeEach(() => {
+      delete process.env["VITIATE_COVERAGE_MAP_SIZE"];
+    });
+
     afterEach(() => {
       resetCoverageMapSize();
+      if (savedCovEnv === undefined) {
+        delete process.env["VITIATE_COVERAGE_MAP_SIZE"];
+      } else {
+        process.env["VITIATE_COVERAGE_MAP_SIZE"] = savedCovEnv;
+      }
     });
 
     it("returns default COVERAGE_MAP_SIZE when not set", () => {
       expect(getCoverageMapSize()).toBe(65536);
+    });
+
+    it("falls back to VITIATE_COVERAGE_MAP_SIZE when module state is unset", () => {
+      process.env["VITIATE_COVERAGE_MAP_SIZE"] = "131072";
+      expect(getCoverageMapSize()).toBe(131072);
+    });
+
+    it("module state takes precedence over VITIATE_COVERAGE_MAP_SIZE", () => {
+      process.env["VITIATE_COVERAGE_MAP_SIZE"] = "131072";
+      setCoverageMapSize(2048);
+      expect(getCoverageMapSize()).toBe(2048);
+    });
+
+    it("treats an empty VITIATE_COVERAGE_MAP_SIZE as unset", () => {
+      process.env["VITIATE_COVERAGE_MAP_SIZE"] = "";
+      expect(getCoverageMapSize()).toBe(65536);
+    });
+
+    it("warns and uses default for an invalid VITIATE_COVERAGE_MAP_SIZE", () => {
+      const chunks: string[] = [];
+      const originalWrite = process.stderr.write;
+      process.stderr.write = ((chunk: string) => {
+        chunks.push(chunk);
+        return true;
+      }) as typeof process.stderr.write;
+
+      try {
+        // Distinct raw strings so the raw-keyed memo does not mask re-warning.
+        process.env["VITIATE_COVERAGE_MAP_SIZE"] = "not-a-number";
+        expect(getCoverageMapSize()).toBe(65536);
+        process.env["VITIATE_COVERAGE_MAP_SIZE"] = "100";
+        expect(getCoverageMapSize()).toBe(65536);
+        process.env["VITIATE_COVERAGE_MAP_SIZE"] = "1024.5";
+        expect(getCoverageMapSize()).toBe(65536);
+        expect(chunks.length).toBe(3);
+        expect(
+          chunks.every((c) => c.includes("VITIATE_COVERAGE_MAP_SIZE")),
+        ).toBe(true);
+      } finally {
+        process.stderr.write = originalWrite;
+      }
     });
 
     it("returns the value set by setCoverageMapSize", () => {
@@ -1486,6 +1548,93 @@ describe("config", () => {
       expect(getCoverageMapSize()).toBe(512);
       resetCoverageMapSize();
       expect(getCoverageMapSize()).toBe(65536);
+    });
+  });
+
+  describe("getProjectRoot / VITIATE_PROJECT_ROOT fallback", () => {
+    const saved = process.env["VITIATE_PROJECT_ROOT"];
+
+    beforeEach(() => {
+      resetProjectRoot();
+      delete process.env["VITIATE_PROJECT_ROOT"];
+    });
+
+    afterEach(() => {
+      resetProjectRoot();
+      if (saved === undefined) {
+        delete process.env["VITIATE_PROJECT_ROOT"];
+      } else {
+        process.env["VITIATE_PROJECT_ROOT"] = saved;
+      }
+    });
+
+    it("defaults to cwd when neither module state nor env is set", () => {
+      expect(getProjectRoot()).toBe(process.cwd());
+    });
+
+    it("falls back to VITIATE_PROJECT_ROOT when module state is unset", () => {
+      process.env["VITIATE_PROJECT_ROOT"] = "/my/project";
+      expect(getProjectRoot()).toBe(path.resolve("/my/project"));
+    });
+
+    it("module state takes precedence over VITIATE_PROJECT_ROOT", () => {
+      process.env["VITIATE_PROJECT_ROOT"] = "/env/root";
+      setProjectRoot("/module/root");
+      expect(getProjectRoot()).toBe("/module/root");
+    });
+
+    it("treats an empty VITIATE_PROJECT_ROOT as unset", () => {
+      process.env["VITIATE_PROJECT_ROOT"] = "";
+      expect(getProjectRoot()).toBe(process.cwd());
+    });
+  });
+
+  describe("getDataDir / VITIATE_DATA_DIR fallback", () => {
+    const savedData = process.env["VITIATE_DATA_DIR"];
+    const savedRoot = process.env["VITIATE_PROJECT_ROOT"];
+
+    beforeEach(() => {
+      resetDataDir();
+      resetProjectRoot();
+      delete process.env["VITIATE_DATA_DIR"];
+      delete process.env["VITIATE_PROJECT_ROOT"];
+    });
+
+    afterEach(() => {
+      resetDataDir();
+      resetProjectRoot();
+      if (savedData === undefined) {
+        delete process.env["VITIATE_DATA_DIR"];
+      } else {
+        process.env["VITIATE_DATA_DIR"] = savedData;
+      }
+      if (savedRoot === undefined) {
+        delete process.env["VITIATE_PROJECT_ROOT"];
+      } else {
+        process.env["VITIATE_PROJECT_ROOT"] = savedRoot;
+      }
+    });
+
+    it("defaults to .vitiate under the project root", () => {
+      setProjectRoot("/my/project");
+      expect(getDataDir()).toBe(path.resolve("/my/project", ".vitiate"));
+    });
+
+    it("falls back to VITIATE_DATA_DIR when module state is unset", () => {
+      process.env["VITIATE_DATA_DIR"] = "/custom/data";
+      expect(getDataDir()).toBe(path.resolve("/custom/data"));
+    });
+
+    it("module state takes precedence over VITIATE_DATA_DIR", () => {
+      process.env["VITIATE_DATA_DIR"] = "/env/data";
+      setDataDir("/module/data");
+      expect(getDataDir()).toBe("/module/data");
+    });
+
+    it("treats an empty VITIATE_DATA_DIR as unset", () => {
+      process.env["VITIATE_DATA_DIR"] = "";
+      setProjectRoot("/my/project");
+      expect(getDataDir()).toBe(path.resolve("/my/project", ".vitiate"));
     });
   });
 

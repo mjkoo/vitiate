@@ -93,13 +93,24 @@ describe("plugin", () => {
   });
 
   describe("config hook", () => {
-    const savedFuzzOptions = process.env["VITIATE_OPTIONS"];
+    const PROPAGATED_ENV = [
+      "VITIATE_OPTIONS",
+      "VITIATE_PROJECT_ROOT",
+      "VITIATE_DATA_DIR",
+      "VITIATE_COVERAGE_MAP_SIZE",
+    ] as const;
+    const savedEnv = new Map(
+      PROPAGATED_ENV.map((name) => [name, process.env[name]] as const),
+    );
 
     afterEach(() => {
-      if (savedFuzzOptions === undefined) {
-        delete process.env["VITIATE_OPTIONS"];
-      } else {
-        process.env["VITIATE_OPTIONS"] = savedFuzzOptions;
+      for (const name of PROPAGATED_ENV) {
+        const saved = savedEnv.get(name);
+        if (saved === undefined) {
+          delete process.env[name];
+        } else {
+          process.env[name] = saved;
+        }
       }
       resetProjectRoot();
       resetDataDir();
@@ -229,6 +240,53 @@ describe("plugin", () => {
       expect(() => callConfig(instrument, {})).toThrow(
         "coverageMapSize must be an integer in [256, 4194304]",
       );
+    });
+
+    it("exports resolved project root, data dir, and map size as env vars", () => {
+      const instrument = findPlugin(
+        vitiatePlugin({ dataDir: ".fuzz-data", coverageMapSize: 131072 }),
+        "vitiate:instrument",
+      );
+      callConfig(instrument, { root: "/my/project" });
+      // These env vars are the only channel by which forks-pool workers
+      // (where no plugin hook runs) learn the resolved plugin config.
+      expect(process.env["VITIATE_PROJECT_ROOT"]).toBe(
+        path.resolve("/my/project"),
+      );
+      expect(process.env["VITIATE_DATA_DIR"]).toBe(
+        path.resolve("/my/project", ".fuzz-data"),
+      );
+      expect(process.env["VITIATE_COVERAGE_MAP_SIZE"]).toBe("131072");
+    });
+
+    it("exports default data dir and map size when options are absent", () => {
+      const instrument = findPlugin(vitiatePlugin(), "vitiate:instrument");
+      callConfig(instrument, { root: "/my/project" });
+      expect(process.env["VITIATE_PROJECT_ROOT"]).toBe(
+        path.resolve("/my/project"),
+      );
+      expect(process.env["VITIATE_DATA_DIR"]).toBe(
+        path.resolve("/my/project", ".vitiate"),
+      );
+      expect(process.env["VITIATE_COVERAGE_MAP_SIZE"]).toBe("65536");
+    });
+
+    it("overwrites pre-existing propagated env values", () => {
+      process.env["VITIATE_PROJECT_ROOT"] = "/stale/root";
+      process.env["VITIATE_DATA_DIR"] = "/stale/data";
+      process.env["VITIATE_COVERAGE_MAP_SIZE"] = "999999";
+      const instrument = findPlugin(
+        vitiatePlugin({ coverageMapSize: 262144 }),
+        "vitiate:instrument",
+      );
+      callConfig(instrument, { root: "/fresh/root" });
+      expect(process.env["VITIATE_PROJECT_ROOT"]).toBe(
+        path.resolve("/fresh/root"),
+      );
+      expect(process.env["VITIATE_DATA_DIR"]).toBe(
+        path.resolve("/fresh/root", ".vitiate"),
+      );
+      expect(process.env["VITIATE_COVERAGE_MAP_SIZE"]).toBe("262144");
     });
 
     it("does not set test.server.deps.inline when exclude is empty and no packages", () => {

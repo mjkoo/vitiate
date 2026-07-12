@@ -68,7 +68,7 @@ The CLI guide SHALL include a complete environment variable reference section. E
 
 The following variables SHALL be documented: `VITIATE_FUZZ_TIME`, `VITIATE_FUZZ_EXECS`, `VITIATE_MAX_CRASHES`, `VITIATE_FUZZ`, `VITIATE_OPTIMIZE`, `VITIATE_DEBUG`.
 
-Internal variables (`VITIATE_SUPERVISOR`, `VITIATE_SHMEM`, `VITIATE_OPTIONS`, `VITIATE_CLI_IPC`) SHALL NOT be documented in the user-facing guide.
+Internal variables (`VITIATE_SUPERVISOR`, `VITIATE_SHMEM`, `VITIATE_OPTIONS`, `VITIATE_CLI_IPC`, `VITIATE_PROJECT_ROOT`, `VITIATE_DATA_DIR`, `VITIATE_COVERAGE_MAP_SIZE`) SHALL NOT be documented in the user-facing guide. They MAY be listed in the "Internal" section of the environment variable reference page, marked as set automatically.
 
 #### Scenario: Env var with CLI equivalent
 

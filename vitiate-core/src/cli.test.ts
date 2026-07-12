@@ -13,11 +13,18 @@ import { tmpdir } from "node:os";
 import { PassThrough } from "node:stream";
 import path from "node:path";
 import { parseSync } from "@optique/core/parser";
+import { main } from "./cli.js";
+import { parseArgs, supervisorExitCode } from "./cli/libfuzzer.js";
 import {
-  parseArgs,
   parseDetectorsFlag,
   reproduceParser,
   pathsParser,
+} from "./cli/parsers.js";
+import {
+  resolveReproduceTimeoutMs,
+  DEFAULT_REPRODUCE_TIMEOUT_SECONDS,
+} from "./cli/reproduce.js";
+import {
   findOrphans,
   selectPruneTargets,
   deleteOrphans,
@@ -26,12 +33,8 @@ import {
   resolveOrphans,
   pathsEmptyMessage,
   promptYesNo,
-  type TestManifestRow,
-  main,
-  supervisorExitCode,
-  resolveReproduceTimeoutMs,
-  DEFAULT_REPRODUCE_TIMEOUT_SECONDS,
-} from "./cli.js";
+} from "./cli/paths.js";
+import type { TestManifestRow } from "./cli/discover.js";
 import type { SupervisorResult } from "./supervisor.js";
 import { getCliOptions, setDataDir, resetDataDir } from "./config.js";
 import { getTestDataDir, getCorpusDir } from "./corpus.js";

@@ -100,13 +100,24 @@ Common finding: user input interpolated into shell commands without escaping.
 
 ### Path Traversal
 
-Hooks `fs` and `fs/promises` functions (`readFile`, `writeFile`, `mkdir`, `unlink`, `stat`, etc.). Checks resolved paths against allow/deny lists. The default policy denies access outside the project directory.
+Hooks `fs` and `fs/promises` functions (`readFile`, `writeFile`, `mkdir`, `unlink`, `stat`, etc.). Checks each resolved path against the deny list first, then the allow list.
+
+By default, `allowedPaths` is `["/"]` (every path is allowed) and `deniedPaths` is a single canary: `/etc/passwd` on POSIX, `C:\Windows\System32\drivers\etc\hosts` on Windows. So out of the box the detector fires only when the target reads that canary path. This keeps the default false-positive-free: the fuzzer seeds `../` traversal tokens and the canary path, so it steers toward provable traversal without flagging legitimate reads of the temp dir, `node_modules`, or Vitiate's own `.vitiate` data directory.
+
+To actually confine file access, set `allowedPaths` to the directories your code should touch (a read outside them then becomes a finding):
+
+```ts
+pathTraversal: {
+  allowedPaths: ["/app/uploads"],
+  deniedPaths: ["/etc/passwd", "/etc/shadow"],
+},
+```
 
 Options:
-- `allowedPaths`: Array of allowed path prefixes
-- `deniedPaths`: Array of explicitly denied paths (checked before allowed)
+- `allowedPaths`: Array of allowed path prefixes (default `["/"]`)
+- `deniedPaths`: Array of explicitly denied paths, checked before allowed (default: the platform canary path)
 
-Common finding: user-controlled filenames joined with `path.join()` without validation.
+Common finding: user-controlled filenames joined with `path.join()` without validation, reaching a path outside `allowedPaths`.
 
 ### ReDoS (Regular Expression Denial of Service)
 
