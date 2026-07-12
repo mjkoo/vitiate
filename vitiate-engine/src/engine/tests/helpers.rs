@@ -165,47 +165,34 @@ pub(super) fn make_cmplog_bytes(data: &[u8]) -> CmplogBytes {
 /// # Panics
 /// Panics if no iterative stage (I2S, Grimoire, Unicode, Json) is active.
 pub(super) fn force_single_iteration(fuzzer: &mut Fuzzer) {
-    fuzzer.stage_state = match std::mem::replace(&mut fuzzer.stage_state, StageState::None) {
+    // Every iterative stage carries `iteration`/`max_iterations`; set the cap one
+    // past the current iteration so the next advance completes the stage. Other
+    // fields (corpus_id, Unicode's metadata) are left untouched in place.
+    match &mut fuzzer.stage_state {
         StageState::I2S {
-            corpus_id,
             iteration,
+            max_iterations,
             ..
-        } => StageState::I2S {
-            corpus_id,
+        }
+        | StageState::Grimoire {
             iteration,
-            max_iterations: iteration + 1,
-        },
-        StageState::Grimoire {
-            corpus_id,
-            iteration,
+            max_iterations,
             ..
-        } => StageState::Grimoire {
-            corpus_id,
+        }
+        | StageState::Unicode {
             iteration,
-            max_iterations: iteration + 1,
-        },
-        StageState::Unicode {
-            corpus_id,
-            iteration,
-            metadata,
+            max_iterations,
             ..
-        } => StageState::Unicode {
-            corpus_id,
+        }
+        | StageState::Json {
             iteration,
-            max_iterations: iteration + 1,
-            metadata,
-        },
-        StageState::Json {
-            corpus_id,
-            iteration,
+            max_iterations,
             ..
-        } => StageState::Json {
-            corpus_id,
-            iteration,
-            max_iterations: iteration + 1,
-        },
+        } => {
+            *max_iterations = *iteration + 1;
+        }
         _ => panic!("force_single_iteration: no iterative stage active"),
-    };
+    }
 }
 
 /// Builder for constructing `Fuzzer` instances in tests. Wraps `Fuzzer::new()`

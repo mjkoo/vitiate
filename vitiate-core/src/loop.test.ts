@@ -1,13 +1,6 @@
 import { describe, it, expect, afterEach, beforeEach } from "vitest";
-import {
-  mkdirSync,
-  rmSync,
-  existsSync,
-  readFileSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { tmpdir } from "node:os";
 import {
   runFuzzLoop,
   checkDedupPolicy,
@@ -17,16 +10,12 @@ import {
 } from "./loop.js";
 import { initGlobals } from "./globals.js";
 import { hashTestPath } from "./nix-base32.js";
-import {
-  setDataDir,
-  resetDataDir,
-  setProjectRoot,
-  resetProjectRoot,
-} from "./config.js";
+import { makeTestDataDir } from "./test-utils.js";
 import { resetDetectorHooks } from "./detectors/index.js";
 
 describe("fuzz loop", () => {
   let tmpDir: string;
+  let cleanup: (() => void) | undefined;
   const originalFuzz = process.env["VITIATE_FUZZ"];
   const originalCliIpc = process.env["VITIATE_CLI_IPC"];
   const originalResultsFile = process.env["VITIATE_RESULTS_FILE"];
@@ -40,8 +29,6 @@ describe("fuzz loop", () => {
     } else {
       process.env["VITIATE_FUZZ"] = originalFuzz;
     }
-    resetDataDir();
-    resetProjectRoot();
     if (originalCliIpc === undefined) {
       delete process.env["VITIATE_CLI_IPC"];
     } else {
@@ -55,22 +42,17 @@ describe("fuzz loop", () => {
     globalThis.__vitiate_cov = originalCov;
     globalThis.__vitiate_cmplog_write = originalTrace;
     globalThis.__vitiate_cmplog_reset_counts = originalResetCounts;
-    if (tmpDir) {
-      rmSync(tmpDir, { recursive: true, force: true });
-    }
+    cleanup?.();
+    cleanup = undefined;
     resetDetectorHooks();
   });
 
   async function setupFuzzingMode(): Promise<void> {
     process.env["VITIATE_FUZZ"] = "1";
     await initGlobals();
-    tmpDir = path.join(
-      tmpdir(),
-      `vitiate-loop-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    );
-    mkdirSync(tmpDir, { recursive: true });
-    setDataDir(tmpDir);
-    setProjectRoot(tmpDir);
+    ({ dir: tmpDir, cleanup } = makeTestDataDir("loop-test", {
+      setProjectRoot: true,
+    }));
   }
 
   /**
@@ -2121,7 +2103,7 @@ describe("clampBatchSizeToDeadline", () => {
 // ── 5.12: Async target detection ────────────────────────────────────
 
 describe("async target detection", () => {
-  let tmpDir: string;
+  let cleanup: (() => void) | undefined;
   const originalFuzz = process.env["VITIATE_FUZZ"];
   const originalCov = globalThis.__vitiate_cov;
   const originalTrace = globalThis.__vitiate_cmplog_write;
@@ -2130,13 +2112,7 @@ describe("async target detection", () => {
   async function setupFuzzingModeLocal(): Promise<void> {
     process.env["VITIATE_FUZZ"] = "1";
     await initGlobals();
-    tmpDir = path.join(
-      tmpdir(),
-      `vitiate-async-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    );
-    mkdirSync(tmpDir, { recursive: true });
-    setDataDir(tmpDir);
-    setProjectRoot(tmpDir);
+    ({ cleanup } = makeTestDataDir("async-test", { setProjectRoot: true }));
   }
 
   afterEach(() => {
@@ -2145,14 +2121,11 @@ describe("async target detection", () => {
     } else {
       process.env["VITIATE_FUZZ"] = originalFuzz;
     }
-    resetDataDir();
-    resetProjectRoot();
     globalThis.__vitiate_cov = originalCov;
     globalThis.__vitiate_cmplog_write = originalTrace;
     globalThis.__vitiate_cmplog_reset_counts = originalResetCounts;
-    if (tmpDir) {
-      rmSync(tmpDir, { recursive: true, force: true });
-    }
+    cleanup?.();
+    cleanup = undefined;
     resetDetectorHooks();
   });
 

@@ -6,8 +6,9 @@ import { fileURLToPath } from "node:url";
 import { Watchdog } from "@vitiate/engine";
 import { fuzz, replayCorpusEntry } from "./fuzz.js";
 import { asWatchdogRunner, type WatchdogRunner } from "./loop.js";
-import { getProjectRoot, setDataDir, resetDataDir } from "./config.js";
+import { getProjectRoot } from "./config.js";
 import { hashTestPath } from "./nix-base32.js";
+import { makeTestDataDir } from "./test-utils.js";
 import { VulnerabilityError } from "./detectors/types.js";
 
 interface DetectorCall {
@@ -278,12 +279,11 @@ describe("replayCorpusEntry without watchdog (bare replay)", () => {
 // constructs a Watchdog, replays seeded entries under it, and shuts it down.
 // fuzz() must be called at describe level (it delegates to vitest's test()).
 describe("fuzz regression mode - watchdog-protected replay wiring", () => {
-  const tmpDir = path.join(
-    tmpdir(),
-    `vitiate-replay-e2e-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-  );
+  let tmpDir: string;
+  let cleanup: () => void;
 
   beforeAll(() => {
+    ({ dir: tmpDir, cleanup } = makeTestDataDir("regression-replay"));
     const projectRoot = getProjectRoot();
     const thisFile = fileURLToPath(import.meta.url);
     const relativeFilePath = path.relative(projectRoot, thisFile);
@@ -294,12 +294,10 @@ describe("fuzz regression mode - watchdog-protected replay wiring", () => {
     const seedDir = path.join(tmpDir, "testdata", hashDir, "seeds");
     mkdirSync(seedDir, { recursive: true });
     writeFileSync(path.join(seedDir, "seed-hello"), "hello");
-    setDataDir(tmpDir);
   });
 
   afterAll(() => {
-    resetDataDir();
-    rmSync(tmpDir, { recursive: true, force: true });
+    cleanup();
   });
 
   fuzz(

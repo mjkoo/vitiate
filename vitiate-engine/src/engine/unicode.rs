@@ -1,13 +1,12 @@
 use libafl::HasMetadata;
 use libafl::corpus::{Corpus, CorpusId};
-use libafl::executors::ExitKind as LibaflExitKind;
 use libafl::mutators::Mutator;
 use libafl::stages::UnicodeIdentificationMetadata;
-use libafl::state::{HasCorpus, HasExecutions, HasRand};
+use libafl::state::{HasCorpus, HasRand};
 use libafl_bolts::rands::Rand;
 use napi::bindgen_prelude::*;
 
-use super::{Fuzzer, STAGE_MAX_ITERATIONS, StageState, UnicodeInput};
+use super::{Fuzzer, STAGE_MAX_ITERATIONS, StageKind, StageState, UnicodeInput};
 
 impl Fuzzer {
     /// Begin the unicode mutation stage for a corpus entry.
@@ -49,6 +48,8 @@ impl Fuzzer {
 
     /// Advance the unicode stage after a target execution.
     pub(super) fn advance_unicode(&mut self, exec_time_ns: f64) -> Result<Option<Buffer>> {
+        // mem::replace extracts the non-Copy `metadata` field (and clears the
+        // stage state, which the shared helper also does idempotently).
         let (corpus_id, iteration, max_iterations, metadata) =
             match std::mem::replace(&mut self.stage_state, StageState::None) {
                 StageState::Unicode {
@@ -60,50 +61,25 @@ impl Fuzzer {
                 _ => return Ok(None),
             };
 
-        // Drain CmpLog (discard - unicode doesn't use CmpLog data).
-        let _ = crate::cmplog::drain();
-
-        // stage_state is already StageState::None (set by mem::replace above).
-        // On error, the stage is cleanly abandoned (no zombie state). On success,
-        // stage_state is overwritten below with the next iteration.
-        let stage_input = self
-            .last_stage_input
-            .take()
-            .ok_or_else(|| Error::from_reason("advanceUnicode: no stashed stage input"))?;
-
-        // The target was invoked - count the execution before the fallible
-        // evaluate_coverage call so counters stay accurate on error.
-        self.total_execs += 1;
-        *self.state.executions_mut() += 1;
-
-        let _eval = self.evaluate_coverage(
-            &stage_input,
-            exec_time_ns,
-            LibaflExitKind::Ok,
-            Some(corpus_id),
-        )?;
-
-        let next_iteration = iteration + 1;
-        if next_iteration >= max_iterations {
-            // Unicode stage complete - try JSON, then pipeline done.
-            if let Some(buf) = self.begin_json(corpus_id)? {
-                return Ok(Some(buf));
-            }
-            return Ok(None);
-        }
-
-        // Generate next unicode candidate.
-        let bytes = self.unicode_mutate_one(corpus_id, &metadata)?;
-        self.last_stage_input = Some(bytes.clone());
-
-        self.stage_state = StageState::Unicode {
+        self.advance_multi_iteration_stage(
+            StageKind::Unicode,
             corpus_id,
-            iteration: next_iteration,
+            iteration,
             max_iterations,
-            metadata,
-        };
-
-        Ok(Some(Buffer::from(bytes)))
+            exec_time_ns,
+            move |f, next_iteration| {
+                let bytes = f.unicode_mutate_one(corpus_id, &metadata)?;
+                Ok((
+                    bytes,
+                    StageState::Unicode {
+                        corpus_id,
+                        iteration: next_iteration,
+                        max_iterations,
+                        metadata,
+                    },
+                ))
+            },
+        )
     }
 
     /// Clone a corpus entry, apply unicode mutations, and return the result bytes.

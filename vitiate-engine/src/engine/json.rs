@@ -574,11 +574,10 @@ fn splice_replacement(
 // --- JSON Stage Implementation ---
 
 use libafl::corpus::Corpus;
-use libafl::executors::ExitKind as LibaflExitKind;
-use libafl::state::{HasCorpus, HasExecutions};
+use libafl::state::HasCorpus;
 use napi::bindgen_prelude::{Buffer, Error};
 
-use super::stages::StageState;
+use super::stages::{StageKind, StageState};
 use super::{Fuzzer, STAGE_MAX_ITERATIONS};
 
 impl Fuzzer {
@@ -630,54 +629,33 @@ impl Fuzzer {
 
     /// Advance the JSON stage after a target execution.
     pub(super) fn advance_json(&mut self, exec_time_ns: f64) -> napi::Result<Option<Buffer>> {
-        let (corpus_id, iteration, max_iterations) =
-            match std::mem::replace(&mut self.stage_state, StageState::None) {
-                StageState::Json {
-                    corpus_id,
-                    iteration,
-                    max_iterations,
-                } => (corpus_id, iteration, max_iterations),
-                _ => return Ok(None),
-            };
-
-        // Drain CmpLog (discard - JSON stage doesn't use CmpLog data).
-        let _ = crate::cmplog::drain();
-
-        // stage_state is already StageState::None (set by mem::replace above).
-        let stage_input = self
-            .last_stage_input
-            .take()
-            .ok_or_else(|| Error::from_reason("advanceJson: no stashed stage input"))?;
-
-        // The target was invoked - count the execution before the fallible
-        // evaluate_coverage call so counters stay accurate on error.
-        self.total_execs += 1;
-        *self.state.executions_mut() += 1;
-
-        let _eval = self.evaluate_coverage(
-            &stage_input,
-            exec_time_ns,
-            LibaflExitKind::Ok,
-            Some(corpus_id),
-        )?;
-
-        let next_iteration = iteration + 1;
-        if next_iteration >= max_iterations {
-            // JSON stage complete - pipeline done.
-            return Ok(None);
-        }
-
-        // Generate next JSON candidate.
-        let bytes = self.json_mutate_one(corpus_id)?;
-        self.last_stage_input = Some(bytes.clone());
-
-        self.stage_state = StageState::Json {
-            corpus_id,
-            iteration: next_iteration,
-            max_iterations,
+        let (corpus_id, iteration, max_iterations) = match self.stage_state {
+            StageState::Json {
+                corpus_id,
+                iteration,
+                max_iterations,
+            } => (corpus_id, iteration, max_iterations),
+            _ => return Ok(None),
         };
 
-        Ok(Some(Buffer::from(bytes)))
+        self.advance_multi_iteration_stage(
+            StageKind::Json,
+            corpus_id,
+            iteration,
+            max_iterations,
+            exec_time_ns,
+            |f, next_iteration| {
+                let bytes = f.json_mutate_one(corpus_id)?;
+                Ok((
+                    bytes,
+                    StageState::Json {
+                        corpus_id,
+                        iteration: next_iteration,
+                        max_iterations,
+                    },
+                ))
+            },
+        )
     }
 
     /// Clone a corpus entry, apply JSON mutations, and return the result bytes.
