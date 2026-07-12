@@ -556,7 +556,12 @@ function stripNulls(obj: Record<string, unknown>): Record<string, unknown> {
   );
 }
 
-export function getCliOptions(): FuzzOptions {
+/**
+ * Parse and validate the `VITIATE_OPTIONS` env var into a `FuzzOptions`
+ * object. Invalid JSON, non-object values, and schema violations produce a
+ * stderr warning and are dropped (per-key for schema issues).
+ */
+function parseOptionsEnv(): FuzzOptions {
   let options: FuzzOptions = {};
 
   const raw = process.env["VITIATE_OPTIONS"];
@@ -601,6 +606,25 @@ export function getCliOptions(): FuzzOptions {
       }
     }
   }
+
+  return options;
+}
+
+/**
+ * Merge CLI-derived options over any pre-existing `VITIATE_OPTIONS` env value.
+ * CLI flags win per top-level key; env keys with no CLI counterpart survive.
+ * `undefined`-valued CLI keys are stripped first so an unset flag does not
+ * shadow (and then silently drop) a user-provided env value.
+ */
+export function mergeCliOptionsWithEnv(cliOptions: FuzzOptions): FuzzOptions {
+  const defined = Object.fromEntries(
+    Object.entries(cliOptions).filter(([, val]) => val !== undefined),
+  );
+  return { ...parseOptionsEnv(), ...defined };
+}
+
+export function getCliOptions(): FuzzOptions {
+  let options = parseOptionsEnv();
 
   const fuzzTimeOverride = getFuzzTime();
   if (fuzzTimeOverride !== undefined) {

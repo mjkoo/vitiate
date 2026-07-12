@@ -16,6 +16,7 @@ import { parseSync } from "@optique/core/parser";
 import { main } from "./cli.js";
 import { parseArgs, supervisorExitCode } from "./cli/libfuzzer.js";
 import {
+  KNOWN_LIBFUZZER_FLAGS,
   parseDetectorsFlag,
   reproduceParser,
   pathsParser,
@@ -96,8 +97,106 @@ describe("parseArgs", () => {
     expect(result.fuzzOptions.seed).toBe(42);
   });
 
-  it("throws on unknown flags", () => {
-    expect(() => parseArgs(argv("./test.ts", "-unknown=1"))).toThrow();
+  it("warns and ignores unknown flags (libFuzzer parity)", () => {
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      const result = parseArgs(argv("./test.ts", "-unknown=1"));
+      expect(result.testFile).toBe("./test.ts");
+      expect(stderrSpy).toHaveBeenCalledWith(
+        expect.stringContaining("unrecognized flag '-unknown=1'"),
+      );
+    } finally {
+      stderrSpy.mockRestore();
+    }
+  });
+
+  it("warns and ignores common fuzzing-platform flags without aborting", () => {
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      const result = parseArgs(
+        argv(
+          "./test.ts",
+          "-len_control=100",
+          "-use_value_profile=1",
+          "-detect_leaks=0",
+          "-runs=50",
+        ),
+      );
+      expect(result.testFile).toBe("./test.ts");
+      // Known flags interleaved with unknown ones still apply.
+      expect(result.fuzzOptions.fuzzExecs).toBe(50);
+      const warnings = stderrSpy.mock.calls.map((c) => String(c[0]));
+      expect(warnings.join("")).toContain("'-len_control=100'");
+      expect(warnings.join("")).toContain("'-use_value_profile=1'");
+      expect(warnings.join("")).toContain("'-detect_leaks=0'");
+    } finally {
+      stderrSpy.mockRestore();
+    }
+  });
+
+  it("still throws on known flags with invalid values", () => {
+    expect(() => parseArgs(argv("./test.ts", "-runs=notanumber"))).toThrow();
+  });
+
+  it("every KNOWN_LIBFUZZER_FLAGS entry is accepted by the parser", () => {
+    // Pins the set in parsers.ts to the actual parser definitions: a set
+    // entry the parser does not accept would hard-error here. The reverse
+    // direction (a parser flag missing from the set) is covered by each
+    // flag's own parse test, which would see the flag dropped and warned
+    // about by the pre-filter.
+    const dir = mkdirSync(
+      path.join(tmpdir(), `vitiate-flag-sync-${process.pid}`),
+      { recursive: true },
+    ) as string;
+    const dictPath = path.join(dir, "flags.dict");
+    writeFileSync(dictPath, 'kw="magic"\n');
+    // Values that survive toCliArgs validation (detectors and dict validate
+    // their values beyond the parse).
+    const safeValues: Record<string, string> = {
+      detectors: "prototypePollution",
+      dict: dictPath,
+    };
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      for (const name of KNOWN_LIBFUZZER_FLAGS) {
+        const value = safeValues[name] ?? "1";
+        const result = parseArgs(argv("./test.ts", `-${name}=${value}`));
+        expect(result.testFile).toBe("./test.ts");
+      }
+      const output = stderrSpy.mock.calls.map((c) => String(c[0])).join("");
+      expect(output).not.toContain("unrecognized flag");
+    } finally {
+      stderrSpy.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores unknown '--' flags with a warning instead of erroring (libFuzzer parity)", () => {
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      const result = parseArgs(argv("./test.ts", "--use_value_profile=1"));
+      expect(result.testFile).toBe("./test.ts");
+      expect(stderrSpy).toHaveBeenCalledWith(
+        expect.stringContaining("unrecognized flag '--use_value_profile=1'"),
+      );
+    } finally {
+      stderrSpy.mockRestore();
+    }
+  });
+
+  it("hints at the '=' form when an unknown flag is passed without a value", () => {
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      // The dropped flag leaves its would-be value behind as a positional,
+      // which parses as a corpus path - the warning points at the '=' form.
+      const result = parseArgs(argv("./test.ts", "-len_control", "100"));
+      expect(result.corpusDirs).toEqual(["100"]);
+      expect(stderrSpy).toHaveBeenCalledWith(
+        expect.stringContaining("flag values must be attached with '='"),
+      );
+    } finally {
+      stderrSpy.mockRestore();
+    }
   });
 
   it("parses corpus directories as additional positional args", () => {
@@ -178,8 +277,17 @@ describe("parseArgs", () => {
       expect(result.merge).toBe(false);
     });
 
-    it("unknown flags still cause parse errors", () => {
-      expect(() => parseArgs(argv("./test.ts", "-bogus=1"))).toThrow();
+    it("unknown flags warn and are ignored rather than erroring", () => {
+      const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      try {
+        const result = parseArgs(argv("./test.ts", "-bogus=1"));
+        expect(result.testFile).toBe("./test.ts");
+        expect(stderrSpy).toHaveBeenCalledWith(
+          expect.stringContaining("unrecognized flag '-bogus=1'"),
+        );
+      } finally {
+        stderrSpy.mockRestore();
+      }
     });
 
     it("accepts the parsed-but-ignored libFuzzer compat flags without throwing or warning", () => {
@@ -780,10 +888,14 @@ describe("zero-value CLI flags (0 = unlimited convention)", () => {
     expect(result.fuzzOptions.replayOnly).toBeUndefined();
   });
 
-  it("-runs=100 sets fuzzExecs and leaves replayOnly unset", () => {
+  it("-runs=100 sets fuzzExecs and pins replayOnly false", () => {
+    // An explicit -runs=N (N>0) requests fuzzing; replayOnly is pinned to
+    // false (not left undefined) so a replayOnly from a user-provided
+    // VITIATE_OPTIONS cannot silently turn the run into a corpus replay
+    // (mergeCliOptionsWithEnv strips undefined CLI keys, letting env win).
     const result = parseArgs(argv("./test.ts", "-runs=100"));
     expect(result.fuzzOptions.fuzzExecs).toBe(100);
-    expect(result.fuzzOptions.replayOnly).toBeUndefined();
+    expect(result.fuzzOptions.replayOnly).toBe(false);
   });
 
   it("-max_total_time=0 converts to fuzzTimeMs: 0", () => {

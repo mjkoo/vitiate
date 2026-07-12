@@ -148,10 +148,8 @@ mod seh {
             return EXCEPTION_CONTINUE_SEARCH;
         };
 
-        if input.is_empty() {
-            return EXCEPTION_CONTINUE_SEARCH;
-        }
-
+        // Zero-length inputs are real inputs: write their artifact like any
+        // other (empty-input symmetry, matching the watchdog's behavior).
         let hash = crate::artifact_hash(&input);
         let artifact_path = format!("{}crash-{hash}", ctx.artifact_prefix);
         let path = std::path::Path::new(&artifact_path);

@@ -176,6 +176,72 @@ describe("runSupervisor", () => {
     expect(result.newCrashArtifacts).toBe(true);
   });
 
+  it("detects new artifacts under a file-style artifactPrefix (crash)", async () => {
+    const dir = makeTmpDir();
+    const shmem = createMockShmem();
+
+    // libFuzzer-style non-directory prefix: artifacts are named
+    // <prefix><kind>-<hash>, e.g. bug-crash-abc123. The new-artifact scan
+    // must match the prefixed name, or a real finding classifies as a
+    // vitest infrastructure failure.
+    const artifactDir = path.join(dir, "artifacts");
+    mkdirSync(artifactDir, { recursive: true });
+    const artifactPrefix = path.join(artifactDir, "bug-");
+
+    const result = await runSupervisor({
+      shmem,
+      relativeTestFilePath: TEST_RELATIVE_PATH,
+      testName: "test-file-prefix-crash",
+      artifactPrefix,
+      spawnChild: () =>
+        spawn(
+          process.execPath,
+          [
+            "-e",
+            `require("fs").writeFileSync(${JSON.stringify(artifactPrefix + "crash-abc123")}, "data"); ` +
+              `process.exit(1)`,
+          ],
+          { stdio: "ignore" },
+        ),
+    });
+
+    expect(result.crashed).toBe(true);
+    expect(result.exitCode).toBe(1);
+    expect(result.newCrashArtifacts).toBe(true);
+    expect(result.timedOut).toBeFalsy();
+  });
+
+  it("classifies timeout-only findings under a file-style artifactPrefix", async () => {
+    const dir = makeTmpDir();
+    const shmem = createMockShmem();
+
+    const artifactDir = path.join(dir, "artifacts");
+    mkdirSync(artifactDir, { recursive: true });
+    const artifactPrefix = path.join(artifactDir, "bug-");
+
+    const result = await runSupervisor({
+      shmem,
+      relativeTestFilePath: TEST_RELATIVE_PATH,
+      testName: "test-file-prefix-timeout",
+      artifactPrefix,
+      spawnChild: () =>
+        spawn(
+          process.execPath,
+          [
+            "-e",
+            `require("fs").writeFileSync(${JSON.stringify(artifactPrefix + "timeout-abc123")}, "data"); ` +
+              `process.exit(1)`,
+          ],
+          { stdio: "ignore" },
+        ),
+    });
+
+    expect(result.crashed).toBe(true);
+    expect(result.exitCode).toBe(1);
+    expect(result.newCrashArtifacts).toBe(true);
+    expect(result.timedOut).toBe(true);
+  });
+
   it("exit code 1 without new crash artifact sets newCrashArtifacts false", async () => {
     const dir = makeTmpDir();
     const shmem = createMockShmem();

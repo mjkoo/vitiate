@@ -182,6 +182,36 @@ export const libfuzzerParser = object({
   ),
 });
 
+/**
+ * Flag names accepted by `libfuzzerParser`, exactly as they appear in the
+ * `option(...)` definitions above (without the leading `-`). MUST stay in
+ * sync with the parser: `parseArgs` (cli/libfuzzer.ts) uses this set to
+ * warn-and-ignore unrecognized `-flag[=value]` tokens instead of aborting,
+ * matching real libFuzzer's behavior for fuzzing-platform invocations.
+ */
+export const KNOWN_LIBFUZZER_FLAGS: ReadonlySet<string> = new Set([
+  "max_len",
+  "timeout",
+  "runs",
+  "seed",
+  "max_total_time",
+  "test",
+  "minimize_budget",
+  "minimize_time_limit",
+  "artifact_prefix",
+  "dict",
+  "detectors",
+  "fork",
+  "jobs",
+  "merge",
+  "rss_limit_mb",
+  "timeout_exitcode",
+  "error_exitcode",
+  "print_final_stats",
+  "close_fd_mask",
+  "reload",
+]);
+
 const detectorsDescription = [
   text(
     "Comma-separated list of bug detectors to enable. " +

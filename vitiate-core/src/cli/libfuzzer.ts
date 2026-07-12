@@ -23,11 +23,16 @@ import {
   isSupervisorChild,
   getCliIpc,
   setCliIpc,
+  mergeCliOptionsWithEnv,
   warnUnknownVitiateEnvVars,
   getProjectRoot,
   type FuzzOptions,
 } from "../config.js";
-import { libfuzzerParser, parseDetectorsFlag } from "./parsers.js";
+import {
+  KNOWN_LIBFUZZER_FLAGS,
+  libfuzzerParser,
+  parseDetectorsFlag,
+} from "./parsers.js";
 
 export interface CliArgs {
   testFile: string;
@@ -131,7 +136,11 @@ function toCliArgs(parsed: InferValue<typeof libfuzzerParser>): CliArgs {
       // once and exit" (not unlimited). A positive value caps main-loop
       // iterations; omitting the flag leaves fuzzExecs unset (unlimited).
       fuzzExecs: runs === 0 ? undefined : runs,
-      replayOnly: runs === 0 ? true : undefined,
+      // An explicit -runs=N (N>0) requests fuzzing, so pin replayOnly=false
+      // to override any replayOnly from a user-provided VITIATE_OPTIONS
+      // (CLI-set keys win in mergeCliOptionsWithEnv; undefined would be
+      // stripped and let the env value through).
+      replayOnly: runs === undefined ? undefined : runs === 0,
       seed,
       fuzzTimeMs: maxTotalTime != null ? maxTotalTime * 1000 : undefined,
       minimizeBudget,
@@ -142,8 +151,45 @@ function toCliArgs(parsed: InferValue<typeof libfuzzerParser>): CliArgs {
   };
 }
 
+/** libFuzzer-style flag token: one or two dashes, identifier name, optional =value. */
+const LIBFUZZER_FLAG_RE = /^(--?)([A-Za-z_][A-Za-z0-9_]*)(=.*)?$/;
+
+/** The help flags accepted by the libfuzzer subcommand's runSync config. */
+const HELP_FLAGS = new Set(["help"]);
+
+/**
+ * Drop unrecognized flag tokens with a stderr warning. Real libFuzzer warns
+ * and continues on unrecognized `-flag[=value]` tokens so fuzzing-platform
+ * invocations (-len_control, -use_value_profile, -detect_leaks, ...) do not
+ * abort, and ignores all `--`-prefixed flags (except our `--help`). Known
+ * single-dash flags with invalid values still hard-error in the strict
+ * parser; positionals pass through untouched.
+ */
+function dropUnknownFlags(args: readonly string[]): string[] {
+  return args.filter((arg) => {
+    const match = LIBFUZZER_FLAG_RE.exec(arg);
+    if (match === null) return true;
+    const [, dashes, name = "", value] = match;
+    if (HELP_FLAGS.has(name)) return true;
+    if (dashes === "-" && KNOWN_LIBFUZZER_FLAGS.has(name)) return true;
+    // The supervised child re-parses the same argv; warn only once.
+    if (!isSupervisorChild()) {
+      // A dropped `-flag value` pair leaves the bare value token behind,
+      // where it parses as a corpus path - point at the `=` form.
+      const hint =
+        dashes === "-" && value === undefined
+          ? " (flag values must be attached with '=': a separate following token is treated as a corpus path)"
+          : "";
+      process.stderr.write(
+        `vitiate: WARNING: unrecognized flag '${arg}'; ignoring${hint}\n`,
+      );
+    }
+    return false;
+  });
+}
+
 export function parseArgs(argv: string[]): CliArgs {
-  const result = parseSync(libfuzzerParser, argv.slice(2));
+  const result = parseSync(libfuzzerParser, dropUnknownFlags(argv.slice(2)));
   if (!result.success) {
     throw new Error(formatMessage(result.error));
   }
@@ -341,8 +387,11 @@ async function runMergeChildMode(
   fuzzOptions: FuzzOptions,
   testName?: string,
 ): Promise<void> {
-  // Forward CLI options (including detectors) to fuzz targets via env var
-  process.env["VITIATE_OPTIONS"] = JSON.stringify(fuzzOptions);
+  // Forward CLI options (including detectors) to fuzz targets via env var,
+  // merged over any user-provided VITIATE_OPTIONS (CLI wins per key)
+  process.env["VITIATE_OPTIONS"] = JSON.stringify(
+    mergeCliOptionsWithEnv(fuzzOptions),
+  );
 
   // Merge into existing IPC blob (parent already set merge+mergeControlFile)
   if (corpusDirs.length > 0) {
@@ -368,8 +417,11 @@ async function runChildMode(
   // Activate fuzzing mode
   process.env["VITIATE_FUZZ"] = "1";
 
-  // Forward CLI options to fuzz targets via env var
-  process.env["VITIATE_OPTIONS"] = JSON.stringify(fuzzOptions);
+  // Forward CLI options to fuzz targets via env var, merged over any
+  // user-provided VITIATE_OPTIONS (CLI wins per key)
+  process.env["VITIATE_OPTIONS"] = JSON.stringify(
+    mergeCliOptionsWithEnv(fuzzOptions),
+  );
 
   // Forward CLI IPC state to fuzz targets via single JSON blob
   setCliIpc({
@@ -404,7 +456,7 @@ export async function runLibfuzzerSubcommand(
   } = toCliArgs(
     runSync(libfuzzerParser, {
       programName: "vitiate libfuzzer",
-      args,
+      args: dropUnknownFlags(args),
       brief: [text("Coverage-guided JavaScript fuzzer (libFuzzer-compatible)")],
       description: [
         text(

@@ -81,7 +81,7 @@ The CLI SHALL accept libFuzzer-style flags (hyphen prefix, `=` separator):
 
 - `-max_len=N`: Maximum input length in bytes. Passed to `FuzzerConfig.maxInputLen`.
 - `-timeout=N`: Per-execution timeout in seconds. Converted to milliseconds for `FuzzOptions.timeoutMs`. Applies to both synchronous and asynchronous fuzz targets.
-- `-runs=N`: Cap the number of main-loop executions (passed to `FuzzOptions.fuzzExecs`). An explicit `-runs=0` SHALL instead replay the loaded corpus once (no mutation) and exit, matching libFuzzer; omitting the flag fuzzes without an iteration limit.
+- `-runs=N`: Cap the number of main-loop executions (passed to `FuzzOptions.fuzzExecs`). An explicit `-runs=0` SHALL instead replay the loaded corpus once (no mutation) and exit, matching libFuzzer; omitting the flag fuzzes without an iteration limit. An explicit `-runs=N` (N>0) SHALL pin `replayOnly: false` so a `replayOnly` from a user-provided `VITIATE_OPTIONS` cannot silently turn the run into a corpus replay.
 - `-seed=N`: RNG seed. Passed to `FuzzerConfig.seed`.
 - `-artifact_prefix=<path>`: Prefix path for crash/timeout artifacts. See `cli-artifact-prefix` capability.
 - `-dict=<path>`: Path to an AFL/libfuzzer-format dictionary file. Resolved relative to cwd. The resolved absolute path SHALL be passed to the child process via the `dictionaryPath` field in the `VITIATE_CLI_IPC` JSON blob. See `user-dictionary` capability.
@@ -100,7 +100,9 @@ The CLI SHALL accept libFuzzer-style flags (hyphen prefix, `=` separator):
 - `-merge=1`: Enter corpus merge mode. Load all inputs from all specified corpus directories, replay each through the fuzz target to collect coverage edges, run set cover to select the minimal subset covering all edges, and write surviving entries to the first corpus directory. At least one corpus directory SHALL be required when `-merge=1` is set; the CLI SHALL print an error and exit with code 1 if no corpus directories are provided. See `set-cover-merge` capability for full merge behavior.
 - `-error_exitcode=N`: Final process exit code when a crash is found. Defaults to `77` (libFuzzer's `error_exitcode` default). Honored by the parent supervisor (see `parent-supervisor` capability).
 - `-timeout_exitcode=N`: Final process exit code when a timeout is found. Defaults to `70` (libFuzzer's `timeout_exitcode` default). Honored by the parent supervisor.
-- `-rss_limit_mb=N`, `-print_final_stats=<0|1>`, `-close_fd_mask=N`, `-reload=N`: Parsed for libFuzzer compatibility but ignored, so a fuzzing platform invocation does not abort on an unrecognized flag. A non-default `-close_fd_mask` prints a warning; the warning is emitted only by the parent, not the supervised child.
+- `-rss_limit_mb=N`, `-print_final_stats=<0|1>`, `-close_fd_mask=N`, `-reload=N`: Parsed for libFuzzer compatibility but ignored. A non-default `-close_fd_mask` prints a warning; the warning is emitted only by the parent, not the supervised child.
+
+Any other unrecognized `-flag[=value]` token SHALL print a warning to stderr and be ignored rather than aborting, matching real libFuzzer's behavior so fuzzing-platform invocations (e.g. `-len_control=N`, `-use_value_profile=1`, `-detect_leaks=0`) do not abort. `--`-prefixed flags other than `--help` SHALL likewise be warned about and ignored (libFuzzer ignores all `--` flags). When the ignored token carries no `=value`, the warning SHALL note that flag values must be attached with `=` (a separate following token parses as a corpus path). Recognized flags with invalid values SHALL still be a hard usage error.
 
 The final process exit code (crash → `-error_exitcode`, timeout → `-timeout_exitcode`, OOM/SIGKILL → 137, engine panic → 78) is defined by the `parent-supervisor` capability.
 
@@ -108,6 +110,12 @@ The final process exit code (crash → `-error_exitcode`, timeout → `-timeout_
 
 - **WHEN** `npx vitiate libfuzzer ./test.ts ./crash-corpus/ -runs=0` is executed AND a corpus input crashes
 - **THEN** the process SHALL exit with code 77 (or the value of `-error_exitcode` when provided)
+
+#### Scenario: Unrecognized flag warns and continues
+
+- **WHEN** `npx vitiate libfuzzer ./test.ts -len_control=100 -runs=50` is executed
+- **THEN** a warning SHALL be printed that `-len_control=100` is unrecognized and ignored
+- **AND** fuzzing SHALL proceed with `-runs=50` applied
 
 #### Scenario: Flags under libfuzzer subcommand
 
@@ -261,7 +269,7 @@ The flag value SHALL be a comma-separated list of directives:
 - `<name>`: Enable a detector (e.g., `pathTraversal`)
 - `<name>.<key>=<value>`: Enable a detector with an option (e.g., `pathTraversal.deniedPaths=/etc/passwd`)
 
-When the flag is absent, tier defaults apply (Tier 1 enabled, Tier 2 disabled). When the flag is present, the parsed configuration SHALL be passed via the `VITIATE_OPTIONS` JSON to the child process.
+When the flag is absent, tier defaults apply (Tier 1 enabled, Tier 2 disabled). When the flag is present, the parsed configuration SHALL be passed via the `VITIATE_OPTIONS` JSON to the child process. CLI-derived options SHALL be merged over any pre-existing `VITIATE_OPTIONS` value (CLI wins per top-level key; env keys with no CLI counterpart survive), so both configuration channels coexist.
 
 Detector names SHALL match the camelCase field names in `FuzzOptions.detectors` (e.g., `prototypePollution`, `commandInjection`, `pathTraversal`). An unknown detector name SHALL cause the CLI to print an error and exit.
 
