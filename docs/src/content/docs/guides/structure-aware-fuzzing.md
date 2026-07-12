@@ -124,6 +124,8 @@ fuzz("query database", (data: Buffer) => {
 
 For text-based targets using raw bytes, Vitiate's Grimoire mutation strategy automatically detects that the input is UTF-8 text and applies structure-aware mutations that preserve textual patterns. This happens transparently - you do not need to configure anything.
 
+JSON targets get an additional layer: when the corpus looks like JSON, Vitiate enables a JSON mutation stage that edits the byte buffer structurally - swapping string values and object keys for dictionary tokens (such as `__proto__`), and changing value types (a number becomes `null`, an object becomes `[]`, and so on). Like Grimoire and Unicode, this is auto-detected from the corpus; set `jsonMutations: true` or `false` in `FuzzOptions` to force it on or off.
+
 ## Checking Remaining Bytes
 
 Use `remainingBytes` to guard against consuming more data than available:

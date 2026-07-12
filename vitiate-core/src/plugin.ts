@@ -13,6 +13,10 @@ import {
   resolveInstrumentOptions,
   setCoverageMapSize,
   getCoverageMapSize,
+  getTraceCalls,
+  getTraceStmtBlocks,
+  setTraceCalls,
+  setTraceStmtBlocks,
   COVERAGE_MAP_SIZE,
   setProjectRoot,
   setDataDir,
@@ -352,7 +356,7 @@ function resolveSetupPath(): string {
  * ```ts
  * // vitest.config.ts
  * import { defineConfig } from "vitest/config";
- * import { vitiatePlugin } from "vitiate";
+ * import { vitiatePlugin } from "@vitiate/core/plugin";
  *
  * export default defineConfig({
  *   plugins: [vitiatePlugin()],
@@ -366,6 +370,8 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin[] {
   const fuzz = options?.fuzz;
   const dataDir = options?.dataDir;
   const coverageMapSize = options?.coverageMapSize;
+  const traceCalls = options?.traceCalls;
+  const traceStmtBlocks = options?.traceStmtBlocks;
   // Always exclude vitiate's own package directories - setup/globals files must
   // run before the coverage map exists and cannot be instrumented, and the napi
   // native binding loader must not be instrumented either. In pnpm workspaces,
@@ -449,6 +455,21 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin[] {
       // Store coverage map size for globals.ts
       if (coverageMapSize !== undefined) {
         setCoverageMapSize(coverageMapSize);
+      }
+
+      // Store the experimental granularity flags. Only touch the env var when
+      // the plugin option is explicitly provided, so an externally-set
+      // VITIATE_TRACE_* (e.g. for A/B benchmarking without editing config)
+      // survives when no option is given. When provided, propagate to env so
+      // forks-pool workers - where no plugin hook runs - transform with the
+      // same setting.
+      if (traceCalls !== undefined) {
+        setTraceCalls(traceCalls);
+        process.env["VITIATE_TRACE_CALLS"] = traceCalls ? "1" : "0";
+      }
+      if (traceStmtBlocks !== undefined) {
+        setTraceStmtBlocks(traceStmtBlocks);
+        process.env["VITIATE_TRACE_STMT_BLOCKS"] = traceStmtBlocks ? "1" : "0";
       }
 
       // Propagate resolved plugin config to processes where no plugin hook
@@ -595,6 +616,8 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin[] {
                   traceCmp: true,
                   coverageGlobalName: "__vitiate_cov",
                   traceCmpGlobalName: "__vitiate_cmplog_write",
+                  traceCalls: getTraceCalls(),
+                  traceStmtBlocks: getTraceStmtBlocks(),
                 },
               ],
             ],

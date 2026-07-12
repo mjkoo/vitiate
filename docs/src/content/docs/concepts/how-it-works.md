@@ -21,6 +21,8 @@ The plugin records both sides of a branch, not just the taken side. When an `if`
 
 Each edge gets a deterministic ID derived from the file path, source location, and edge kind, hashed (FNV-1a with an avalanche finalizer) into the coverage map. The coverage map is a fixed-size array (default: 65,536 slots) where each slot counts how many times that edge was hit. Because IDs are hashed into a fixed number of slots, distinct edges can occasionally collide and share a slot; if the number of instrumented edges grows large relative to the map size, Vitiate prints a one-time warning suggesting you raise [`coverageMapSize`](/reference/plugin-options/#coveragemapsize).
 
+Two experimental modes add finer counters below the branch level - a per-call-site counter and a per-statement counter. Both are off by default; see [coverage granularity](/reference/plugin-options/#coverage-granularity-experimental).
+
 **Comparison tracing** - For equality and relational comparisons (`==`, `===`, `<`, `>=`, etc.), the plugin inserts a tracing call:
 
 ```js
@@ -57,16 +59,17 @@ The engine applies several mutation strategies, selected and stacked automatical
 - **[REDQUEEN](https://www.ndss-symposium.org/ndss-paper/redqueen-fuzzing-with-input-to-state-correspondence/):** A heavier multi-phase stage that runs after calibration for interesting inputs. First, *colorization* randomizes bytes that don't affect the coverage pattern, identifying which input positions are "free". Then the engine generates targeted mutation candidates using the colorized comparison data. This finds deeper relationships between input bytes and comparison operands than naive I2S. Enabled by default for binary targets; disabled for text targets where Grimoire is more effective.
 - **[Grimoire](https://www.usenix.org/conference/usenixsecurity19/presentation/blazytko):** Structure-aware mutations for text-based targets. The engine identifies structural patterns in corpus entries - which bytes affect coverage vs. which are "filler" - through generalization, then mutates while preserving structure. Auto-enabled when corpus entries are valid UTF-8.
 - **Unicode:** Character-level mutations that operate on Unicode categories and subcategories rather than raw bytes. Useful for targets that process text with locale or encoding sensitivity.
+- **JSON:** Structure-aware mutations for JSON inputs that operate directly on the byte buffer without parsing into a DOM. Three operators run in a dedicated stage: replacing a string *value* with a dictionary token, replacing an object *key* with a dictionary token, and replacing any JSON value with a type-changed alternative (`null`, `true`, `false`, `0`, `1`, `""`, `[]`, `{}`), a quoted dictionary token, or a copy of another value from the same input. Auto-enabled when a majority of the UTF-8 corpus entries look like JSON.
 
-The engine auto-detects whether a target is text-based or binary after accumulating initial corpus entries. Binary targets get REDQUEEN; text targets get Grimoire and Unicode mutations. I2S splice and havoc run regardless.
+The engine auto-detects whether a target is text-based or binary after accumulating initial corpus entries. Binary targets get REDQUEEN; text targets get Grimoire and Unicode mutations, plus JSON mutations when the corpus looks like JSON. I2S splice and havoc run regardless.
 
 ### Corpus Management
 
-The corpus is managed by the Rust engine using LibAFL's `MaxMapFeedback`:
+The corpus is managed by the Rust engine using LibAFL's `AflMapFeedback` (feature-set admission):
 
-- An input is "interesting" if it triggers an edge counter value higher than any previous input for that edge
+- An input is "interesting" if it produces any (edge, hit-count-bucket) feature never seen before - reaching a new edge, or hitting a known edge a number of times that lands in an AFL hit-count bucket (1, 2, 3, 4-7, 8-15, 16-31, 32-127, 128-255) never previously observed for that edge, whether higher or lower than earlier counts
 - Interesting inputs are added to the corpus
-- The scheduler selects inputs for mutation based on recency and execution speed
+- The scheduler favors corpus entries that cover rarely-hit edges (a set-cover minimizer over the coverage map), weighting selection with AFL-style `fast` power scheduling that prefers inputs fuzzed fewer times and executing quickly
 - [Corpus minimization](/concepts/corpus/#corpus-minimization) uses set-cover to find the smallest subset that maintains the same total coverage
 
 ## 4. Crash Recovery

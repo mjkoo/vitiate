@@ -12,6 +12,9 @@ import {
   resetDataDir,
   getConfigFile,
   resetConfigFile,
+  getTraceCalls,
+  getTraceStmtBlocks,
+  resetTraceFlags,
 } from "./config.js";
 import { vitiatePlugin, isListedPackage } from "./plugin.js";
 
@@ -98,6 +101,8 @@ describe("plugin", () => {
       "VITIATE_PROJECT_ROOT",
       "VITIATE_DATA_DIR",
       "VITIATE_COVERAGE_MAP_SIZE",
+      "VITIATE_TRACE_CALLS",
+      "VITIATE_TRACE_STMT_BLOCKS",
     ] as const;
     const savedEnv = new Map(
       PROPAGATED_ENV.map((name) => [name, process.env[name]] as const),
@@ -115,6 +120,7 @@ describe("plugin", () => {
       resetProjectRoot();
       resetDataDir();
       resetCoverageMapSize();
+      resetTraceFlags();
     });
 
     it("sets project root from Vite config root", () => {
@@ -230,6 +236,41 @@ describe("plugin", () => {
       const instrument = findPlugin(vitiatePlugin(), "vitiate:instrument");
       callConfig(instrument, {});
       expect(getCoverageMapSize()).toBe(65536);
+    });
+
+    it("resolves traceCalls/traceStmtBlocks options and propagates them to env", () => {
+      delete process.env["VITIATE_TRACE_CALLS"];
+      delete process.env["VITIATE_TRACE_STMT_BLOCKS"];
+      const instrument = findPlugin(
+        vitiatePlugin({ traceCalls: true, traceStmtBlocks: true }),
+        "vitiate:instrument",
+      );
+      callConfig(instrument, {});
+      expect(getTraceCalls()).toBe(true);
+      expect(getTraceStmtBlocks()).toBe(true);
+      // Propagated for forks-pool workers that run no plugin hook.
+      expect(process.env["VITIATE_TRACE_CALLS"]).toBe("1");
+      expect(process.env["VITIATE_TRACE_STMT_BLOCKS"]).toBe("1");
+    });
+
+    it("leaves an externally-set VITIATE_TRACE_* env var alone when no option is given", () => {
+      process.env["VITIATE_TRACE_CALLS"] = "1";
+      const instrument = findPlugin(vitiatePlugin(), "vitiate:instrument");
+      callConfig(instrument, {});
+      // No option provided: env is not clobbered, and the getter honors it.
+      expect(process.env["VITIATE_TRACE_CALLS"]).toBe("1");
+      expect(getTraceCalls()).toBe(true);
+    });
+
+    it("an explicit traceCalls:false option overrides an inherited env value", () => {
+      process.env["VITIATE_TRACE_CALLS"] = "1";
+      const instrument = findPlugin(
+        vitiatePlugin({ traceCalls: false }),
+        "vitiate:instrument",
+      );
+      callConfig(instrument, {});
+      expect(getTraceCalls()).toBe(false);
+      expect(process.env["VITIATE_TRACE_CALLS"]).toBe("0");
     });
 
     it("throws when coverageMapSize is invalid", () => {
@@ -809,6 +850,22 @@ describe("plugin", () => {
   });
 
   describe("transform", () => {
+    // Some tests here toggle the trace flags via env or via the plugin option
+    // (which sets module state). Reset both after every test so the ordering of
+    // env-based and option-based tests can never leak into one another.
+    const savedTraceEnv = new Map(
+      (["VITIATE_TRACE_CALLS", "VITIATE_TRACE_STMT_BLOCKS"] as const).map(
+        (name) => [name, process.env[name]] as const,
+      ),
+    );
+    afterEach(() => {
+      resetTraceFlags();
+      for (const [name, val] of savedTraceEnv) {
+        if (val === undefined) delete process.env[name];
+        else process.env[name] = val;
+      }
+    });
+
     it("instruments a simple JS file", async () => {
       const instrument = findPlugin(vitiatePlugin(), "vitiate:instrument");
       const transform = instrument.transform as (
@@ -837,6 +894,87 @@ function add(a, b) {
       expect(map).toHaveProperty("mappings");
       expect(typeof map["mappings"]).toBe("string");
       expect((map["mappings"] as string).length).toBeGreaterThan(0);
+    });
+
+    it("traceCalls / traceStmtBlocks env flags add counters end-to-end", async () => {
+      const instrument = findPlugin(vitiatePlugin(), "vitiate:instrument");
+      const transform = instrument.transform as (
+        code: string,
+        id: string,
+      ) => Promise<{ code: string; map?: string } | null>;
+
+      // Call- and statement-heavy, branch-free target: the baseline instruments
+      // only the function entry, so both flags must strictly raise the counter
+      // count.
+      const code = `
+function handle(req) {
+  const a = parse(req);
+  const b = validate(a);
+  log(b);
+  return format(b);
+}
+`;
+      const countCounters = async (): Promise<number> => {
+        const result = await transform.call(
+          { getCombinedSourcemap: () => null },
+          code,
+          "/project/src/handle.js",
+        );
+        expect(result).not.toBeNull();
+        return (result!.code.match(/__vitiate_cov\[/g) ?? []).length;
+      };
+
+      const origCalls = process.env["VITIATE_TRACE_CALLS"];
+      const origStmts = process.env["VITIATE_TRACE_STMT_BLOCKS"];
+      try {
+        delete process.env["VITIATE_TRACE_CALLS"];
+        delete process.env["VITIATE_TRACE_STMT_BLOCKS"];
+        const baseline = await countCounters();
+
+        process.env["VITIATE_TRACE_CALLS"] = "1";
+        delete process.env["VITIATE_TRACE_STMT_BLOCKS"];
+        const withCalls = await countCounters();
+
+        delete process.env["VITIATE_TRACE_CALLS"];
+        process.env["VITIATE_TRACE_STMT_BLOCKS"] = "1";
+        const withStmtBlocks = await countCounters();
+
+        expect(withCalls).toBeGreaterThan(baseline);
+        expect(withStmtBlocks).toBeGreaterThan(baseline);
+      } finally {
+        if (origCalls === undefined) delete process.env["VITIATE_TRACE_CALLS"];
+        else process.env["VITIATE_TRACE_CALLS"] = origCalls;
+        if (origStmts === undefined)
+          delete process.env["VITIATE_TRACE_STMT_BLOCKS"];
+        else process.env["VITIATE_TRACE_STMT_BLOCKS"] = origStmts;
+      }
+    });
+
+    it("traceCalls plugin option instruments through the transform", async () => {
+      // Exercise the primary (option) path end-to-end: the config hook resolves
+      // the option into module state, which the transform reads via getTraceCalls().
+      delete process.env["VITIATE_TRACE_CALLS"]; // isolate the option from env
+      const instrument = findPlugin(
+        vitiatePlugin({ traceCalls: true }),
+        "vitiate:instrument",
+      );
+      callConfig(instrument, {});
+      const transform = instrument.transform as (
+        code: string,
+        id: string,
+      ) => Promise<{ code: string; map?: string } | null>;
+
+      const code = `function handle(req) { const a = parse(req); return format(a); }`;
+      const result = await transform.call(
+        { getCombinedSourcemap: () => null },
+        code,
+        "/project/src/opt.js",
+      );
+      expect(result).not.toBeNull();
+      // Function entry + parse() + format() call-site counters: more than the
+      // single entry counter the baseline (option off) would emit.
+      const counters = (result!.code.match(/__vitiate_cov\[/g) ?? []).length;
+      expect(counters).toBeGreaterThan(1);
     });
 
     it("skips node_modules files by default", async () => {

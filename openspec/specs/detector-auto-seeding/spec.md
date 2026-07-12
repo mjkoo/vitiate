@@ -51,7 +51,7 @@ The `DetectorManager` SHALL provide a `getSeeds()` method that collects seeds fr
 
 Detector seeds SHALL be passed to the engine via the `detectorSeeds` field on `FuzzerConfig`, following the same pattern as `detectorTokens`. The TypeScript fuzz loop SHALL collect detector seeds via `DetectorManager.getSeeds()` and include them in `FuzzerConfig` when constructing the `Fuzzer`, unless `autoSeed` is `false`.
 
-The engine SHALL queue detector seeds internally during the seed composition phase of the first `getNextInput()` call, after user seeds (from `addSeed()`) and before default auto-seeds. Detector seeds do NOT set the `has_user_seeds` flag.
+The engine SHALL queue detector seeds internally during the seed composition phase of the first `getNextInput()` call, before default auto-seeds. Seed composition runs only when the corpus is empty and no user seeds are pending; if the user provided any seeds via `addSeed()` (which sets `has_user_seeds`), the engine SHALL NOT queue detector seeds. Detector seeds themselves do NOT set the `has_user_seeds` flag.
 
 #### Scenario: Detector seeds passed via config
 
@@ -66,12 +66,12 @@ The engine SHALL queue detector seeds internally during the seed composition pha
 - **THEN** the TypeScript fuzz loop SHALL pass an empty `detectorSeeds` array
 - **AND** no detector seeds SHALL be queued by the engine
 
-#### Scenario: Detector seeds coexist with user seeds
+#### Scenario: Detector seeds suppressed when user seeds are present
 
-- **WHEN** the user provides 2 seeds via `addSeed()` and the config contains 4 detector seeds
-- **THEN** the seed queue SHALL contain user seeds first, then detector seeds
-- **AND** `has_user_seeds` SHALL be `true` (set by the `addSeed()` calls)
+- **WHEN** the user provides 2 seeds via `addSeed()` (setting `has_user_seeds` to `true`) and the config contains 4 detector seeds
+- **THEN** the engine SHALL NOT queue the detector seeds
 - **AND** default auto-seeds SHALL NOT be loaded (because `has_user_seeds` is `true`)
+- **AND** if the user seeds produce no coverage, the "no seeds produced coverage" error SHALL fire
 
 #### Scenario: Detector seeds coexist with default auto-seeds
 

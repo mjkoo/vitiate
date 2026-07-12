@@ -19,6 +19,12 @@ pub struct PluginConfig {
     pub trace_cmp: bool,
     pub coverage_global_name: String,
     pub trace_cmp_global_name: String,
+    /// Emit a call-site coverage counter before each call/`new` expression.
+    /// Off by default; benchmark-gated (see the block-callsite-counters change).
+    pub trace_calls: bool,
+    /// Emit an inter-statement (basic-block) coverage counter between
+    /// straight-line statements. Off by default; benchmark-gated.
+    pub trace_stmt_blocks: bool,
 }
 
 impl Default for PluginConfig {
@@ -28,6 +34,8 @@ impl Default for PluginConfig {
             trace_cmp: true,
             coverage_global_name: "__vitiate_cov".to_string(),
             trace_cmp_global_name: "__vitiate_cmplog_write".to_string(),
+            trace_calls: false,
+            trace_stmt_blocks: false,
         }
     }
 }
@@ -47,6 +55,12 @@ enum EdgeKind {
     /// A comparison site recorded for CmpLog (indexes the cmplog buffer, not
     /// the coverage map).
     Cmp,
+    /// A call-site counter (control reached a call/`new` expression). Optional,
+    /// gated on `trace_calls`.
+    Call,
+    /// An inter-statement (basic-block) counter, fired only when the preceding
+    /// statement completed normally. Optional, gated on `trace_stmt_blocks`.
+    StmtBlock,
 }
 
 impl EdgeKind {
@@ -56,6 +70,8 @@ impl EdgeKind {
             EdgeKind::ElseNotTaken => 1,
             EdgeKind::LoopExit => 2,
             EdgeKind::Cmp => 3,
+            EdgeKind::Call => 4,
+            EdgeKind::StmtBlock => 5,
         }
     }
 }
@@ -156,14 +172,14 @@ impl TransformVisitor {
         })
     }
 
-    // Task 3.2: Build `(__vitiate_cov[ID]++, expr)` as a comma expression
-    fn wrap_with_counter(&self, span: Span, expr: Box<Expr>) -> Box<Expr> {
+    // Task 3.2: Build `(__vitiate_cov[ID]++, expr)` as a comma expression.
+    // `kind` selects the edge kind so the same wrapper serves block-entry
+    // probes (ternary arms, logical/short-circuit RHS, arrow expr bodies) and
+    // optional call-site probes.
+    fn wrap_with_counter(&self, span: Span, kind: EdgeKind, expr: Box<Expr>) -> Box<Expr> {
         Box::new(Expr::Seq(SeqExpr {
             span: DUMMY_SP,
-            exprs: vec![
-                Box::new(self.make_counter_expr(span, EdgeKind::Block)),
-                expr,
-            ],
+            exprs: vec![Box::new(self.make_counter_expr(span, kind)), expr],
         }))
     }
 
@@ -228,6 +244,114 @@ impl TransformVisitor {
             } else {
                 i += 1;
             }
+        }
+    }
+
+    /// A leading string-literal expression statement (a directive such as
+    /// `"use strict"`). Only the leading run of these forms the directive
+    /// prologue; inserting any other statement among them ends the prologue.
+    fn is_directive(stmt: &Stmt) -> bool {
+        matches!(stmt, Stmt::Expr(e) if matches!(&*e.expr, Expr::Lit(Lit::Str(_))))
+    }
+
+    /// A statement that unconditionally terminates straight-line flow in its
+    /// enclosing list. Statements after one of these are unreachable, so no
+    /// inter-statement counter is placed before them.
+    fn is_terminator(stmt: &Stmt) -> bool {
+        matches!(
+            stmt,
+            Stmt::Return(_) | Stmt::Throw(_) | Stmt::Break(_) | Stmt::Continue(_)
+        )
+    }
+
+    /// Insert an inter-statement (basic-block) counter before each executable
+    /// statement after the first in a statement list, so straight-line code
+    /// splits into per-statement edges. Each counter fires only when the
+    /// preceding statement completed normally (capturing call-return-vs-throw
+    /// boundaries). Shared by `visit_mut_stmts` and `visit_mut_module_items`.
+    ///
+    /// Must run BEFORE `insert_loop_exit_counters` on the same list: it keys
+    /// each counter on an original statement's span, and running it after
+    /// loop-exit insertion would treat the synthesized (DUMMY_SP) loop-exit
+    /// counters as statements and alias them all to `id(file, 0, 0)`.
+    ///
+    /// Hoisted `FunctionDecl`s are kept at the head (no counter before them);
+    /// insertion stops once a terminating statement is seen. When
+    /// `allow_directives` is set (module top level), a leading directive
+    /// prologue is also kept at the head so its counters do not split it;
+    /// nested blocks, loop/case bodies, etc. have no prologue, so their callers
+    /// pass `false` and a leading string-literal statement is treated as an
+    /// ordinary first statement.
+    fn insert_stmt_block_counters<T>(
+        &self,
+        items: &mut Vec<T>,
+        as_stmt: impl Fn(&T) -> Option<&Stmt>,
+        wrap: impl Fn(Stmt) -> T,
+        allow_directives: bool,
+    ) {
+        // Advance `start` to the first executable statement, keeping any
+        // directive prologue (module level only), hoisted `FunctionDecl`s, and
+        // non-statement items (imports/exports at module top level) at the
+        // head. The first executable statement itself gets no counter (the
+        // block-entry counter, where one exists, already covers reaching it),
+        // so insertion begins at the following statement.
+        let mut start = 0;
+        while start < items.len() {
+            match as_stmt(&items[start]) {
+                Some(s) if allow_directives && Self::is_directive(s) => start += 1,
+                Some(Stmt::Decl(Decl::Fn(_))) => start += 1,
+                None => start += 1,
+                _ => break,
+            }
+        }
+        if start >= items.len() {
+            return;
+        }
+
+        // `prev_term` tracks whether the previous *original* statement was a
+        // terminator. It is read before inserting a counter for the current
+        // statement, and never reads `items[i - 1]` (which becomes an inserted
+        // counter after the first insertion).
+        let mut prev_term = as_stmt(&items[start]).is_some_and(Self::is_terminator);
+        let mut i = start + 1;
+        while i < items.len() {
+            if prev_term {
+                break;
+            }
+            match as_stmt(&items[i]) {
+                // Hoisted function declarations stay at the head: no counter
+                // before them, and they do not terminate flow.
+                Some(Stmt::Decl(Decl::Fn(_))) => {
+                    prev_term = false;
+                    i += 1;
+                }
+                Some(s) => {
+                    let is_term = Self::is_terminator(s);
+                    let span = s.span();
+                    items.insert(i, wrap(self.make_counter_stmt(span, EdgeKind::StmtBlock)));
+                    prev_term = is_term;
+                    i += 2; // skip the counter we just inserted
+                }
+                // Non-statement items (imports/exports at module top level):
+                // no counter, not a terminator.
+                None => {
+                    prev_term = false;
+                    i += 1;
+                }
+            }
+        }
+    }
+
+    /// Whether an expression is an ordinary call/`new`/optional-call site that
+    /// should receive a call-site counter. `super(...)` and dynamic `import(...)`
+    /// are excluded (wrapping them risks constructor init ordering / is not an
+    /// ordinary call).
+    fn is_instrumentable_call(expr: &Expr) -> bool {
+        match expr {
+            Expr::Call(c) => !matches!(c.callee, Callee::Super(_) | Callee::Import(_)),
+            Expr::New(_) => true,
+            Expr::OptChain(o) => matches!(&*o.base, OptChainBase::Call(_)),
+            _ => false,
         }
     }
 
@@ -540,6 +664,20 @@ impl VisitMut for TransformVisitor {
     // through visit_mut_stmts. Insert their loop-exit counters here.
     fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
         items.visit_mut_children_with(self);
+        // Statement-block counters must precede loop-exit insertion (see the
+        // helper doc).
+        if self.config.trace_stmt_blocks {
+            // Module top level: a leading directive prologue is real, keep it.
+            self.insert_stmt_block_counters(
+                items,
+                |item| match item {
+                    ModuleItem::Stmt(s) => Some(s),
+                    _ => None,
+                },
+                ModuleItem::Stmt,
+                true,
+            );
+        }
         self.insert_loop_exit_counters(
             items,
             |item| match item {
@@ -579,33 +717,50 @@ impl VisitMut for TransformVisitor {
     // visit_mut_module_items.
     fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
         stmts.visit_mut_children_with(self);
+        // Statement-block counters must precede loop-exit insertion (see the
+        // helper doc).
+        if self.config.trace_stmt_blocks {
+            // Generic statement lists (function/script bodies, nested blocks,
+            // loop/case bodies): no directive prologue to protect here - any
+            // function/script-body directive is already demoted by the
+            // entry-counter / preamble prepended elsewhere - so a leading
+            // string literal is treated as an ordinary first statement.
+            self.insert_stmt_block_counters(stmts, |s| Some(s), |s| s, false);
+        }
         self.insert_loop_exit_counters(stmts, |s| Some(s), |s| s);
     }
 
     // Tasks 5.1, 6.2: Binary expression - logical operators get edge counters
     // Comparison replacement is handled in visit_mut_expr
     fn visit_mut_bin_expr(&mut self, n: &mut BinExpr) {
+        // Capture the RHS span BEFORE descending: children may replace a
+        // comparison/call RHS with a DUMMY_SP-spanned node (the CmpLog IIFE or
+        // a call-site `(counter, call)` sequence), which would collapse the
+        // short-circuit counter to id(file, 0, 0). Mirrors visit_mut_if_stmt.
+        let right_span = n.right.span();
         n.visit_mut_children_with(self);
 
         if Self::is_logical_op(n.op) {
-            let right_span = n.right.span();
             let right = std::mem::replace(
                 &mut n.right,
                 Box::new(Expr::Invalid(Invalid { span: DUMMY_SP })),
             );
-            n.right = self.wrap_with_counter(right_span, right);
+            n.right = self.wrap_with_counter(right_span, EdgeKind::Block, right);
         }
         // Comparison operators are handled in visit_mut_expr
     }
 
-    // Comparison tracing - wrap comparison BinExpr in IIFE with record call
+    // Comparison tracing - wrap comparison BinExpr in IIFE with record call.
+    // Optional call-site counters are applied here too (they need &mut Expr to
+    // replace the call with a `(counter, call)` sequence).
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
 
-        if !self.config.trace_cmp {
-            return;
-        }
-        if let Expr::Bin(bin) = expr
+        // Comparison tracing: replace a comparison with the CmpLog IIFE and
+        // return immediately, so the synthesized IIFE call is never itself
+        // wrapped as a call site below.
+        if self.config.trace_cmp
+            && let Expr::Bin(bin) = expr
             && Self::is_comparison_op(bin.op)
         {
             let op = bin.op;
@@ -619,6 +774,16 @@ impl VisitMut for TransformVisitor {
                 Box::new(Expr::Invalid(Invalid { span: DUMMY_SP })),
             );
             *expr = self.make_trace_cmp_call(left, right, span, op);
+            return;
+        }
+
+        // Call-site counters: wrap the whole call/`new`/optional-call in
+        // `(__vitiate_cov[id]++, <call>)`. Wrapping the entire call (not just
+        // the callee) preserves the `this` receiver and evaluation order.
+        if self.config.trace_calls && Self::is_instrumentable_call(expr) {
+            let span = expr.span();
+            let orig = std::mem::replace(expr, Expr::Invalid(Invalid { span: DUMMY_SP }));
+            *expr = *self.wrap_with_counter(span, EdgeKind::Call, Box::new(orig));
         }
     }
 
@@ -666,10 +831,14 @@ impl VisitMut for TransformVisitor {
 
     // Task 3.7: Ternary expression instrumentation
     fn visit_mut_cond_expr(&mut self, n: &mut CondExpr) {
-        n.visit_mut_children_with(self);
-
+        // Capture arm spans BEFORE descending: children may replace a
+        // comparison/call arm with a DUMMY_SP-spanned node, which would
+        // collapse both arm counters to id(file, 0, 0) (mirrors
+        // visit_mut_if_stmt).
         let cons_span = n.cons.span();
         let alt_span = n.alt.span();
+        n.visit_mut_children_with(self);
+
         let cons = std::mem::replace(
             &mut n.cons,
             Box::new(Expr::Invalid(Invalid { span: DUMMY_SP })),
@@ -678,8 +847,8 @@ impl VisitMut for TransformVisitor {
             &mut n.alt,
             Box::new(Expr::Invalid(Invalid { span: DUMMY_SP })),
         );
-        n.cons = self.wrap_with_counter(cons_span, cons);
-        n.alt = self.wrap_with_counter(alt_span, alt);
+        n.cons = self.wrap_with_counter(cons_span, EdgeKind::Block, cons);
+        n.alt = self.wrap_with_counter(alt_span, EdgeKind::Block, alt);
     }
 
     // Task 3.9: Switch case instrumentation
@@ -761,18 +930,19 @@ impl VisitMut for TransformVisitor {
     // AssignExpr nodes, not BinExpr. Wrap the RHS in a comma expression
     // with an edge counter so the fuzzer sees the branch.
     fn visit_mut_assign_expr(&mut self, n: &mut AssignExpr) {
+        // Capture the RHS span BEFORE descending (see visit_mut_bin_expr).
+        let right_span = n.right.span();
         n.visit_mut_children_with(self);
 
         if matches!(
             n.op,
             AssignOp::AndAssign | AssignOp::OrAssign | AssignOp::NullishAssign
         ) {
-            let right_span = n.right.span();
             let right = std::mem::replace(
                 &mut n.right,
                 Box::new(Expr::Invalid(Invalid { span: DUMMY_SP })),
             );
-            n.right = self.wrap_with_counter(right_span, right);
+            n.right = self.wrap_with_counter(right_span, EdgeKind::Block, right);
         }
     }
 
@@ -794,6 +964,14 @@ impl VisitMut for TransformVisitor {
     // Task 5.7: Arrow function entry - block body gets prepended counter,
     // expression body gets wrapped in comma expression: () => (__vitiate_cov[ID]++, expr)
     fn visit_mut_arrow_expr(&mut self, n: &mut ArrowExpr) {
+        // Capture the expression-body span BEFORE descending: children may
+        // replace a comparison/call body with a DUMMY_SP-spanned node (see
+        // visit_mut_bin_expr). The body variant does not change during the
+        // descent, so this stays valid for the Expr arm below.
+        let expr_body_span = match &*n.body {
+            BlockStmtOrExpr::Expr(expr) => Some(expr.span()),
+            _ => None,
+        };
         n.visit_mut_children_with(self);
         // BlockStmtOrExpr is #[non_exhaustive] on the wasm32-wasip1 target,
         // so the wildcard arm is required for the release build.
@@ -803,10 +981,10 @@ impl VisitMut for TransformVisitor {
                 self.prepend_counter_to_block(block, n.span);
             }
             BlockStmtOrExpr::Expr(expr) => {
-                let span = expr.span();
+                let span = expr_body_span.unwrap_or_else(|| expr.span());
                 let orig =
                     std::mem::replace(expr, Box::new(Expr::Invalid(Invalid { span: DUMMY_SP })));
-                *expr = self.wrap_with_counter(span, orig);
+                *expr = self.wrap_with_counter(span, EdgeKind::Block, orig);
             }
             _ => {}
         }
@@ -859,6 +1037,35 @@ mod tests {
             ..PluginConfig::default()
         };
         TransformVisitor::new(config, "test.js".to_string())
+    }
+
+    /// trace_cmp off (to isolate call counters from the comparison IIFE),
+    /// trace_calls on.
+    fn test_visitor_trace_calls() -> TransformVisitor {
+        let config = PluginConfig {
+            trace_cmp: false,
+            trace_calls: true,
+            ..PluginConfig::default()
+        };
+        TransformVisitor::new(config, "test.js".to_string())
+    }
+
+    /// trace_cmp off, trace_stmt_blocks on.
+    fn test_visitor_trace_stmt_blocks() -> TransformVisitor {
+        let config = PluginConfig {
+            trace_cmp: false,
+            trace_stmt_blocks: true,
+            ..PluginConfig::default()
+        };
+        TransformVisitor::new(config, "test.js".to_string())
+    }
+
+    fn transform_trace_calls(input: &str) -> String {
+        transform(input, &mut test_visitor_trace_calls())
+    }
+
+    fn transform_trace_stmt_blocks(input: &str) -> String {
+        transform(input, &mut test_visitor_trace_stmt_blocks())
     }
 
     /// Parse input, apply transform, return printed output
@@ -1717,5 +1924,298 @@ var __vitiate_cmplog_write = globalThis.__vitiate_cmplog_write;"#
             8,
             "loops in try blocks missing exit counters: {out}"
         );
+    }
+
+    // ===== Call-site counters (trace_calls) =====
+
+    // An ordinary call is wrapped in `(counter, call)`.
+    #[test]
+    fn call_site_ordinary_call_wrapped() {
+        let out = transform_trace_calls(r#"foo(a, b);"#);
+        assert!(
+            out.contains("__vitiate_cov[") && out.contains(", foo(a, b)"),
+            "call not wrapped: {out}"
+        );
+        assert_eq!(out.matches("__vitiate_cov[").count(), 1, "{out}");
+    }
+
+    // A method call keeps its receiver: the WHOLE call is wrapped, not the
+    // callee, so `this` is preserved.
+    #[test]
+    fn call_site_method_call_preserves_receiver() {
+        let out = transform_trace_calls(r#"obj.method(x);"#);
+        assert!(
+            out.contains(", obj.method(x)"),
+            "method receiver not preserved (callee wrapped in isolation?): {out}"
+        );
+        assert_eq!(out.matches("__vitiate_cov[").count(), 1, "{out}");
+    }
+
+    // `new` expressions are instrumented.
+    #[test]
+    fn call_site_new_expression_wrapped() {
+        let out = transform_trace_calls(r#"new Foo(x);"#);
+        assert!(out.contains(", new Foo(x)"), "new not wrapped: {out}");
+        assert_eq!(out.matches("__vitiate_cov[").count(), 1, "{out}");
+    }
+
+    // `super(...)` is not wrapped (only the constructor entry counter remains).
+    #[test]
+    fn call_site_super_call_skipped() {
+        let out = transform_trace_calls(r#"class B extends A { constructor(){ super(); } }"#);
+        assert!(
+            !out.contains(", super("),
+            "super() must not be wrapped: {out}"
+        );
+        // super() is skipped and constructors get no entry counter, so no
+        // coverage counter is emitted at all.
+        assert_eq!(out.matches("__vitiate_cov[").count(), 0, "{out}");
+    }
+
+    // Dynamic `import(...)` is not wrapped.
+    #[test]
+    fn call_site_dynamic_import_skipped() {
+        let out = transform_trace_calls(r#"import(y);"#);
+        assert_eq!(
+            out.matches("__vitiate_cov[").count(),
+            0,
+            "dynamic import must not be instrumented: {out}"
+        );
+    }
+
+    // Optional-chaining calls are wrapped whole.
+    #[test]
+    fn call_site_optional_chain_call_wrapped() {
+        let out = transform_trace_calls(r#"a?.b();"#);
+        assert!(out.contains(", a?.b()"), "optional call not wrapped: {out}");
+        assert_eq!(out.matches("__vitiate_cov[").count(), 1, "{out}");
+    }
+
+    // Nested calls each get their own counter; the receiver of the outer call
+    // stays correct.
+    #[test]
+    fn call_site_nested_calls_each_counted() {
+        let out = transform_trace_calls(r#"a.b().c();"#);
+        assert_eq!(
+            out.matches("__vitiate_cov[").count(),
+            2,
+            "expected one counter per call site: {out}"
+        );
+    }
+
+    // Disabled by default: no call-site counters without the flag.
+    #[test]
+    fn call_site_disabled_by_default() {
+        let out = transform_no_trace_cmp(r#"foo(a, b);"#);
+        assert_eq!(
+            out.matches("__vitiate_cov[").count(),
+            0,
+            "no call counter should be emitted by default: {out}"
+        );
+    }
+
+    // The synthesized CmpLog IIFE is not itself wrapped as a call site when
+    // both trace_cmp and trace_calls are on (no __vitiate_cov counter appears;
+    // the comparison records via __vitiate_cmplog_write only).
+    #[test]
+    fn call_site_does_not_wrap_cmplog_iife() {
+        let config = PluginConfig {
+            trace_cmp: true,
+            trace_calls: true,
+            ..PluginConfig::default()
+        };
+        let out = transform(
+            r#"var x = a === b;"#,
+            &mut TransformVisitor::new(config, "test.js".to_string()),
+        );
+        assert!(
+            out.contains("__vitiate_cmplog_write("),
+            "comparison should still be traced: {out}"
+        );
+        assert_eq!(
+            out.matches("__vitiate_cov[").count(),
+            0,
+            "the synthesized CmpLog IIFE must not receive a call-site counter: {out}"
+        );
+    }
+
+    // ===== Statement-block counters (trace_stmt_blocks) =====
+
+    // Straight-line statements split into per-statement edges (entry + N-1
+    // inter-statement counters).
+    #[test]
+    fn stmt_block_splits_straight_line() {
+        let out = transform_trace_stmt_blocks(r#"function f(){ a(); b(); c(); }"#);
+        // function entry + 2 inter-statement counters = 3
+        assert_eq!(
+            out.matches("__vitiate_cov[").count(),
+            3,
+            "expected entry + 2 inter-statement counters: {out}"
+        );
+    }
+
+    // Module top-level (module-item list) is covered too. An import forces the
+    // Module (not Script) parse, routing through visit_mut_module_items.
+    #[test]
+    fn stmt_block_module_top_level() {
+        let out = transform_trace_stmt_blocks(r#"import x from "y"; a(); b();"#);
+        // no entry counter at module top level; one counter before b()
+        assert_eq!(
+            out.matches("__vitiate_cov[").count(),
+            1,
+            "expected exactly one inter-statement counter before b(): {out}"
+        );
+    }
+
+    // At MODULE top level a multi-directive prologue is not split, and the
+    // first executable statement is not counted (only the second gets a
+    // counter). The `import` forces the Module parse (module-item path, where
+    // directive protection applies).
+    #[test]
+    fn stmt_block_directive_prologue_not_split_module() {
+        let out =
+            transform_trace_stmt_blocks(r#""use strict"; "use other"; import "y"; a(); b();"#);
+        assert!(out.contains("\"use strict\""), "{out}");
+        assert_eq!(
+            out.matches("__vitiate_cov[").count(),
+            1,
+            "prologue split or first executable counted: {out}"
+        );
+    }
+
+    // Directive protection is scoped to the module prologue: a leading
+    // string-literal statement in a generic statement list (here a nested
+    // block, the Script path) is treated as an ordinary first statement, not a
+    // directive, so the following statements are counted normally. (Any real
+    // function/script-body directive is already demoted by the entry-counter /
+    // preamble the plugin prepends, so this splits nothing meaningful.)
+    #[test]
+    fn stmt_block_directive_not_special_cased_in_generic_lists() {
+        // Nested bare block: "x" is the first statement (no counter before it),
+        // foo() and bar() each get an inter-statement counter.
+        let out = transform_trace_stmt_blocks(r#"{ "x"; foo(); bar(); }"#);
+        assert_eq!(
+            out.matches("__vitiate_cov[").count(),
+            2,
+            "leading string in nested block wrongly treated as directive: {out}"
+        );
+    }
+
+    // Hoisted function declarations stay at the head with no counter before
+    // them; the first counter appears before the first executable call.
+    #[test]
+    fn stmt_block_hoisted_fn_decls_stay_first() {
+        let out = transform_trace_stmt_blocks(r#"function f(){ function g(){} h(); k(); }"#);
+        // f entry + g entry + 1 inter-statement counter (before k, not before h) = 3
+        assert_eq!(
+            out.matches("__vitiate_cov[").count(),
+            3,
+            "hoisted decl counted or first executable counted: {out}"
+        );
+    }
+
+    // Insertion stops after a terminator: no counter before the unreachable
+    // statement following a `return`.
+    #[test]
+    fn stmt_block_stops_after_terminator() {
+        let out = transform_trace_stmt_blocks(r#"function f(){ a(); return x; b(); }"#);
+        // f entry + counter before `return` (a() completed) = 2; none before b()
+        assert_eq!(
+            out.matches("__vitiate_cov[").count(),
+            2,
+            "counter emitted after terminator (dead code): {out}"
+        );
+    }
+
+    // Disabled by default: no inter-statement counters without the flag.
+    #[test]
+    fn stmt_block_disabled_by_default() {
+        let out = transform_no_trace_cmp(r#"function f(){ a(); b(); c(); }"#);
+        // only the function entry counter
+        assert_eq!(
+            out.matches("__vitiate_cov[").count(),
+            1,
+            "no inter-statement counters should be emitted by default: {out}"
+        );
+    }
+
+    /// Extract the numeric indices from every `__vitiate_cov[N]` counter in the
+    /// emitted output (ignores the `var __vitiate_cov = ...` preamble, which has
+    /// no `[`).
+    fn cov_indices(out: &str) -> Vec<u32> {
+        const NEEDLE: &str = "__vitiate_cov[";
+        out.match_indices(NEEDLE)
+            .filter_map(|(i, _)| {
+                let rest = &out[i + NEEDLE.len()..];
+                let end = rest.find(']')?;
+                rest[..end].parse::<u32>().ok()
+            })
+            .collect()
+    }
+
+    // Regression for the after-children span-capture bug: a short-circuit /
+    // ternary arm whose value is rewritten during descent (comparison -> CmpLog
+    // IIFE, or call -> (counter, call) sequence, both DUMMY_SP) must still get a
+    // counter keyed on the arm's ORIGINAL span, not id(file, 0, 0).
+    #[test]
+    fn short_circuit_arms_do_not_alias_after_child_rewrite() {
+        // Comparison-valued ternary arms (default mode) get distinct ids.
+        let out = transform_default(r#"var z = f ? a === b : c === d;"#);
+        let ids = cov_indices(&out);
+        assert_eq!(ids.len(), 2, "expected two ternary arm counters: {out}");
+        assert_ne!(ids[0], ids[1], "ternary arm counters alias: {out}");
+
+        // Comparison-valued logical RHS across two statements must not both
+        // collapse to id(file, 0, 0).
+        let out2 = transform_default(r#"var z = p && a === b; var w = q && c === d;"#);
+        let ids2 = cov_indices(&out2);
+        assert_eq!(ids2.len(), 2, "expected two logical-RHS counters: {out2}");
+        assert_ne!(ids2[0], ids2[1], "logical-RHS counters alias: {out2}");
+
+        // Call-valued ternary arms (+call): the two arm (Block) counters and the
+        // two call (Call) counters are all distinct.
+        let out3 = transform_trace_calls(r#"var z = f ? g() : h();"#);
+        let mut ids3 = cov_indices(&out3);
+        assert_eq!(ids3.len(), 4, "expected 2 arm + 2 call counters: {out3}");
+        ids3.sort_unstable();
+        ids3.dedup();
+        assert_eq!(ids3.len(), 4, "call-ternary counters alias: {out3}");
+    }
+
+    // Distinct edge kinds at a shared span do not alias: Block, Call, and
+    // StmtBlock ids for the same span differ.
+    #[test]
+    fn edge_kinds_distinct_at_shared_span() {
+        let v = TransformVisitor::default_for_test();
+        let span = Span {
+            lo: swc_core::common::BytePos(10),
+            hi: swc_core::common::BytePos(20),
+        };
+        let block = v.edge_id(span, EdgeKind::Block);
+        let call = v.edge_id(span, EdgeKind::Call);
+        let stmt = v.edge_id(span, EdgeKind::StmtBlock);
+        assert_ne!(block, call, "Block and Call alias");
+        assert_ne!(block, stmt, "Block and StmtBlock alias");
+        assert_ne!(call, stmt, "Call and StmtBlock alias");
+    }
+
+    // With both flags off, output is byte-identical to the pre-change default
+    // transform for a call- and statement-heavy fixture (no drift for existing
+    // users). Guarded by comparing the default visitor against an explicitly
+    // all-off config.
+    #[test]
+    fn flags_off_matches_default_transform() {
+        let src = r#"function f(x){ var y = g(x); h(y); if (y) { k(); } return y; }"#;
+        let default_out = transform_default(src);
+        let explicit_off = PluginConfig {
+            trace_calls: false,
+            trace_stmt_blocks: false,
+            ..PluginConfig::default()
+        };
+        let off_out = transform(
+            src,
+            &mut TransformVisitor::new(explicit_off, "test.js".to_string()),
+        );
+        assert_eq!(default_out, off_out, "flags-off drifted from default");
     }
 }

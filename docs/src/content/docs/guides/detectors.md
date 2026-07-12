@@ -90,6 +90,8 @@ npx vitiate libfuzzer test.fuzz.ts -detectors prototypePollution,ssrf
 
 Snapshots all built-in prototypes (Object, Array, String, Number, Function, etc.) before each iteration and diffs after. Any added, modified, or deleted properties are flagged. This is a Tier 2 detector (opt-in) because the per-iteration snapshot overhead is significant for performance-sensitive targets.
 
+Beyond direct mutation, the detector also inspects the value your target returns: if any object reachable within it (up to 3 levels deep, own enumerable properties only) is identical to a built-in prototype, that is flagged as a leaked prototype reference. This catches targets that hand back an internal reference to `Object.prototype`/`Array.prototype` rather than mutating it. Direct mutations take priority over reference leaks in the same iteration.
+
 Common finding: libraries that recursively merge objects without checking for `__proto__` or `constructor` keys.
 
 ### Command Injection

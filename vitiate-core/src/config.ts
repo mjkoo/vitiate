@@ -233,6 +233,21 @@ export interface VitiatePluginOptions {
   dataDir?: string;
   /** Coverage map size (number of edge counter slots). Default: 65536. Must be in [256, 4194304]. */
   coverageMapSize?: number;
+  /**
+   * Experimental. Emit a coverage counter at every call and `new` expression, so
+   * reaching each call site is a distinct edge (a finer approximation of
+   * basic-block coverage). Off by default. Raises the instrumented-edge count;
+   * benchmark-gated (marginal gain on saturated targets). Can also be set via the
+   * `VITIATE_TRACE_CALLS` env var.
+   */
+  traceCalls?: boolean;
+  /**
+   * Experimental. Emit a coverage counter between consecutive straight-line
+   * statements, so each fires only when the preceding statement completed
+   * normally. Off by default. Raises the instrumented-edge count; benchmark-gated.
+   * Can also be set via the `VITIATE_TRACE_STMT_BLOCKS` env var.
+   */
+  traceStmtBlocks?: boolean;
 }
 
 const DEFAULT_INCLUDE = ["**/*.{js,ts,jsx,tsx,mjs,cjs,mts,cts}"];
@@ -513,6 +528,8 @@ const KNOWN_VITIATE_ENV_VARS = new Set([
   "VITIATE_PROJECT_ROOT",
   "VITIATE_DATA_DIR",
   "VITIATE_COVERAGE_MAP_SIZE",
+  "VITIATE_TRACE_CALLS",
+  "VITIATE_TRACE_STMT_BLOCKS",
 ]);
 
 export function isDebugMode(): boolean {
@@ -712,6 +729,55 @@ export function getCoverageMapSize(): number {
   return (
     resolvedCoverageMapSize ?? readCoverageMapSizeEnv() ?? COVERAGE_MAP_SIZE
   );
+}
+
+// Resolved from the `traceCalls` / `traceStmtBlocks` plugin options by the
+// plugin's config hook (main process only). Mirrors `resolvedCoverageMapSize`.
+let resolvedTraceCalls: boolean | undefined;
+let resolvedTraceStmtBlocks: boolean | undefined;
+
+/**
+ * Record the resolved `traceCalls` plugin option so `getTraceCalls()` returns
+ * it in the main process. The plugin also propagates it to `VITIATE_TRACE_CALLS`
+ * for forks-pool workers, where no plugin hook runs.
+ */
+export function setTraceCalls(value: boolean): void {
+  resolvedTraceCalls = value;
+}
+
+/**
+ * Record the resolved `traceStmtBlocks` plugin option. See `setTraceCalls`.
+ */
+export function setTraceStmtBlocks(value: boolean): void {
+  resolvedTraceStmtBlocks = value;
+}
+
+/**
+ * Whether to emit call-site coverage counters (SWC plugin `traceCalls`).
+ *
+ * Off by default. Precedence: the `traceCalls` plugin option (module state, set
+ * in the main process) > the `VITIATE_TRACE_CALLS` env var (which the plugin
+ * uses to reach workers, and which may also be set directly) > default false.
+ */
+export function getTraceCalls(): boolean {
+  return resolvedTraceCalls ?? envTruthy("VITIATE_TRACE_CALLS");
+}
+
+/**
+ * Whether to emit inter-statement (basic-block) coverage counters (SWC plugin
+ * `traceStmtBlocks`). Off by default. Precedence mirrors `getTraceCalls`, using
+ * the `traceStmtBlocks` option and `VITIATE_TRACE_STMT_BLOCKS` env var.
+ */
+export function getTraceStmtBlocks(): boolean {
+  return resolvedTraceStmtBlocks ?? envTruthy("VITIATE_TRACE_STMT_BLOCKS");
+}
+
+/**
+ * Reset the resolved trace flags. For testing only.
+ */
+export function resetTraceFlags(): void {
+  resolvedTraceCalls = undefined;
+  resolvedTraceStmtBlocks = undefined;
 }
 
 /**

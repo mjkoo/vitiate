@@ -41,6 +41,7 @@ All fields are optional. Unset fields inherit from plugin-level `fuzz` configura
 |-------|------|---------|-------------|
 | `maxLen` | `number` | `4096` | Maximum input length in bytes |
 | `seed` | `number` | random | RNG seed for reproducible fuzzing |
+| `autoSeed` | `boolean` | `true` | Load automatic seeds (detector-contributed seeds and built-in default seeds). Set `false` to start from a single empty seed unless you provide your own corpus. |
 
 ### Execution Limits
 
@@ -49,6 +50,7 @@ All fields are optional. Unset fields inherit from plugin-level `fuzz` configura
 | `timeoutMs` | `number` | `0` | Per-execution timeout in milliseconds (0 = disabled) |
 | `fuzzTimeMs` | `number` | `0` | Total fuzzing time limit in milliseconds (0 = unlimited) |
 | `fuzzExecs` | `number` | `0` | Maximum fuzzing iterations (0 = unlimited) |
+| `replayOnly` | `boolean` | `false` | When `true`, each loaded corpus entry is executed once with no mutation and the campaign then exits (reporting the first crash). Honors libFuzzer's `-runs=0` "replay corpus once" semantics. Distinct from `fuzzExecs: 0`, which means unlimited. The `libfuzzer` subcommand sets this automatically from `-runs=0`; you rarely need to set it directly. |
 
 When `timeoutMs` is set, it also bounds each corpus entry during regression,
 optimize, and merge replay: a hung entry fails (regression) or is skipped with
@@ -67,8 +69,8 @@ and stage executions do not count toward it.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `stopOnCrash` | `boolean \| "auto"` | `"auto"` | `true`: stop on first crash. `false`: continue fuzzing. `"auto"`: stop in CLI mode, continue in programmatic mode. |
-| `maxCrashes` | `number` | `0` | Maximum crashes to collect before stopping (0 = unlimited) |
+| `stopOnCrash` | `boolean \| "auto"` | `"auto"` | `true`: stop on first crash. `false`: continue fuzzing. `"auto"`: continue in vitest/programmatic mode and in CLI with `-fork`; stop in CLI without `-fork`. |
+| `maxCrashes` | `number` | `1000` | Maximum crashes to collect before stopping (0 = unlimited). Only effective when `stopOnCrash` is `false`. |
 
 ### Mutation Strategies
 
@@ -77,6 +79,7 @@ and stage executions do not count toward it.
 | `grimoire` | `boolean` | auto | Grimoire structure-aware mutations. Auto-enabled for UTF-8 corpus. |
 | `unicode` | `boolean` | auto | Unicode-aware character-level mutations. Auto-enabled for UTF-8 corpus. |
 | `redqueen` | `boolean` | auto | REDQUEEN transform-aware mutations. Auto-enabled for binary corpus. |
+| `jsonMutations` | `boolean` | auto | JSON-aware structure-preserving byte mutations. Auto-enabled when the majority of UTF-8 corpus entries look like JSON. |
 
 ### Crash Minimization
 

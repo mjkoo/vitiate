@@ -34,6 +34,11 @@ import {
   getDataDir,
   setDataDir,
   resetDataDir,
+  getTraceCalls,
+  getTraceStmtBlocks,
+  setTraceCalls,
+  setTraceStmtBlocks,
+  resetTraceFlags,
 } from "./config.js";
 import path from "node:path";
 
@@ -159,6 +164,79 @@ describe("config", () => {
     it("returns true when VITIATE_DEBUG is 1", () => {
       process.env["VITIATE_DEBUG"] = "1";
       expect(isDebugMode()).toBe(true);
+    });
+  });
+
+  describe("getTraceCalls", () => {
+    const original = process.env["VITIATE_TRACE_CALLS"];
+
+    afterEach(() => {
+      resetTraceFlags();
+      if (original === undefined) {
+        delete process.env["VITIATE_TRACE_CALLS"];
+      } else {
+        process.env["VITIATE_TRACE_CALLS"] = original;
+      }
+    });
+
+    it("defaults to false when unset", () => {
+      delete process.env["VITIATE_TRACE_CALLS"];
+      expect(getTraceCalls()).toBe(false);
+    });
+
+    it("is true for a truthy env value", () => {
+      process.env["VITIATE_TRACE_CALLS"] = "1";
+      expect(getTraceCalls()).toBe(true);
+    });
+
+    it("is false for env '0'", () => {
+      process.env["VITIATE_TRACE_CALLS"] = "0";
+      expect(getTraceCalls()).toBe(false);
+    });
+
+    it("plugin-option module state takes precedence over env", () => {
+      process.env["VITIATE_TRACE_CALLS"] = "0";
+      setTraceCalls(true);
+      expect(getTraceCalls()).toBe(true);
+      setTraceCalls(false);
+      process.env["VITIATE_TRACE_CALLS"] = "1";
+      expect(getTraceCalls()).toBe(false);
+    });
+
+    it("falls back to env after resetTraceFlags", () => {
+      setTraceCalls(true);
+      resetTraceFlags();
+      delete process.env["VITIATE_TRACE_CALLS"];
+      expect(getTraceCalls()).toBe(false);
+    });
+  });
+
+  describe("getTraceStmtBlocks", () => {
+    const original = process.env["VITIATE_TRACE_STMT_BLOCKS"];
+
+    afterEach(() => {
+      resetTraceFlags();
+      if (original === undefined) {
+        delete process.env["VITIATE_TRACE_STMT_BLOCKS"];
+      } else {
+        process.env["VITIATE_TRACE_STMT_BLOCKS"] = original;
+      }
+    });
+
+    it("defaults to false when unset", () => {
+      delete process.env["VITIATE_TRACE_STMT_BLOCKS"];
+      expect(getTraceStmtBlocks()).toBe(false);
+    });
+
+    it("is true for a truthy env value", () => {
+      process.env["VITIATE_TRACE_STMT_BLOCKS"] = "true";
+      expect(getTraceStmtBlocks()).toBe(true);
+    });
+
+    it("plugin-option module state takes precedence over env", () => {
+      process.env["VITIATE_TRACE_STMT_BLOCKS"] = "0";
+      setTraceStmtBlocks(true);
+      expect(getTraceStmtBlocks()).toBe(true);
     });
   });
 

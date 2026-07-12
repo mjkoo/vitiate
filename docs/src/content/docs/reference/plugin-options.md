@@ -103,6 +103,22 @@ The resolved value is propagated to test worker processes via the internal [`VIT
 
 Vitiate prints a one-time warning at the start of a campaign if the number of instrumented edges is large relative to the map size (roughly 2% or more), since collisions then start to silently merge edges and coarsen coverage feedback. If you see this warning, raise `coverageMapSize` to the next power of two.
 
+## Coverage granularity (experimental)
+
+The `traceCalls` and `traceStmtBlocks` plugin options add finer coverage counters. By default the instrumentation records branch decision points: each basic block gets one entry counter. Both options default to `false`.
+
+```ts
+traceCalls?: boolean        // default: false
+traceStmtBlocks?: boolean   // default: false
+```
+
+- **`traceCalls`** adds a counter at every call and `new` expression, so control reaching each call site becomes a distinct edge. `super(...)` and dynamic `import(...)` are left uninstrumented.
+- **`traceStmtBlocks`** adds a counter between consecutive straight-line statements, so each records that the preceding statement completed normally. The directive prologue and hoisted function declarations are left at the head, and no counter is placed after a `return`/`throw`/`break`/`continue`.
+
+Both raise the number of instrumented edges, which gives the fuzzer more signal to distinguish inputs at some throughput cost. In benchmarking they gave only a marginal real-coverage gain on targets whose function coverage is already saturated, so they are opt-in rather than default; they are most likely to help on large targets with unsaturated coverage. Because they add edges, watch the collision-pressure warning described under [`coverageMapSize`](#coveragemapsize) on large targets and raise the map size if it appears.
+
+Like `coverageMapSize`, each option is resolved in the main process and propagated to test worker processes via an environment variable ([`VITIATE_TRACE_CALLS`](/reference/environment-variables/#configuration) / [`VITIATE_TRACE_STMT_BLOCKS`](/reference/environment-variables/#configuration)). You can also set those env vars directly (for example to A/B a run without editing config); an explicit plugin option takes precedence over an inherited env value.
+
 ## Setup File
 
 The plugin automatically adds `@vitiate/core/setup` to Vitest's `setupFiles` via its `config()` hook. This initializes the coverage map and comparison tracing globals at runtime. No manual configuration is needed.
