@@ -28,9 +28,10 @@ pub(super) struct CoverageEvalResult {
 }
 
 impl Fuzzer {
-    /// Compute which coverage map indices are newly maximized compared to the
-    /// feedback's internal history. Called BEFORE `is_interesting()` so the
-    /// history hasn't been updated yet. Returns indices where `map[i] > history[i]`.
+    /// Compute which coverage map indices contribute a bucket bit absent from
+    /// the feedback's internal history. Called BEFORE `is_interesting()` so the
+    /// history hasn't been updated yet. Returns indices where
+    /// `map[i] & !history[i] != 0`.
     pub(super) fn compute_novel_indices(&self) -> Vec<usize> {
         let history = self
             .state
@@ -59,7 +60,10 @@ impl Fuzzer {
         let mut novel = Vec::new();
         for (i, &map_val) in map.iter().enumerate() {
             let hist_val = history_map.get(i).copied().unwrap_or(0);
-            if map_val > hist_val {
+            // Both sides are bucket bitmasks (the map is classified before the
+            // novelty scan); an index is novel when it contributes a bucket bit
+            // the history has never seen.
+            if (map_val & !hist_val) != 0 {
                 novel.push(i);
             }
         }
@@ -76,12 +80,14 @@ impl Fuzzer {
         exit_kind: LibaflExitKind,
         parent_corpus_id: Option<CorpusId>,
     ) -> Result<CoverageEvalResult> {
-        // Classify raw hit counts into AFL-style buckets and mask unstable edges,
-        // both before observer construction. Classification makes `MaxMapFeedback`
-        // admit on a new (edge, hit-count-bucket) rather than a raw per-edge max
-        // (see `classify_counts_in_place`); masking prevents non-deterministic
-        // edges from triggering false-positive "interesting" evaluations. Both
-        // must happen before the observer / novelty scan reads the map.
+        // Classify raw hit counts into AFL-style bucket bits and mask unstable
+        // edges, both before observer construction. Classification makes
+        // `AflMapFeedback` (OR-reduction) admit on any never-seen
+        // (edge, hit-count-bucket) feature - including buckets lower than the
+        // running max (see `classify_counts_in_place`); masking prevents
+        // non-deterministic edges from triggering false-positive "interesting"
+        // evaluations. Both must happen before the observer / novelty scan
+        // reads the map.
         //
         {
             // SAFETY: `self.map_ptr` is valid for `self.map_len` bytes (backed by

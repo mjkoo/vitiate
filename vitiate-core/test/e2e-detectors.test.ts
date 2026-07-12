@@ -24,7 +24,7 @@
  * - seed-redos: "regex aaaa...!" → ReDoS detector (timing measurement)
  * - seed-ssrf: "fetch http://169.254.169.254" → SSRF detector (host blocklist)
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import path from "node:path";
@@ -156,8 +156,6 @@ function cleanFlattedArtifacts(): void {
 }
 
 describe("flatted prototype pollution: discovered via JSON mutations", () => {
-  let result: SubprocessResult;
-
   // Fuzz flatted 3.4.1 without detector seeds - the fuzzer discovers the
   // vulnerability through JSON mutations alone. The prototype pollution
   // detector contributes __proto__ / constructor / prototype as dictionary
@@ -170,35 +168,47 @@ describe("flatted prototype pollution: discovered via JSON mutations", () => {
   // empty seed requires the havoc mutator to assemble valid JSON structure
   // before JSON-aware mutations can refine it, so this needs more headroom
   // than seed-assisted tests.
-  beforeAll(async () => {
+  //
+  // Reliability: discovery is probabilistic (measured ~90% per attempt at this
+  // budget; the remaining misses are unlucky RNG seeds that never converge, not
+  // slow finds). The run therefore lives inside the retried test body with
+  // `retry: 2` - each attempt reseeds from a fresh time-based RNG, so 3
+  // independent draws take the per-run miss rate from ~10% to ~0.1% while only
+  // spending extra time on the runs that fail the first attempt. Aggregate
+  // discovery-rate regressions are tracked out-of-band by the 30-seed sweep,
+  // not by this smoke test. `beforeEach` (re-run on every retry, unlike
+  // `beforeAll`) resets artifacts so each attempt starts clean.
+  beforeEach(() => {
     cleanFlattedArtifacts();
-
-    result = await runVitest(
-      FLATTED_EXAMPLE_DIR,
-      "vitest.fuzz.config.ts",
-      {
-        VITIATE_FUZZ: "1",
-        VITIATE_FUZZ_TIME: "60",
-      },
-      120_000,
-    );
-  }, 120_000);
+  });
 
   afterAll(() => {
     cleanFlattedArtifacts();
   });
 
-  it("finds the prototype pollution vulnerability", () => {
-    if (result.exitCode !== 1) dumpOutput("flatted", result.output);
-    expect(result.exitCode).toBe(1);
-  });
+  it(
+    "finds the prototype pollution vulnerability and writes an artifact",
+    { retry: 2, timeout: 120_000 },
+    async () => {
+      const result = await runVitest(
+        FLATTED_EXAMPLE_DIR,
+        "vitest.fuzz.config.ts",
+        {
+          VITIATE_FUZZ: "1",
+          VITIATE_FUZZ_TIME: "60",
+        },
+        120_000,
+      );
 
-  it("produces a crash artifact", () => {
-    if (findArtifacts(FLATTED_TESTDATA_DIR).length < 1)
-      dumpOutput("flatted", result.output);
-    const artifacts = findArtifacts(FLATTED_TESTDATA_DIR);
-    expect(artifacts.length).toBeGreaterThanOrEqual(1);
-  });
+      const artifacts = findArtifacts(FLATTED_TESTDATA_DIR);
+      if (result.exitCode !== 1 || artifacts.length < 1)
+        dumpOutput("flatted", result.output);
+      // Exit code 1 is the fuzzer's "crash found" signal; the artifact is the
+      // persisted reproducer. Both must hold for a genuine discovery.
+      expect(result.exitCode).toBe(1);
+      expect(artifacts.length).toBeGreaterThanOrEqual(1);
+    },
+  );
 });
 
 describe("detector pipeline: fuzz mode", () => {
