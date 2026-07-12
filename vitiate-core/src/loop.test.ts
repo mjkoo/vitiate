@@ -419,6 +419,43 @@ describe("fuzz loop", () => {
     expect(callCount).toBe(3);
   });
 
+  it("replay-only clears the coverage map between entries and at exit", async () => {
+    await setupFuzzingMode();
+    const covMap = globalThis.__vitiate_cov as Buffer;
+    const extraDir = path.join(tmpDir, "replay-cov");
+    mkdirSync(extraDir, { recursive: true });
+    writeFileSync(path.join(extraDir, "a"), "one");
+    writeFileSync(path.join(extraDir, "b"), "two");
+    writeFileSync(path.join(extraDir, "c"), "three");
+
+    // Replay executions are never engine-evaluated, so nothing zeroes the map
+    // between them. Sentinel edge 200 (untouched by simulateCoverage, which
+    // writes edge 0) records whether a stale bit from a prior entry survived.
+    const SENTINEL = 200;
+    const dirtyEntries: boolean[] = [];
+    const target = (data: Buffer): void => {
+      dirtyEntries.push(covMap[SENTINEL] !== 0);
+      simulateCoverage(data);
+      covMap[SENTINEL] = 1;
+    };
+
+    const result = await runFuzzLoop(
+      target,
+      "replay-cov",
+      "test.fuzz.ts",
+      { replayOnly: true },
+      { corpusDirs: [extraDir] },
+    );
+
+    expect(result.crashed).toBe(false);
+    expect(dirtyEntries.length).toBe(3);
+    // Without the per-entry fill(0), entries 2 and 3 would observe entry 1's
+    // sentinel bit.
+    expect(dirtyEntries.every((d) => d === false)).toBe(true);
+    // The map is zero when the replay-only pass returns.
+    expect(covMap.every((b) => b === 0)).toBe(true);
+  });
+
   it("minimizes crash artifact to smaller than the original mutated input", async () => {
     await setupFuzzingMode();
     const covMap = globalThis.__vitiate_cov as Buffer;
@@ -1189,6 +1226,60 @@ describe("fuzz loop", () => {
       // First crash data preserved
       expect(result.error).toBeInstanceOf(Error);
       expect(result.crashArtifactPath).toBe(result.crashArtifactPaths[0]);
+    });
+
+    it("crash replay and minimize candidates never start with a dirty coverage map", async () => {
+      await setupFuzzingMode();
+      const covMap = globalThis.__vitiate_cov as Buffer;
+      // The crash-classification replay (handleSolution) and the minimize
+      // candidates run outside the engine's evaluate/zero cycle. Sentinel edge
+      // 300 (untouched by simulateCoverage) is written by any crashing input;
+      // every execution records whether it saw a stale sentinel at entry.
+      // The crash predicate (input contains 0x42) survives shrinking, so the
+      // minimizer produces multiple crashing candidates - each would leak its
+      // sentinel into the next candidate's entry check without the fix.
+      const SENTINEL = 300;
+      const dirtyEntries: boolean[] = [];
+      const target = (data: Buffer): void => {
+        dirtyEntries.push(covMap[SENTINEL] !== 0);
+        simulateCoverage(data);
+        if (data.includes(0x42)) {
+          covMap[SENTINEL] = 1;
+          throw new Error("boom");
+        }
+      };
+
+      // A non-crashing seed keeps the corpus non-empty; the 4-byte crashing
+      // seed gives the minimizer several crashing candidates to shrink.
+      const testName = "dirty-map-after-crash";
+      const relativeTestFilePath = "test.fuzz.ts";
+      const seedDir = path.join(
+        tmpDir,
+        "testdata",
+        hashTestPath(relativeTestFilePath, testName),
+        "seeds",
+      );
+      mkdirSync(seedDir, { recursive: true });
+      writeFileSync(path.join(seedDir, "seed-ok"), Buffer.from([0x00]));
+      writeFileSync(
+        path.join(seedDir, "seed-crash"),
+        Buffer.from([0x42, 0x42, 0x42, 0x42]),
+      );
+
+      const result = await runFuzzLoop(
+        target,
+        testName,
+        relativeTestFilePath,
+        { fuzzExecs: 200, fuzzTimeMs: 30_000 },
+        { stopOnCrash: true },
+      );
+
+      expect(result.crashed).toBe(true);
+      // No execution ever observed a stale sentinel: the replay clear and the
+      // per-candidate minimize clear restore the engine's zero-map invariant.
+      expect(dirtyEntries.some((d) => d)).toBe(false);
+      // The map is zero after the loop returns.
+      expect(covMap.every((b) => b === 0)).toBe(true);
     });
 
     it("loop stops on crash when stopOnCrash=true (default)", async () => {

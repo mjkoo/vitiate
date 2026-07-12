@@ -1,7 +1,7 @@
 import path from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { getCliOptions } from "../config.js";
-import { parseDetectorsFlag } from "../cli.js";
+import { parseDetectorsFlag } from "../cli/parsers.js";
 
 // ── Config schema: Tier 2 validation ────────────────────────────────────
 

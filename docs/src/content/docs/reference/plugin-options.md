@@ -87,6 +87,8 @@ Directory for Vitiate data (corpus, testdata), relative to the project root.
 dataDir?: string  // default: ".vitiate"
 ```
 
+The resolved absolute path is propagated to test worker processes via the internal [`VITIATE_DATA_DIR`](/reference/environment-variables/#internal) environment variable, so workers read and write artifacts under the same directory as the main process.
+
 ### coverageMapSize
 
 Number of edge counter slots in the coverage map. Must be a power of two between 256 and 4,194,304.
@@ -96,6 +98,8 @@ coverageMapSize?: number  // default: 65536
 ```
 
 Larger maps reduce hash collisions (where different edges map to the same slot) but use more memory. The default is suitable for most projects. Increase it for very large codebases.
+
+The resolved value is propagated to test worker processes via the internal [`VITIATE_COVERAGE_MAP_SIZE`](/reference/environment-variables/#internal) environment variable, so the map a worker allocates matches the size the instrumentation was compiled against.
 
 Vitiate prints a one-time warning at the start of a campaign if the number of instrumented edges is large relative to the map size (roughly 2% or more), since collisions then start to silently merge edges and coarsen coverage feedback. If you see this warning, raise `coverageMapSize` to the next power of two.
 

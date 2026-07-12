@@ -3,7 +3,27 @@
  * Runs under vitest.instrumented.config.ts which applies vitiate's SWC plugin.
  */
 import { describe, it, expect } from "vitest";
+import path from "node:path";
 import { parseCommand } from "./parser-target.js";
+import { getDataDir } from "../src/config.js";
+
+describe("e2e: plugin config propagates to the worker process", () => {
+  // These assertions run in a forks-pool worker where no plugin hook executes;
+  // the only channel for the resolved coverageMapSize/dataDir is the env vars
+  // exported by the config hook in the main process. Before that propagation
+  // existed, the worker allocated the default 65536-slot map (dropping most
+  // edges) and derived the data dir from cwd.
+  it("worker coverage map length matches the configured coverageMapSize", () => {
+    expect(globalThis.__vitiate_cov.length).toBe(131072);
+    expect(process.env["VITIATE_COVERAGE_MAP_SIZE"]).toBe("131072");
+  });
+
+  it("worker resolves the plugin-configured dataDir", () => {
+    const root = process.env["VITIATE_PROJECT_ROOT"];
+    expect(root).toBeTruthy();
+    expect(getDataDir()).toBe(path.resolve(root!, ".vitiate-e2e-data"));
+  });
+});
 
 describe("e2e: instrumented code produces edge coverage", () => {
   it("parseCommand increments coverage map entries", () => {

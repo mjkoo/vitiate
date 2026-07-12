@@ -433,7 +433,17 @@ export function setProjectRoot(root: string): void {
 }
 
 export function getProjectRoot(): string {
-  return resolvedProjectRoot ?? process.cwd();
+  if (resolvedProjectRoot) {
+    return resolvedProjectRoot;
+  }
+  // Fall back to the value exported by the plugin config hook so worker
+  // processes (where no plugin hook runs) resolve the same root. Module
+  // state, set only in the main process, still takes precedence.
+  const envRoot = process.env["VITIATE_PROJECT_ROOT"];
+  if (envRoot !== undefined && envRoot !== "") {
+    return path.resolve(envRoot);
+  }
+  return process.cwd();
 }
 
 export function resetProjectRoot(): void {
@@ -477,6 +487,13 @@ export function getDataDir(): string {
   if (resolvedDataDir) {
     return resolvedDataDir;
   }
+  // Fall back to the value exported by the plugin config hook so worker
+  // processes resolve the same data dir. The plugin writes an absolute path;
+  // path.resolve is defensive for a hand-set value.
+  const envDir = process.env["VITIATE_DATA_DIR"];
+  if (envDir !== undefined && envDir !== "") {
+    return path.resolve(envDir);
+  }
   return path.resolve(getProjectRoot(), ".vitiate");
 }
 
@@ -493,6 +510,9 @@ const KNOWN_VITIATE_ENV_VARS = new Set([
   "VITIATE_CLI_IPC",
   "VITIATE_DEBUG",
   "VITIATE_RESULTS_FILE",
+  "VITIATE_PROJECT_ROOT",
+  "VITIATE_DATA_DIR",
+  "VITIATE_COVERAGE_MAP_SIZE",
 ]);
 
 export function isDebugMode(): boolean {
@@ -633,8 +653,41 @@ export function setCoverageMapSize(size: number): void {
   resolvedCoverageMapSize = size;
 }
 
+// Memoize the env parse keyed on the raw string: getCoverageMapSize() is
+// called per-transform in the plugin, and re-warning on every call would spam.
+let cachedCovSizeEnvRaw: string | undefined;
+let cachedCovSizeEnv: number | undefined;
+
+function readCoverageMapSizeEnv(): number | undefined {
+  const raw = process.env["VITIATE_COVERAGE_MAP_SIZE"];
+  if (raw === undefined || raw === "") {
+    return undefined;
+  }
+  if (raw === cachedCovSizeEnvRaw) {
+    return cachedCovSizeEnv;
+  }
+  cachedCovSizeEnvRaw = raw;
+  const parsed = Number(raw);
+  if (
+    !Number.isInteger(parsed) ||
+    parsed < MIN_COVERAGE_MAP_SIZE ||
+    parsed > MAX_COVERAGE_MAP_SIZE
+  ) {
+    process.stderr.write(
+      `vitiate: warning: invalid VITIATE_COVERAGE_MAP_SIZE value: ${JSON.stringify(raw)} (expected an integer in [${MIN_COVERAGE_MAP_SIZE}, ${MAX_COVERAGE_MAP_SIZE}]); using default ${COVERAGE_MAP_SIZE}\n`,
+    );
+    cachedCovSizeEnv = undefined;
+    return undefined;
+  }
+  cachedCovSizeEnv = parsed;
+  return parsed;
+}
+
 export function getCoverageMapSize(): number {
-  return resolvedCoverageMapSize ?? COVERAGE_MAP_SIZE;
+  // Precedence: module state (main process) > env (workers) > default.
+  return (
+    resolvedCoverageMapSize ?? readCoverageMapSizeEnv() ?? COVERAGE_MAP_SIZE
+  );
 }
 
 /**
@@ -642,6 +695,10 @@ export function getCoverageMapSize(): number {
  */
 export function resetCoverageMapSize(): void {
   resolvedCoverageMapSize = undefined;
+  // Also clear the env-read memo so a reset fully restores the initial state
+  // (otherwise a prior VITIATE_COVERAGE_MAP_SIZE parse could linger).
+  cachedCovSizeEnvRaw = undefined;
+  cachedCovSizeEnv = undefined;
 }
 
 /**

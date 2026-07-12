@@ -29,6 +29,9 @@ These are set by Vitiate internally. Do not set them manually unless building a 
 |----------|------|-------------|
 | `VITIATE_SUPERVISOR` | `1` | Indicates the process is a supervised child worker. Set by the supervisor. |
 | `VITIATE_SHMEM` | string | Shared memory handle for coverage map. Set by the supervisor. |
+| `VITIATE_PROJECT_ROOT` | string | Resolved project root. Exported by the plugin's `config` hook so test worker processes (where no plugin hook runs) resolve the same root as the main process. Set automatically; do not set manually. |
+| `VITIATE_DATA_DIR` | string | Resolved test data directory (absolute). Exported by the plugin's `config` hook so worker processes read and write artifacts under the same directory. Set automatically; do not set manually. |
+| `VITIATE_COVERAGE_MAP_SIZE` | integer | Resolved [`coverageMapSize`](/reference/plugin-options/#coveragemapsize). Exported by the plugin's `config` hook so worker processes allocate a coverage map matching the size the instrumentation was compiled against. Set automatically; do not set manually. |
 
 ## Precedence
 

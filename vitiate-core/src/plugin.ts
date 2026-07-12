@@ -13,6 +13,7 @@ import {
   resolveInstrumentOptions,
   setCoverageMapSize,
   getCoverageMapSize,
+  COVERAGE_MAP_SIZE,
   setProjectRoot,
   setDataDir,
   setConfigFile,
@@ -449,6 +450,27 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin[] {
       if (coverageMapSize !== undefined) {
         setCoverageMapSize(coverageMapSize);
       }
+
+      // Propagate resolved plugin config to processes where no plugin hook
+      // runs: forks-pool workers (which host the fuzz loop) and the supervisor
+      // child inherit env, but not the module singletons set above. Without
+      // this, a worker resolves the default map size and a cwd-derived data
+      // dir - so a non-default coverageMapSize silently drops most edges and a
+      // custom dataDir/root diverges from where artifacts are written. Always
+      // overwrite: this hook is authoritative for its process tree, and the
+      // supervisor child re-runs it via --config (idempotent). Any invalid
+      // coverageMapSize already threw above, before any env is written.
+      // Resolve from the in-scope option values (not the getters, which fall
+      // back to these same env vars in workers) so a stale inherited value is
+      // replaced rather than re-propagated.
+      process.env["VITIATE_PROJECT_ROOT"] = projectRoot;
+      process.env["VITIATE_DATA_DIR"] = path.resolve(
+        projectRoot,
+        dataDir ?? ".vitiate",
+      );
+      process.env["VITIATE_COVERAGE_MAP_SIZE"] = String(
+        coverageMapSize ?? COVERAGE_MAP_SIZE,
+      );
 
       // Serialize FuzzOptions as VITIATE_OPTIONS
       if (fuzz && !process.env["VITIATE_OPTIONS"]) {

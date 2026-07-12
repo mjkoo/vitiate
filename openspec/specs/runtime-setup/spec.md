@@ -14,6 +14,8 @@ In fuzzing mode (`VITIATE_FUZZ` env var is set): `__vitiate_cov` SHALL be the `B
 
 `setup.ts`'s `initGlobals()` SHALL check if `globalThis.__vitiate_cov` already exists. If it does, `initGlobals()` SHALL skip coverage map creation and reuse the existing buffer. If it does not (e.g., running without the plugin in standalone CLI mode), `initGlobals()` SHALL create the buffer as before.
 
+The configured coverage map size (`getCoverageMapSize()`) SHALL be resolved in this precedence: the module-scoped value set by the plugin's `config` hook (main process only), then the `VITIATE_COVERAGE_MAP_SIZE` environment variable, then the default 65536. Because the fuzz loop runs in a Vitest worker process where no plugin hook executes, the environment fallback is the mechanism by which a worker allocates a map matching the size the instrumentation was compiled against. An invalid `VITIATE_COVERAGE_MAP_SIZE` SHALL emit a single warning and fall back to the default rather than throwing.
+
 #### Scenario: Regression mode initialization
 
 - **WHEN** Vitest starts without `VITIATE_FUZZ` set
@@ -46,6 +48,12 @@ In fuzzing mode (`VITIATE_FUZZ` env var is set): `__vitiate_cov` SHALL be the `B
 - **WHEN** the standalone CLI runs without the Vite plugin (no `configResolved` hook)
 - **AND** `globalThis.__vitiate_cov` is not set
 - **THEN** `setup.ts`'s `initGlobals()` creates the coverage map as before
+
+#### Scenario: Worker process resolves configured map size from env
+
+- **WHEN** a non-default `coverageMapSize` is set on the plugin and the fuzz loop runs in a Vitest worker process
+- **THEN** `getCoverageMapSize()` in the worker returns the configured size via the `VITIATE_COVERAGE_MAP_SIZE` environment variable exported by the plugin's `config` hook
+- **AND** `initGlobals()` allocates `__vitiate_cov` at that size, matching the edge IDs the instrumentation was compiled against
 
 ### Requirement: Trace function initialization
 

@@ -921,6 +921,13 @@ export async function runFuzzLoop(
       replayError = detectorError;
     }
 
+    // The classification replay above ran outside the engine's evaluate/zero
+    // cycle (the engine zeroes the map only at the end of an evaluation), so
+    // clear it here: the next execution - a minimize candidate or the next
+    // runBatch iteration - must start from a zero map or the crash input's
+    // edges get attributed to it.
+    coverageMap.fill(0);
+
     // Track whether the crash reproduced before any overrides.
     const replayReproduced = replayExitKind !== ExitKind.Ok;
 
@@ -944,6 +951,7 @@ export async function runFuzzLoop(
         input,
         target,
         fuzzer,
+        coverageMap,
         timeoutMs,
         options,
         detectorManager,
@@ -989,6 +997,9 @@ export async function runFuzzLoop(
           exitKind = ExitKind.Crash;
           caughtError = detectorError;
         }
+        // Replay executions are never engine-evaluated; clear per entry so
+        // later entries (and the map at loop exit) see no residue.
+        coverageMap.fill(0);
         iteration++;
         if (
           exitKind !== ExitKind.Ok &&
@@ -1032,6 +1043,7 @@ export async function runFuzzLoop(
             input,
             target,
             fuzzer,
+            coverageMap,
             timeoutMs,
             options,
             detectorManager,
@@ -1099,6 +1111,7 @@ export async function runFuzzLoop(
               input,
               target,
               fuzzer,
+              coverageMap,
               timeoutMs,
               options,
               detectorManager,
@@ -1241,6 +1254,7 @@ async function minimizeCrashInput(
   input: Buffer,
   target: (data: Buffer) => unknown | Promise<unknown>,
   fuzzer: Fuzzer,
+  coverageMap: Uint8Array,
   timeoutMs: number | undefined,
   options: FuzzOptions,
   detectorManager: DetectorManager,
@@ -1259,6 +1273,11 @@ async function minimizeCrashInput(
     fuzzer.stashInput(candidate);
     beginIteration(detectorManager);
     const result = await executeTarget(target, candidate, fuzzer, timeoutMs);
+    // Minimization candidates run outside the engine's evaluate/zero cycle
+    // (same leak class as merge.ts replays): clear immediately so one
+    // candidate's coverage never leaks into the next execution. Detectors
+    // never read the map, so clearing before endIteration is safe.
+    coverageMap.fill(0);
 
     const detectorError = detectorManager.endIteration(
       result.exitKind === ExitKind.Ok,
