@@ -10,6 +10,7 @@ import path from "node:path";
 import type { ShmemHandle } from "@vitiate/engine";
 import { enginePanicExitCode, watchdogExitCode } from "@vitiate/engine";
 import {
+  artifactFileNamePrefix,
   getTestDataDir,
   writeArtifact,
   writeArtifactWithPrefix,
@@ -209,7 +210,9 @@ export async function runSupervisor(
   // misclassified as an infrastructure failure.
   const artifactDirs =
     artifactPrefix !== undefined
-      ? [path.dirname(artifactPrefix + "crash-x")]
+      ? // Appending a probe filename makes dirname treat a file-style prefix
+        // (`dir/bug-`) and a directory prefix (`dir/`) uniformly.
+        [path.dirname(artifactPrefix + "x")]
       : [
           path.join(getTestDataDir(relativeTestFilePath, testName), "crashes"),
           path.join(getTestDataDir(relativeTestFilePath, testName), "timeouts"),
@@ -230,7 +233,7 @@ export async function runSupervisor(
 
   /** Whether an artifact filename is of the given kind under the active prefix. */
   function isArtifactOfKind(f: string, kind: ArtifactKind): boolean {
-    return f.startsWith(`${artifactFilePrefix}${kind}-`);
+    return f.startsWith(`${artifactFilePrefix}${artifactFileNamePrefix(kind)}`);
   }
 
   /** List crash/timeout artifact filenames across the artifact directories. */

@@ -40,6 +40,17 @@ pub enum ExitKind {
     Timeout = 2,
 }
 
+// The 0/1/2 values are a cross-language contract. They are hand-written as
+// integer literals in v8_shim.cc (`VitiateRunTargetResult.exit_kind`: 0 at the
+// ok path, 1 at the crash paths, 2 at the timeout path) and returned raw by
+// the JS batch callback (loop.ts `makeBatchCallback`). Renumbering the enum
+// breaks this compile instead of silently misclassifying executions.
+const _: () = {
+    assert!(ExitKind::Ok as i32 == 0);
+    assert!(ExitKind::Crash as i32 == 1);
+    assert!(ExitKind::Timeout as i32 == 2);
+};
+
 /// Result of evaluating a single fuzzing iteration.
 ///
 /// These outcomes are mutually exclusive by design: LibAFL's `StdFuzzer::check_results()`
@@ -91,6 +102,7 @@ pub struct BatchResult {
     /// iteration, if any).
     pub executions_completed: u32,
     /// Why the batch ended: `"completed"`, `"interesting"`, `"solution"`, or `"error"`.
+    #[napi(ts_type = "'completed' | 'interesting' | 'solution' | 'error'")]
     pub exit_reason: String,
     /// Copy of the input that caused early exit. Present when `exitReason`
     /// is not `"completed"`.
@@ -98,4 +110,20 @@ pub struct BatchResult {
     /// The `ExitKind` that triggered a solution (1=Crash, 2=Timeout).
     /// Present only when `exitReason` is `"solution"`.
     pub solution_exit_kind: Option<u32>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The `ts_type` union on `BatchResult::exit_reason` is an opaque string
+    /// that napi copies verbatim into index.d.ts; this test is the tether
+    /// keeping the constants and the annotation in agreement.
+    #[test]
+    fn batch_exit_constants_match_ts_type_union() {
+        assert_eq!(BATCH_EXIT_COMPLETED, "completed");
+        assert_eq!(BATCH_EXIT_INTERESTING, "interesting");
+        assert_eq!(BATCH_EXIT_SOLUTION, "solution");
+        assert_eq!(BATCH_EXIT_ERROR, "error");
+    }
 }

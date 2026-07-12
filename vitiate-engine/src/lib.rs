@@ -125,6 +125,29 @@ pub(crate) fn artifact_hash(data: &[u8]) -> String {
     hex::encode(Sha256::digest(data))
 }
 
+// Artifact kind labels. The `<prefix><kind>-<sha256hex>` filename convention
+// is a cross-language contract with vitiate-core (artifactFileName in
+// corpus.ts and the supervisor's isArtifactOfKind matcher); dedup and death
+// classification depend on exact agreement. Pinned by matching fixture tests
+// here and in corpus.test.ts.
+
+/// Kind label for crash artifacts, written by the Windows SEH exception
+/// handler (Unix crash artifacts are written by the JS parent, so this
+/// const is unused on non-Windows targets).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) const ARTIFACT_KIND_CRASH: &str = "crash";
+
+/// Kind label for timeout artifacts, written by the watchdog's `_exit` path.
+pub(crate) const ARTIFACT_KIND_TIMEOUT: &str = "timeout";
+
+/// Build the artifact filename `<prefix><kind>-<sha256hex>` for `data`.
+///
+/// `prefix` is the raw libFuzzer-style `-artifact_prefix` value: either a
+/// directory prefix ending in a separator or a file-style prefix like `bug-`.
+pub(crate) fn artifact_file_name(prefix: &str, kind: &str, data: &[u8]) -> String {
+    format!("{prefix}{kind}-{}", artifact_hash(data))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -134,6 +157,21 @@ mod tests {
         assert_eq!(
             artifact_hash(b"test"),
             "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+        );
+    }
+
+    /// This exact literal is also asserted in vitiate-core corpus.test.ts
+    /// ("cross-language artifact naming fixture") - the duplicated fixture is
+    /// the deliberate cross-language pin for the filename convention.
+    #[test]
+    fn artifact_file_name_matches_cross_language_fixture() {
+        assert_eq!(
+            artifact_file_name("p/", ARTIFACT_KIND_TIMEOUT, b"test"),
+            "p/timeout-9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+        );
+        assert_eq!(
+            artifact_file_name("bug-", ARTIFACT_KIND_CRASH, b"test"),
+            "bug-crash-9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
         );
     }
 }

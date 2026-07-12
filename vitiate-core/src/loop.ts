@@ -116,6 +116,10 @@ function beginIteration(
  * re-throws, because the batch callback returns a numeric ExitKind to
  * Rust and cannot carry error context. handleSolution replays the crash
  * to recover the error for the artifact.
+ *
+ * The callback must not call back into the Fuzzer: runBatch holds an
+ * exclusive Rust borrow across the callback (see the runBatch reentrancy
+ * doc in the engine), so it confines itself to the target and detectors.
  */
 export function makeBatchCallback(
   target: (data: Buffer) => unknown,
@@ -127,8 +131,8 @@ export function makeBatchCallback(
     try {
       const returnValue = target(input);
       const vuln = detectorManager.endIteration(true, returnValue);
-      if (vuln) return 1; // ExitKind.Crash (detector finding)
-      return 0; // ExitKind.Ok
+      if (vuln) return ExitKind.Crash; // detector finding
+      return ExitKind.Ok;
     } catch {
       // Error is intentionally discarded: the batch callback returns a numeric
       // ExitKind to Rust and cannot carry error context. handleSolution replays
@@ -137,7 +141,7 @@ export function makeBatchCallback(
       // resets are guarded by the manager), so reaching here after a throwing
       // endIteration(true) makes this second call a safe state balance.
       detectorManager.endIteration(false);
-      return 1; // ExitKind.Crash (all target exceptions are crashes)
+      return ExitKind.Crash; // all target exceptions are crashes
     }
   };
 }
