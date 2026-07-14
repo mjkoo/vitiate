@@ -290,6 +290,36 @@ describe("fuzz loop", () => {
     ).rejects.toThrow(/vitiate:.*none produced coverage/);
   });
 
+  it("names instrument.packages in the no-coverage error when listed", async () => {
+    await setupFuzzingMode();
+    // A listed package that failed to instrument is a likely cause of the
+    // "none produced coverage" symptom, so the message should name it.
+    const savedPkgs = process.env["VITIATE_INSTRUMENT_PACKAGES"];
+    process.env["VITIATE_INSTRUMENT_PACKAGES"] = JSON.stringify([
+      "node-forge",
+      "jpeg-js",
+    ]);
+    const target = (_data: Buffer): void => {
+      // no-op: no coverage is ever written.
+    };
+
+    try {
+      await expect(
+        runFuzzLoop(target, "no-cov-pkgs", "test.fuzz.ts", {
+          fuzzExecs: 100,
+        }),
+      ).rejects.toThrow(
+        /instrument\.packages lists "node-forge", "jpeg-js"; verify it is imported and instrumented/,
+      );
+    } finally {
+      if (savedPkgs === undefined) {
+        delete process.env["VITIATE_INSTRUMENT_PACKAGES"];
+      } else {
+        process.env["VITIATE_INSTRUMENT_PACKAGES"] = savedPkgs;
+      }
+    }
+  });
+
   it("throws a clear error when harness has no instrumented code", async () => {
     await setupFuzzingMode();
     // Target runs code but none of it is instrumented - same symptom as

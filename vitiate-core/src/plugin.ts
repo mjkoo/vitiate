@@ -8,15 +8,16 @@ import { fileURLToPath } from "node:url";
 import { init, parse, ImportType } from "es-module-lexer";
 import MagicString from "magic-string";
 import { createFilter, type Plugin } from "vite";
+import {
+  classifyEntry,
+  compileCjsEntry,
+  type CompiledBundle,
+} from "./cjs-compile.js";
 import type { VitiatePluginOptions } from "./config.js";
 import {
   resolveInstrumentOptions,
   setCoverageMapSize,
   getCoverageMapSize,
-  getTraceCalls,
-  getTraceStmtBlocks,
-  setTraceCalls,
-  setTraceStmtBlocks,
   COVERAGE_MAP_SIZE,
   setProjectRoot,
   setDataDir,
@@ -370,8 +371,6 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin[] {
   const fuzz = options?.fuzz;
   const dataDir = options?.dataDir;
   const coverageMapSize = options?.coverageMapSize;
-  const traceCalls = options?.traceCalls;
-  const traceStmtBlocks = options?.traceStmtBlocks;
   // Always exclude vitiate's own package directories - setup/globals files must
   // run before the coverage map exists and cannot be instrumented, and the napi
   // native binding loader must not be instrumented either. In pnpm workspaces,
@@ -409,6 +408,76 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin[] {
   // so we can warn about typos or missing packages at the end.
   const seenPackages = new Set<string>();
 
+  // CommonJS compilation state (Decision 5/9). `compiledBundles` maps an owned
+  // resolved entry path to its esbuild bundle; `resolveId` returns that path and
+  // `load` serves the bundle. Root entries are compiled eagerly in `buildStart`;
+  // subpath entries lazily on first resolve. `rootEntryPaths` lets `load` treat a
+  // missing root-entry bundle as an internal error rather than a silent
+  // fallthrough to native require.
+  const compiledBundles = new Map<string, CompiledBundle>();
+  const rootEntryPaths = new Set<string>();
+  // Resolved entry path -> listed package name, so `load` and diagnostics can
+  // name the owning package.
+  const ownedEntryPackage = new Map<string, string>();
+  // In-flight compiles keyed by entry path, so concurrent resolves of the same
+  // not-yet-compiled entry share one esbuild build instead of racing.
+  const compilingBundles = new Map<string, Promise<CompiledBundle>>();
+  // Vite/vitiate cache dir for on-disk bundle caching, captured in
+  // `configResolved`.
+  let cjsCacheDir: string | undefined;
+  // Listed packages excluding vitiate's own (the set we actually instrument).
+  const listedPackages = packages.filter((pkg) => !VITIATE_PACKAGES.has(pkg));
+
+  /** Strip a query/hash suffix from a module id to get the bare file path. */
+  const bareId = (id: string): string => id.replace(/[?#].*$/, "");
+
+  /**
+   * Classify a listed package's resolved entry and, if CommonJS, compile it
+   * into the bundle cache (idempotent). Returns true when the entry is CJS and
+   * now owned by resolveId/load, false when it is ESM (left on the inline path).
+   *
+   * :param pkgName: the listed package name (for diagnostics).
+   * :param entryPath: the resolved entry file path.
+   * :param isRoot: whether this is a package root entry (compiled eagerly).
+   * :raises CjsCompileError: on a native/missing/uncompilable CJS entry.
+   */
+  async function ensureCjsBundle(
+    pkgName: string,
+    entryPath: string,
+    isRoot: boolean,
+  ): Promise<boolean> {
+    // A listed package can expose non-JS subpaths (CSS, wasm, images) whose
+    // import would make the esbuild bundle fail; leaving those to normal handling
+    // avoids a spurious startup abort. A `.node` entry is the exception - it flows
+    // through to compileCjsEntry, which raises the native-only hard error.
+    if (!JS_TS_EXTENSIONS.test(entryPath) && !entryPath.endsWith(".node")) {
+      return false;
+    }
+    if (compiledBundles.has(entryPath)) return true;
+    const kind = await classifyEntry(entryPath);
+    if (kind === "esm") return false;
+
+    // Dedup concurrent compiles of the same entry onto one esbuild build.
+    let inflight = compilingBundles.get(entryPath);
+    if (!inflight) {
+      inflight = compileCjsEntry({
+        packageName: pkgName,
+        entryPath,
+        cacheDir: cjsCacheDir,
+      });
+      compilingBundles.set(entryPath, inflight);
+    }
+    try {
+      const bundle = await inflight;
+      compiledBundles.set(entryPath, bundle);
+      ownedEntryPackage.set(entryPath, pkgName);
+      if (isRoot) rootEntryPaths.add(entryPath);
+      return true;
+    } finally {
+      compilingBundles.delete(entryPath);
+    }
+  }
+
   // Rewrite named imports of hooked built-in modules so they read from
   // the CJS module object (where detector hooks are installed) instead of
   // the frozen ESM namespace that Vitest externalizes. Active in all modes
@@ -438,8 +507,89 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin[] {
     name: "vitiate:instrument",
     enforce: "post",
 
-    buildStart() {
+    // Eagerly resolve and classify every listed package's root entry, compiling
+    // every CommonJS one, so a compile misconfiguration (native-only,
+    // no-usable-entry, esbuild bundle failure) aborts at startup - before any
+    // fuzzing - and `load` for a root entry reduces to a cache lookup. Vite
+    // awaits `buildStart` before any transform. Uses the same resolver/options
+    // as `resolveId` so the entry classified here is the one served later.
+    //
+    // Eager root resolution is best-effort: a listed package is not always
+    // resolvable by its bare name from the project root (npm aliases like
+    // `flatted` imported as `flatted-vulnerable`, or a dep only reachable from a
+    // specific importer). Such a package is NOT treated as missing here - it is
+    // deferred to `resolveId`, which owns it by its RESOLVED path at import time.
+    // A genuinely uninstalled package that is imported still surfaces as a
+    // natural Vite import-resolution error; one that is never imported is
+    // reported by the `buildEnd` warning.
+    async buildStart() {
       seenPackages.clear();
+      // Reset compilation state so a rebuild (watch mode) recompiles rather than
+      // serving a stale in-memory bundle; the on-disk cache still short-circuits
+      // unchanged entries. Root entries are repopulated below; subpath entries
+      // lazily on their next resolve.
+      compiledBundles.clear();
+      rootEntryPaths.clear();
+      ownedEntryPackage.clear();
+      compilingBundles.clear();
+      for (const pkg of listedPackages) {
+        let resolved;
+        try {
+          resolved = await this.resolve(pkg, undefined, { skipSelf: true });
+        } catch {
+          resolved = null;
+        }
+        if (!resolved || resolved.external) continue;
+        await ensureCjsBundle(pkg, bareId(resolved.id), true);
+      }
+    },
+
+    // Take ownership of a listed CommonJS package's entry so Vitest cannot
+    // externalize it. Bare-specifier imports of a listed package (root or
+    // subpath, including npm aliases that resolve into the package) are resolved
+    // and, if CommonJS, served as an owned id. ESM entries and non-listed
+    // sources return null (no interception). Subpath entries are compiled
+    // lazily here on first resolve; a compile failure is a hard error.
+    async resolveId(source, importer) {
+      if (listedPackages.length === 0) return null;
+      // Only bare specifiers can name a package.
+      if (
+        !source ||
+        source.startsWith(".") ||
+        source.startsWith("\0") ||
+        source.startsWith("node:") ||
+        path.isAbsolute(source)
+      ) {
+        return null;
+      }
+      const resolved = await this.resolve(source, importer, { skipSelf: true });
+      if (!resolved || resolved.external) return null;
+      const entryPath = bareId(resolved.id);
+      const pkg = isListedPackage(entryPath, listedPackages);
+      if (!pkg) return null;
+      const isCjs = await ensureCjsBundle(pkg, entryPath, false);
+      if (!isCjs) return null; // ESM: continue through the inline path.
+      // external: false is explicit (not just the Rollup default): it is the
+      // property that makes this resolution win over Vitest's externalizer, and
+      // is the form the resolve-beats-externalizer behavior was validated with.
+      return { id: entryPath, external: false };
+    },
+
+    // Serve the compiled bundle for an owned CommonJS entry. A root entry we own
+    // but have no bundle for is an internal error, never a silent fallthrough.
+    load(id) {
+      const clean = bareId(id);
+      const bundle = compiledBundles.get(clean);
+      if (bundle) {
+        return { code: bundle.code, map: bundle.map ?? null };
+      }
+      if (rootEntryPaths.has(clean)) {
+        const pkg = ownedEntryPackage.get(clean) ?? "unknown";
+        throw new Error(
+          `vitiate: internal error: no compiled bundle for owned root entry of package "${pkg}" ("${clean}")`,
+        );
+      }
+      return null;
     },
 
     config(config) {
@@ -455,21 +605,6 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin[] {
       // Store coverage map size for globals.ts
       if (coverageMapSize !== undefined) {
         setCoverageMapSize(coverageMapSize);
-      }
-
-      // Store the experimental granularity flags. Only touch the env var when
-      // the plugin option is explicitly provided, so an externally-set
-      // VITIATE_TRACE_* (e.g. for A/B benchmarking without editing config)
-      // survives when no option is given. When provided, propagate to env so
-      // forks-pool workers - where no plugin hook runs - transform with the
-      // same setting.
-      if (traceCalls !== undefined) {
-        setTraceCalls(traceCalls);
-        process.env["VITIATE_TRACE_CALLS"] = traceCalls ? "1" : "0";
-      }
-      if (traceStmtBlocks !== undefined) {
-        setTraceStmtBlocks(traceStmtBlocks);
-        process.env["VITIATE_TRACE_STMT_BLOCKS"] = traceStmtBlocks ? "1" : "0";
       }
 
       // Propagate resolved plugin config to processes where no plugin hook
@@ -512,9 +647,19 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin[] {
       // is a Vitest extension absent from Vite's UserConfig type.
       const escapeRegex = (s: string) =>
         s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const inlinePatterns: RegExp[] = packages
-        .filter((pkg) => !VITIATE_PACKAGES.has(pkg))
-        .map((pkg) => new RegExp(`/node_modules/${escapeRegex(pkg)}/`));
+      const inlinePatterns: RegExp[] = listedPackages.map(
+        (pkg) => new RegExp(`/node_modules/${escapeRegex(pkg)}/`),
+      );
+
+      // Propagate the listed packages to processes where no plugin hook runs
+      // (forks-pool workers hosting the fuzz loop) so the "no coverage" message
+      // can name them. Always overwrite for authoritativeness; clear when empty.
+      if (listedPackages.length > 0) {
+        process.env["VITIATE_INSTRUMENT_PACKAGES"] =
+          JSON.stringify(listedPackages);
+      } else {
+        delete process.env["VITIATE_INSTRUMENT_PACKAGES"];
+      }
 
       return {
         test: {
@@ -523,6 +668,13 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin[] {
             ? { server: { deps: { inline: inlinePatterns } } }
             : {}),
         },
+        // Dep-optimizer guard (Decision 11): keep listed packages out of the
+        // optimizer so their ids stay matchable by isListedPackage's
+        // /node_modules/<pkg>/ substring (defends against config drift; the
+        // SSR/node path the fuzz worker uses normally has the optimizer off).
+        ...(listedPackages.length > 0
+          ? { optimizeDeps: { exclude: listedPackages } }
+          : {}),
       } as Record<string, unknown>;
     },
 
@@ -535,6 +687,13 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin[] {
       ).configFile;
       if (typeof configFile === "string") {
         setConfigFile(configFile);
+      }
+
+      // Capture the Vite/vitiate cache directory for on-disk CJS bundle caching.
+      const cacheDir = (resolvedConfig as unknown as { cacheDir?: string })
+        .cacheDir;
+      if (typeof cacheDir === "string") {
+        cjsCacheDir = cacheDir;
       }
 
       // Early coverage map initialization - Vite awaits configResolved
@@ -616,8 +775,6 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin[] {
                   traceCmp: true,
                   coverageGlobalName: "__vitiate_cov",
                   traceCmpGlobalName: "__vitiate_cmplog_write",
-                  traceCalls: getTraceCalls(),
-                  traceStmtBlocks: getTraceStmtBlocks(),
                 },
               ],
             ],
@@ -633,11 +790,15 @@ export function vitiatePlugin(options?: VitiatePluginOptions): Plugin[] {
     },
 
     buildEnd() {
-      for (const pkg of packages) {
-        if (VITIATE_PACKAGES.has(pkg)) continue;
+      // The resolved-but-never-imported case remains a warning: a listed package
+      // resolved (and, if CJS, compiled) fine but no module from it was
+      // transformed. This is legitimate for filtered runs or conditional imports,
+      // so it does not abort. Unambiguous misconfigurations already aborted in
+      // buildStart with a hard error.
+      for (const pkg of listedPackages) {
         if (!seenPackages.has(pkg)) {
           process.stderr.write(
-            `vitiate: warning: package "${pkg}" was listed in instrument.packages but no modules from it were transformed. Is the package installed?\n`,
+            `vitiate: warning: package "${pkg}" was listed in instrument.packages but never imported by the tests that ran (no modules from it were transformed).\n`,
           );
         }
       }

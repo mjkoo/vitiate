@@ -18,6 +18,7 @@ export default tseslint.config(
       "**/.astro/",
       "benchmarks/vendor/",
       "benchmarks/results/",
+      "benchmarks/*/.vitiate/",
     ],
   },
   js.configs.recommended,

@@ -22,8 +22,6 @@ When neither is set, `fuzz()` runs in [regression mode](/concepts/corpus/#regres
 | `VITIATE_MAX_CRASHES` | integer | Maximum crashes to collect before stopping. Overrides `maxCrashes` from code. |
 | `VITIATE_RESULTS_FILE` | string (path) | When set to a non-empty path, the fuzz loop writes a JSON results summary (crash count, artifact paths, exec and coverage counts, elapsed time) to this file after the campaign finishes. Unset or empty disables it. |
 | `VITIATE_OPTIONS` | JSON object | A `FuzzOptions` object encoded as JSON, merged over per-test options. Invalid JSON, non-objects, and schema-invalid keys are dropped with a warning. Usually set by the CLI from parsed flags; may be set manually to pass options to worker processes. |
-| `VITIATE_TRACE_CALLS` | `1` | Experimental, off by default. Enables the [`traceCalls`](/reference/plugin-options/#coverage-granularity-experimental) plugin option (a call-site coverage counter). Usually set by the plugin's `config` hook from the option so workers match, but may be set directly to enable it without editing config; an explicit `traceCalls` option takes precedence. |
-| `VITIATE_TRACE_STMT_BLOCKS` | `1` | Experimental, off by default. Enables the [`traceStmtBlocks`](/reference/plugin-options/#coverage-granularity-experimental) plugin option (an inter-statement coverage counter). Set by the plugin's `config` hook from the option, or directly; an explicit `traceStmtBlocks` option takes precedence. |
 
 ## Internal
 

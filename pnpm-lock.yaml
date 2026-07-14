@@ -46,6 +46,53 @@ importers:
         specifier: ^8.61.1
         version: 8.61.1(eslint@10.5.0(jiti@2.6.1))(typescript@6.0.3)
 
+  benchmarks/forge:
+    dependencies:
+      node-forge:
+        specifier: ^1.3.1
+        version: 1.4.0
+    devDependencies:
+      '@types/node-forge':
+        specifier: ^1.3.14
+        version: 1.3.14
+      '@vitiate/core':
+        specifier: workspace:*
+        version: link:../../vitiate-core
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+      vite:
+        specifier: ^8.0.16
+        version: 8.0.16(@types/node@25.3.0)(esbuild@0.28.1)(jiti@2.6.1)(yaml@2.9.0)
+      vitest:
+        specifier: ^4.1.9
+        version: 4.1.9(@types/node@25.3.0)(vite@8.0.16(@types/node@25.3.0)(esbuild@0.28.1)(jiti@2.6.1)(yaml@2.9.0))
+      vitiate:
+        specifier: workspace:*
+        version: link:../../vitiate
+
+  benchmarks/jpeg:
+    dependencies:
+      jpeg-js:
+        specifier: ^0.4.4
+        version: 0.4.4
+    devDependencies:
+      '@vitiate/core':
+        specifier: workspace:*
+        version: link:../../vitiate-core
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+      vite:
+        specifier: ^8.0.16
+        version: 8.0.16(@types/node@25.3.0)(esbuild@0.28.1)(jiti@2.6.1)(yaml@2.9.0)
+      vitest:
+        specifier: ^4.1.9
+        version: 4.1.9(@types/node@25.3.0)(vite@8.0.16(@types/node@25.3.0)(esbuild@0.28.1)(jiti@2.6.1)(yaml@2.9.0))
+      vitiate:
+        specifier: workspace:*
+        version: link:../../vitiate
+
   docs:
     dependencies:
       '@astrojs/starlight':
@@ -138,9 +185,15 @@ importers:
       '@vitiate/swc-plugin':
         specifier: workspace:*
         version: link:../vitiate-swc-plugin
+      cjs-module-lexer:
+        specifier: ^2.2.0
+        version: 2.2.0
       es-module-lexer:
         specifier: ^2.1.0
         version: 2.1.0
+      esbuild:
+        specifier: ^0.28.1
+        version: 0.28.1
       escape-string-regexp:
         specifier: ^5.0.0
         version: 5.0.0
@@ -154,6 +207,15 @@ importers:
         specifier: ^1.4.1
         version: 1.4.1(typescript@6.0.3)
     devDependencies:
+      '@types/node-forge':
+        specifier: ^1.3.14
+        version: 1.3.14
+      jpeg-js:
+        specifier: ^0.4.4
+        version: 0.4.4
+      node-forge:
+        specifier: ^1.3.1
+        version: 1.4.0
       tsdown:
         specifier: ^0.22.3
         version: 0.22.3(typescript@6.0.3)(unrun@0.2.36)
@@ -2241,6 +2303,9 @@ packages:
   '@types/nlcst@2.0.3':
     resolution: {integrity: sha512-vSYNSDe6Ix3q+6Z7ri9lyWqgGhJTmzRjZRqyq15N0Z/1/UnVsno9G/N40NBijoYx2seFDIl0+B2mgAb9mezUCA==}
 
+  '@types/node-forge@1.3.14':
+    resolution: {integrity: sha512-mhVF2BnD4BO+jtOp7z1CdzaK4mbuK0LLQYAvdOLqHTavxFNq4zA1EmYkpnFjP8HOUzedfQkRnp0E2ulSAYSzAw==}
+
   '@types/node@24.13.2':
     resolution: {integrity: sha512-fRa09kZTgu8o71KFcDjUFuc7F+dEbZYZmkI0mg5YBTRs0yMKjYHsq/c0urDKeDb+D5qVgXOdFcuu+DZPKOITwA==}
 
@@ -2509,6 +2574,9 @@ packages:
   ci-info@4.4.0:
     resolution: {integrity: sha512-77PSwercCZU2Fc4sX94eF8k8Pxte6JAwL4/ICZLFjJLqegs7kCuAsqqj/70NQF6TvDpgFjkubQB2FW2ZZddvQg==}
     engines: {node: '>=8'}
+
+  cjs-module-lexer@2.2.0:
+    resolution: {integrity: sha512-4bHTS2YuzUvtoLjdy+98ykbNB5jS0+07EvFNXerqZQJ89F7DI6ET7OQo/HJuW6K0aVsKA9hj9/RVb2kQVOrPDQ==}
 
   cli-width@4.1.0:
     resolution: {integrity: sha512-ouuZd4/dm2Sw5Gmqy6bGyNNNe1qt9RpmxveLSO7KcgsTnU7RXfsw+/bukWGo1abgBiMAic068rclZsO4IWmmxQ==}
@@ -3154,6 +3222,9 @@ packages:
     resolution: {integrity: sha512-ekilCSN1jwRvIbgeg/57YFh8qQDNbwDb9xT/qu2DAHbFFZUicIl4ygVaAvzveMhMVr3LnpSKTNnwt8PoOfmKhQ==}
     hasBin: true
 
+  jpeg-js@0.4.4:
+    resolution: {integrity: sha512-WZzeDOEtTOBK4Mdsar0IqEU5sMr3vSV2RqkAIzUEV2BHnUfKGyswWFPFwK5EeDo93K3FohSHbLAjj0s1Wzd+dg==}
+
   js-tokens@4.0.0:
     resolution: {integrity: sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==}
 
@@ -3561,6 +3632,10 @@ packages:
 
   node-fetch-native@1.6.7:
     resolution: {integrity: sha512-g9yhqoedzIUm0nTnTqAQvueMPVOuIY16bqgAJJC8XOOubYFNwz6IER9qs0Gq2Xd0+CecCKFjtdDTMA4u4xG06Q==}
+
+  node-forge@1.4.0:
+    resolution: {integrity: sha512-LarFH0+6VfriEhqMMcLX2F7SwSXeWwnEAJEsYm5QKWchiVYVvJyV9v7UDvUv+w5HO23ZpQTXDv/GxdDdMyOuoQ==}
+    engines: {node: '>= 6.13.0'}
 
   node-mock-http@1.0.4:
     resolution: {integrity: sha512-8DY+kFsDkNXy1sJglUfuODx1/opAGJGyrTuFqEoN90oRc2Vk0ZbD4K2qmKXBBEhZQzdKHIVfEJpDU8Ak2NJEvQ==}
@@ -6106,6 +6181,10 @@ snapshots:
     dependencies:
       '@types/unist': 3.0.3
 
+  '@types/node-forge@1.3.14':
+    dependencies:
+      '@types/node': 25.3.0
+
   '@types/node@24.13.2':
     dependencies:
       undici-types: 7.18.2
@@ -6477,6 +6556,8 @@ snapshots:
       readdirp: 5.0.0
 
   ci-info@4.4.0: {}
+
+  cjs-module-lexer@2.2.0: {}
 
   cli-width@4.1.0: {}
 
@@ -7222,6 +7303,8 @@ snapshots:
 
   jiti@2.6.1: {}
 
+  jpeg-js@0.4.4: {}
+
   js-tokens@4.0.0: {}
 
   js-yaml@4.2.0:
@@ -7860,6 +7943,8 @@ snapshots:
       '@types/nlcst': 2.0.3
 
   node-fetch-native@1.6.7: {}
+
+  node-forge@1.4.0: {}
 
   node-mock-http@1.0.4: {}
 

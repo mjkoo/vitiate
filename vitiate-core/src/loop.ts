@@ -17,6 +17,7 @@ import {
   isDebugMode,
   getCoverageMapSize,
   getResultsFilePath,
+  getInstrumentPackages,
   DEFAULT_MAX_INPUT_LEN,
   type FuzzOptions,
 } from "./config.js";
@@ -291,7 +292,19 @@ function getNextInputOrThrow(fuzzer: Fuzzer): Buffer {
     return fuzzer.getNextInput();
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`vitiate: ${message}`, { cause: error });
+    // When the fuzzer reports no coverage, listed instrument.packages are a
+    // likely cause (e.g. a package that failed to instrument). Name them so the
+    // user is pointed at the cause rather than a generic message.
+    let suffix = "";
+    if (/produced coverage/i.test(message)) {
+      const pkgs = getInstrumentPackages();
+      if (pkgs.length > 0) {
+        suffix = ` (instrument.packages lists ${pkgs
+          .map((p) => `"${p}"`)
+          .join(", ")}; verify it is imported and instrumented)`;
+      }
+    }
+    throw new Error(`vitiate: ${message}${suffix}`, { cause: error });
   }
 }
 
