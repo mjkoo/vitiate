@@ -6,6 +6,8 @@ packages:
   - vitiate-fuzzed-data-provider
   - vitiate-swc-plugin
   - examples/*
+  - benchmarks/forge
+  - benchmarks/jpeg
   - docs
 
 auditConfig:

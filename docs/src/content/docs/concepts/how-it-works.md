@@ -21,8 +21,6 @@ The plugin records both sides of a branch, not just the taken side. When an `if`
 
 Each edge gets a deterministic ID derived from the file path, source location, and edge kind, hashed (FNV-1a with an avalanche finalizer) into the coverage map. The coverage map is a fixed-size array (default: 65,536 slots) where each slot counts how many times that edge was hit. Because IDs are hashed into a fixed number of slots, distinct edges can occasionally collide and share a slot; if the number of instrumented edges grows large relative to the map size, Vitiate prints a one-time warning suggesting you raise [`coverageMapSize`](/reference/plugin-options/#coveragemapsize).
 
-Two experimental modes add finer counters below the branch level - a per-call-site counter and a per-statement counter. Both are off by default; see [coverage granularity](/reference/plugin-options/#coverage-granularity-experimental).
-
 **Comparison tracing** - For equality and relational comparisons (`==`, `===`, `<`, `>=`, etc.), the plugin inserts a tracing call:
 
 ```js

@@ -1,8 +1,4 @@
-## Purpose
-
-High-level `instrument.packages` option for instrumenting specific npm dependency packages. Replaces the previous `nodeModulesExcluded` heuristic and manual `server.deps.inline` plumbing with an explicit package-name-based mechanism.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Package instrumentation option
 
@@ -110,6 +106,8 @@ The `vitiate:hooks` plugin SHALL process modules belonging to packages listed in
 - **WHEN** `packages: ["flatted"]` is configured
 - **AND** a module in `lodash` contains `import { execSync } from "child_process"`
 - **THEN** the hooks plugin does NOT process the module (lodash is not listed, and node_modules is excluded)
+
+## ADDED Requirements
 
 ### Requirement: Resolved-entry CommonJS/ESM classification
 
@@ -231,21 +229,20 @@ Compiled bundles SHALL be cached on disk under the Vite/vitiate cache directory,
 
 ### Requirement: Startup errors for misconfigured packages
 
-Unambiguous compile misconfigurations of a listed package whose entry resolves SHALL be raised as hard errors thrown during eager `buildStart`, aborting the run with a nonzero exit before any fuzzing starts. The error SHALL be thrown from whichever process evaluates the plugin's `buildStart` first (supervisor parent, fuzz child, or worker); the first failing process aborts the run, so the user receives an actionable failure in every case. Each error message SHALL name the offending package and its cause. The escalated causes are:
+Unambiguous package misconfigurations SHALL be raised as hard errors thrown during eager `buildStart`, aborting the run with a nonzero exit before any fuzzing starts. The error SHALL be thrown from whichever process evaluates the plugin's `buildStart` first (supervisor parent, fuzz child, or worker); the first failing process aborts the run, so the user receives an actionable failure in every case. Each error message SHALL name the offending package and its cause. The escalated causes are:
 
+- **Not installed** - the listed package's entry fails to resolve. This applies to ESM-listed packages too, since classification resolves every listed package.
 - **No usable entry** - the package resolves but exposes no entry file to instrument.
 - **Bundle failed** - esbuild fails to compile the CommonJS entry; esbuild diagnostics SHALL be attached to the error. For subpath entries, which are compiled lazily, this cause SHALL be raised with the same hard-error semantics at first resolve (see the subpath import instrumentation requirement).
 - **Native-only entry** - the resolved entry is a native addon and cannot be instrumented.
 
-A listed package whose bare name does not resolve during eager `buildStart` SHALL NOT be treated as a hard error: eager root resolution is best-effort, because a listed package is not always resolvable by its bare name from the project root (npm aliases such as `flatted` imported as `flatted-vulnerable`, or a dependency reachable only from a specific importer). Such a package is deferred to `resolveId`, which owns it by its resolved path at import time. A genuinely uninstalled package that is imported still surfaces as a natural Vite import-resolution error; a listed package that is never imported is reported by the `buildEnd` warning (covered by the Package instrumentation option requirement).
+The previously silent "listed package produced no coverage" outcome SHALL NOT occur for these causes. The fuzz-loop "all seeds evaluated but none produced coverage" path SHALL additionally name the listed package(s) so the user is pointed at the cause rather than a generic instrumentation message. The one remaining warning (resolved and compiled but never imported by the executed tests) is covered by the Package instrumentation option requirement.
 
-The previously silent "listed package produced no coverage" outcome SHALL NOT occur for the escalated compile causes above. The fuzz-loop "all seeds evaluated but none produced coverage" path SHALL additionally name the listed package(s) so the user is pointed at the cause rather than a generic instrumentation message.
+#### Scenario: Not-installed package aborts at startup
 
-#### Scenario: Not-installed package does not abort at startup
-
-- **WHEN** `packages: ["nonexistent"]` is configured and the bare name does not resolve during eager `buildStart`
-- **THEN** `buildStart` does NOT throw; the package is deferred to `resolveId`
-- **AND** if the package is imported by a test it surfaces as a natural Vite import-resolution error, and if it is never imported it is reported by the `buildEnd` warning naming the package
+- **WHEN** `packages: ["nonexistent"]` is configured and the package cannot be resolved
+- **THEN** `buildStart` throws a hard error naming `nonexistent` and stating it is not installed / failed to resolve
+- **AND** the run aborts with a nonzero exit before any fuzzing starts
 
 #### Scenario: Bundle failure aborts at startup with diagnostics
 

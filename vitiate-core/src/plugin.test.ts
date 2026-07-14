@@ -1,8 +1,10 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { init } from "es-module-lexer";
 import type { Plugin } from "vite";
-import { describe, it, expect, afterEach, beforeAll } from "vitest";
+import { describe, it, expect, afterEach, beforeAll, beforeEach } from "vitest";
 import {
   getCoverageMapSize,
   resetCoverageMapSize,
@@ -12,9 +14,6 @@ import {
   resetDataDir,
   getConfigFile,
   resetConfigFile,
-  getTraceCalls,
-  getTraceStmtBlocks,
-  resetTraceFlags,
 } from "./config.js";
 import { vitiatePlugin, isListedPackage } from "./plugin.js";
 
@@ -101,8 +100,6 @@ describe("plugin", () => {
       "VITIATE_PROJECT_ROOT",
       "VITIATE_DATA_DIR",
       "VITIATE_COVERAGE_MAP_SIZE",
-      "VITIATE_TRACE_CALLS",
-      "VITIATE_TRACE_STMT_BLOCKS",
     ] as const;
     const savedEnv = new Map(
       PROPAGATED_ENV.map((name) => [name, process.env[name]] as const),
@@ -120,7 +117,6 @@ describe("plugin", () => {
       resetProjectRoot();
       resetDataDir();
       resetCoverageMapSize();
-      resetTraceFlags();
     });
 
     it("sets project root from Vite config root", () => {
@@ -236,41 +232,6 @@ describe("plugin", () => {
       const instrument = findPlugin(vitiatePlugin(), "vitiate:instrument");
       callConfig(instrument, {});
       expect(getCoverageMapSize()).toBe(65536);
-    });
-
-    it("resolves traceCalls/traceStmtBlocks options and propagates them to env", () => {
-      delete process.env["VITIATE_TRACE_CALLS"];
-      delete process.env["VITIATE_TRACE_STMT_BLOCKS"];
-      const instrument = findPlugin(
-        vitiatePlugin({ traceCalls: true, traceStmtBlocks: true }),
-        "vitiate:instrument",
-      );
-      callConfig(instrument, {});
-      expect(getTraceCalls()).toBe(true);
-      expect(getTraceStmtBlocks()).toBe(true);
-      // Propagated for forks-pool workers that run no plugin hook.
-      expect(process.env["VITIATE_TRACE_CALLS"]).toBe("1");
-      expect(process.env["VITIATE_TRACE_STMT_BLOCKS"]).toBe("1");
-    });
-
-    it("leaves an externally-set VITIATE_TRACE_* env var alone when no option is given", () => {
-      process.env["VITIATE_TRACE_CALLS"] = "1";
-      const instrument = findPlugin(vitiatePlugin(), "vitiate:instrument");
-      callConfig(instrument, {});
-      // No option provided: env is not clobbered, and the getter honors it.
-      expect(process.env["VITIATE_TRACE_CALLS"]).toBe("1");
-      expect(getTraceCalls()).toBe(true);
-    });
-
-    it("an explicit traceCalls:false option overrides an inherited env value", () => {
-      process.env["VITIATE_TRACE_CALLS"] = "1";
-      const instrument = findPlugin(
-        vitiatePlugin({ traceCalls: false }),
-        "vitiate:instrument",
-      );
-      callConfig(instrument, {});
-      expect(getTraceCalls()).toBe(false);
-      expect(process.env["VITIATE_TRACE_CALLS"]).toBe("0");
     });
 
     it("throws when coverageMapSize is invalid", () => {
@@ -850,22 +811,6 @@ describe("plugin", () => {
   });
 
   describe("transform", () => {
-    // Some tests here toggle the trace flags via env or via the plugin option
-    // (which sets module state). Reset both after every test so the ordering of
-    // env-based and option-based tests can never leak into one another.
-    const savedTraceEnv = new Map(
-      (["VITIATE_TRACE_CALLS", "VITIATE_TRACE_STMT_BLOCKS"] as const).map(
-        (name) => [name, process.env[name]] as const,
-      ),
-    );
-    afterEach(() => {
-      resetTraceFlags();
-      for (const [name, val] of savedTraceEnv) {
-        if (val === undefined) delete process.env[name];
-        else process.env[name] = val;
-      }
-    });
-
     it("instruments a simple JS file", async () => {
       const instrument = findPlugin(vitiatePlugin(), "vitiate:instrument");
       const transform = instrument.transform as (
@@ -894,87 +839,6 @@ function add(a, b) {
       expect(map).toHaveProperty("mappings");
       expect(typeof map["mappings"]).toBe("string");
       expect((map["mappings"] as string).length).toBeGreaterThan(0);
-    });
-
-    it("traceCalls / traceStmtBlocks env flags add counters end-to-end", async () => {
-      const instrument = findPlugin(vitiatePlugin(), "vitiate:instrument");
-      const transform = instrument.transform as (
-        code: string,
-        id: string,
-      ) => Promise<{ code: string; map?: string } | null>;
-
-      // Call- and statement-heavy, branch-free target: the baseline instruments
-      // only the function entry, so both flags must strictly raise the counter
-      // count.
-      const code = `
-function handle(req) {
-  const a = parse(req);
-  const b = validate(a);
-  log(b);
-  return format(b);
-}
-`;
-      const countCounters = async (): Promise<number> => {
-        const result = await transform.call(
-          { getCombinedSourcemap: () => null },
-          code,
-          "/project/src/handle.js",
-        );
-        expect(result).not.toBeNull();
-        return (result!.code.match(/__vitiate_cov\[/g) ?? []).length;
-      };
-
-      const origCalls = process.env["VITIATE_TRACE_CALLS"];
-      const origStmts = process.env["VITIATE_TRACE_STMT_BLOCKS"];
-      try {
-        delete process.env["VITIATE_TRACE_CALLS"];
-        delete process.env["VITIATE_TRACE_STMT_BLOCKS"];
-        const baseline = await countCounters();
-
-        process.env["VITIATE_TRACE_CALLS"] = "1";
-        delete process.env["VITIATE_TRACE_STMT_BLOCKS"];
-        const withCalls = await countCounters();
-
-        delete process.env["VITIATE_TRACE_CALLS"];
-        process.env["VITIATE_TRACE_STMT_BLOCKS"] = "1";
-        const withStmtBlocks = await countCounters();
-
-        expect(withCalls).toBeGreaterThan(baseline);
-        expect(withStmtBlocks).toBeGreaterThan(baseline);
-      } finally {
-        if (origCalls === undefined) delete process.env["VITIATE_TRACE_CALLS"];
-        else process.env["VITIATE_TRACE_CALLS"] = origCalls;
-        if (origStmts === undefined)
-          delete process.env["VITIATE_TRACE_STMT_BLOCKS"];
-        else process.env["VITIATE_TRACE_STMT_BLOCKS"] = origStmts;
-      }
-    });
-
-    it("traceCalls plugin option instruments through the transform", async () => {
-      // Exercise the primary (option) path end-to-end: the config hook resolves
-      // the option into module state, which the transform reads via getTraceCalls().
-      delete process.env["VITIATE_TRACE_CALLS"]; // isolate the option from env
-      const instrument = findPlugin(
-        vitiatePlugin({ traceCalls: true }),
-        "vitiate:instrument",
-      );
-      callConfig(instrument, {});
-      const transform = instrument.transform as (
-        code: string,
-        id: string,
-      ) => Promise<{ code: string; map?: string } | null>;
-
-      const code = `function handle(req) { const a = parse(req); return format(a); }`;
-      const result = await transform.call(
-        { getCombinedSourcemap: () => null },
-        code,
-        "/project/src/opt.js",
-      );
-      expect(result).not.toBeNull();
-      // Function entry + parse() + format() call-site counters: more than the
-      // single entry counter the baseline (option off) would emit.
-      const counters = (result!.code.match(/__vitiate_cov\[/g) ?? []).length;
-      expect(counters).toBeGreaterThan(1);
     });
 
     it("skips node_modules files by default", async () => {
@@ -1289,6 +1153,198 @@ function check(x) {
       } finally {
         process.stderr.write = originalWrite;
       }
+    });
+  });
+
+  describe("CommonJS dependency compilation hooks", () => {
+    let tmpDir: string;
+
+    beforeEach(() => {
+      tmpDir = path.join(
+        tmpdir(),
+        `vitiate-plugin-cjs-${process.pid}-${Date.now()}-${Math.floor(
+          performance.now() * 1000,
+        )}`,
+      );
+      mkdirSync(tmpDir, { recursive: true });
+    });
+
+    afterEach(() => {
+      if (tmpDir) rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    /** Write a multi-file CJS fixture under a synthetic node_modules and return
+     * its resolved entry path. */
+    function makeCjsFixture(name: string): string {
+      const dir = path.join(tmpDir, "node_modules", name);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        path.join(dir, "package.json"),
+        JSON.stringify({ name, version: "1.0.0", main: "index.js" }),
+      );
+      writeFileSync(
+        path.join(dir, "sub.js"),
+        "module.exports = { hello: () => 42 };\n",
+      );
+      const entry = path.join(dir, "index.js");
+      writeFileSync(
+        entry,
+        "const sub = require('./sub');\nmodule.exports = { run: () => sub.hello() };\n",
+      );
+      return entry;
+    }
+
+    interface ResolveResult {
+      id: string;
+      external: boolean;
+    }
+    type ResolveFn = (
+      source: string,
+      importer: string | undefined,
+      opts: unknown,
+    ) => Promise<ResolveResult | null>;
+
+    function callBuildStart(plugin: Plugin, resolve: ResolveFn): Promise<void> {
+      return (
+        plugin.buildStart as unknown as (this: {
+          resolve: ResolveFn;
+        }) => Promise<void>
+      ).call({ resolve });
+    }
+
+    function callResolveId(
+      plugin: Plugin,
+      resolve: ResolveFn,
+      source: string,
+      importer: string | undefined,
+    ): Promise<{ id: string } | string | null> {
+      return (
+        plugin.resolveId as unknown as (
+          this: { resolve: ResolveFn },
+          source: string,
+          importer: string | undefined,
+          opts: unknown,
+        ) => Promise<{ id: string } | string | null>
+      ).call({ resolve }, source, importer, {});
+    }
+
+    function callLoad(
+      plugin: Plugin,
+      id: string,
+    ): { code: string; map: unknown } | null {
+      return (
+        plugin.load as unknown as (
+          this: unknown,
+          id: string,
+        ) => { code: string; map: unknown } | null
+      ).call({}, id);
+    }
+
+    it("buildStart defers (does not throw) when a listed package is unresolvable by bare name", async () => {
+      // A listed package is not always resolvable by its bare name from the
+      // project root (npm aliases like `flatted` imported as
+      // `flatted-vulnerable`). buildStart must NOT hard-error on that - it defers
+      // to resolveId, which owns the package by its resolved path at import time.
+      // This guards the flatted-via-alias e2e against a spurious startup abort.
+      const plugins = vitiatePlugin({
+        instrument: { packages: ["only-importable-by-alias"] },
+      });
+      const instrument = findPlugin(plugins, "vitiate:instrument");
+      const resolve: ResolveFn = async () => null;
+      await expect(
+        callBuildStart(instrument, resolve),
+      ).resolves.toBeUndefined();
+    });
+
+    it("buildStart surfaces a compile hard error for a resolvable but native-only listed package", async () => {
+      // Once a listed package resolves, a genuine compile-blocking
+      // misconfiguration (here a native-addon entry) still aborts at startup.
+      const nativeDir = path.join(tmpDir, "node_modules", "nat");
+      mkdirSync(nativeDir, { recursive: true });
+      writeFileSync(
+        path.join(nativeDir, "package.json"),
+        JSON.stringify({ name: "nat", version: "1.0.0", main: "index.node" }),
+      );
+      const nativeEntry = path.join(nativeDir, "index.node");
+      writeFileSync(nativeEntry, "\0binary");
+      const plugins = vitiatePlugin({ instrument: { packages: ["nat"] } });
+      const instrument = findPlugin(plugins, "vitiate:instrument");
+      const resolve: ResolveFn = async (source) =>
+        source === "nat" ? { id: nativeEntry, external: false } : null;
+      await expect(callBuildStart(instrument, resolve)).rejects.toThrow(
+        /native addon/,
+      );
+    });
+
+    it("buildStart eagerly compiles a listed CJS package and load serves the bundle", async () => {
+      const entry = makeCjsFixture("fixpkg");
+      const plugins = vitiatePlugin({ instrument: { packages: ["fixpkg"] } });
+      const instrument = findPlugin(plugins, "vitiate:instrument");
+      const resolve: ResolveFn = async (source) =>
+        source === "fixpkg" ? { id: entry, external: false } : null;
+
+      await callBuildStart(instrument, resolve);
+      const loaded = callLoad(instrument, entry);
+      expect(loaded).not.toBeNull();
+      // The relative require('./sub') is inlined into the served bundle.
+      expect(loaded!.code).toContain("hello");
+    });
+
+    it("resolveId returns the owned entry id for a listed CJS import", async () => {
+      const entry = makeCjsFixture("fixpkg2");
+      const plugins = vitiatePlugin({ instrument: { packages: ["fixpkg2"] } });
+      const instrument = findPlugin(plugins, "vitiate:instrument");
+      const resolve: ResolveFn = async (source) =>
+        source === "fixpkg2" ? { id: entry, external: false } : null;
+
+      await callBuildStart(instrument, resolve);
+      const resolved = await callResolveId(
+        instrument,
+        resolve,
+        "fixpkg2",
+        path.join(tmpDir, "importer.js"),
+      );
+      expect(resolved).toEqual({ id: entry, external: false });
+    });
+
+    it("resolveId does not claim a non-JS subpath of a listed package", async () => {
+      // A listed package can expose asset subpaths (e.g. pkg/dist/style.css).
+      // Claiming those would make the esbuild JS bundle fail and spuriously abort
+      // the run, so resolveId must leave non-JS entries to normal handling.
+      const dir = path.join(tmpDir, "node_modules", "assetpkg", "dist");
+      mkdirSync(dir, { recursive: true });
+      const cssEntry = path.join(dir, "style.css");
+      writeFileSync(cssEntry, ".x { color: red }\n");
+      const plugins = vitiatePlugin({ instrument: { packages: ["assetpkg"] } });
+      const instrument = findPlugin(plugins, "vitiate:instrument");
+      const resolve: ResolveFn = async (source) =>
+        source === "assetpkg/dist/style.css"
+          ? { id: cssEntry, external: false }
+          : null;
+
+      const resolved = await callResolveId(
+        instrument,
+        resolve,
+        "assetpkg/dist/style.css",
+        path.join(tmpDir, "importer.js"),
+      );
+      expect(resolved).toBeNull();
+    });
+
+    it("resolveId returns null (no interception) for a non-listed source", async () => {
+      const otherEntry = makeCjsFixture("other-pkg");
+      const plugins = vitiatePlugin({ instrument: { packages: ["fixpkg3"] } });
+      const instrument = findPlugin(plugins, "vitiate:instrument");
+      const resolve: ResolveFn = async (source) =>
+        source === "other-pkg" ? { id: otherEntry, external: false } : null;
+
+      const resolved = await callResolveId(
+        instrument,
+        resolve,
+        "other-pkg",
+        path.join(tmpDir, "importer.js"),
+      );
+      expect(resolved).toBeNull();
     });
   });
 });
