@@ -6,7 +6,10 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "target": "ESNext",
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "paths": {
+      "@vitiate/core": ["./vitiate-core/src/index.ts"]
+    }
   },
   "include": [
     "vitiate-core/src/**/*.ts",
