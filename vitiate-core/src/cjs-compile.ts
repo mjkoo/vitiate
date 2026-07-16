@@ -450,8 +450,10 @@ interface CachePaths {
 function computeCachePaths(req: CompileRequest): CachePaths | undefined {
   const { cacheDir, entryPath, packageName } = req;
   if (!cacheDir) return undefined;
-  // Substring check mirrors isListedPackage; Vite ids use forward slashes.
-  if (!entryPath.includes("/node_modules/")) return undefined;
+  // Substring check mirrors isListedPackage. Normalize Windows backslashes so a
+  // native entry path (e.g. from a resolver) matches as well as a Vite id.
+  if (!entryPath.replace(/\\/g, "/").includes("/node_modules/"))
+    return undefined;
 
   const pkg = findNearestPackageJson(entryPath);
   const version =

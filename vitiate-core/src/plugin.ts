@@ -309,9 +309,12 @@ export function isListedPackage(
   moduleId: string,
   packages: string[],
 ): string | undefined {
+  // Normalize Windows backslashes so the substring match works on native paths
+  // (resolver-produced ids) as well as Vite's already-POSIX ids.
+  const id = moduleId.replace(/\\/g, "/");
   for (const pkg of packages) {
     if (VITIATE_PACKAGES.has(pkg)) continue;
-    if (moduleId.includes(`/node_modules/${pkg}/`)) return pkg;
+    if (id.includes(`/node_modules/${pkg}/`)) return pkg;
   }
   return undefined;
 }

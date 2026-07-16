@@ -162,9 +162,11 @@ describe("buildSyntheticEntry", () => {
 
 describe("buildBanner", () => {
   it("embeds the entry file URL literally in a createRequire banner", () => {
-    const banner = buildBanner("/abs/pkg/index.js");
+    const entryPath = path.join(tmpDir, "pkg", "index.js");
+    const banner = buildBanner(entryPath);
     expect(banner).toContain("createRequire as __vitiate_createRequire");
-    expect(banner).toContain("file:///abs/pkg/index.js");
+    // The exact file URL (drive letter on Windows, leading slash on POSIX).
+    expect(banner).toContain(pathToFileURL(entryPath).href);
     expect(banner).not.toContain("import.meta.url");
   });
 });
