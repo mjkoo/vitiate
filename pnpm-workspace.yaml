@@ -19,13 +19,13 @@ auditConfig:
     # one known advisory here. https://github.com/advisories/GHSA-rf6f-7fwh-wjgh
     - GHSA-rf6f-7fwh-wjgh
 
-onlyBuiltDependencies:
-  - "@optique/core"
-  - "@optique/run"
-  - "@swc/core"
-  - esbuild
-  - lefthook
-  - sharp
+allowBuilds:
+  "@optique/core": true
+  "@optique/run": true
+  "@swc/core": true
+  esbuild: true
+  lefthook: true
+  sharp: true
 
 overrides:
   flatted@<=3.4.1: ">=3.4.2"
