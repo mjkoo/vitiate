@@ -31,8 +31,7 @@ let stashedVulnerabilityError: VulnerabilityError | undefined;
  * (defensive cleanup).
  */
 export function drainStashedVulnerabilityError():
-  | VulnerabilityError
-  | undefined {
+  VulnerabilityError | undefined {
   const error = stashedVulnerabilityError;
   stashedVulnerabilityError = undefined;
   return error;
