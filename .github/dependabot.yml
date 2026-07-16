@@ -28,6 +28,13 @@ updates:
       cargo-all:
         patterns:
           - "*"
+    ignore:
+      # Pin sha2 to the 0.10 chain: bumping to 0.11 forks the whole RustCrypto
+      # stack (sha2/digest/crypto-common/block-buffer/cpufeatures) against
+      # swc_core's transitive 0.10 chain, which cargo-deny's multiple-versions
+      # ban (correctly) rejects. Drop this ignore once swc_core moves to 0.11.
+      - dependency-name: "sha2"
+        versions: [">=0.11"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
