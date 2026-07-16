@@ -484,12 +484,9 @@ export function parseDetectorsFlag(spec: string): FuzzOptions["detectors"] {
       process.exit(1);
     }
     // Only set to true if not already an options object
-    if (
-      !(
-        typeof detectors[directive] === "object" &&
-        detectors[directive] !== null
-      )
-    ) {
+    if (!(
+      typeof detectors[directive] === "object" && detectors[directive] !== null
+    )) {
       detectors[directive] = true;
     }
   }
