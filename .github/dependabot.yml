@@ -16,6 +16,11 @@ updates:
       # examples/flatted-vuln pins the vulnerable flatted 3.4.1 on purpose to
       # fuzz the prototype-pollution bug; bumping it patches the bug away.
       - dependency-name: "flatted-vulnerable"
+      # Hold TypeScript on the 6.x line: 7.0 is the native compiler port, and
+      # typescript-eslint does not yet support it (it hard-crashes on TS 7).
+      # Drop this ignore once the typescript-eslint/tsdown toolchain supports 7.x.
+      - dependency-name: "typescript"
+        versions: [">=7.0.0"]
 
   - package-ecosystem: "cargo"
     directory: "/"
