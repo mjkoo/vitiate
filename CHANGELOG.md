@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.4.0](https://github.com/mjkoo/vitiate/compare/v0.3.1...v0.4.0) (2026-07-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* A crash now exits with code 77 (was 1) and a timeout with 70. Update CI or scripts that treat exit 1 as "crash found". The codes are configurable via -error_exitcode / -timeout_exitcode.
+
+### Features
+
+* add benchmarks ([0137882](https://github.com/mjkoo/vitiate/commit/01378820b2aacaea990d37eb2a123c2ae8aa3c13))
+* add paths subcommand to inspect and prune corpus directories ([be9731a](https://github.com/mjkoo/vitiate/commit/be9731a5ed5864d16daf387b126bf844507a12fe))
+* adopt libFuzzer exit codes ([0e9a576](https://github.com/mjkoo/vitiate/commit/0e9a5762f6db06b1b35099c5a98a30d333172cbf))
+* adopt libFuzzer exit codes and add reproduce subcommand ([d5c044b](https://github.com/mjkoo/vitiate/commit/d5c044be9cc754adf6df9294da57dbffb994e197))
+* bucketed admission + unstable-edge downweighting + bounded fuzzing stages ([6c35f16](https://github.com/mjkoo/vitiate/commit/6c35f162336a82edd19aa664ca03e41b63ef09c2))
+* default reproduce -timeout to libFuzzer's 1200s so hung replays are watchdog-bounded ([470026f](https://github.com/mjkoo/vitiate/commit/470026fd09b68c6ed3301e9998d31b7cf1150ec5))
+* detect function-valued prototype pollution; add optimize --timeout ([c7f0e94](https://github.com/mjkoo/vitiate/commit/c7f0e9459f034771eb727158aa05bd504a0968c6))
+* fuzz CommonJS dependencies; remove experimental coverage-granularity options ([48604b9](https://github.com/mjkoo/vitiate/commit/48604b967ee8bde6551f2deb37a96ff287d4922c))
+* instrument not-taken/loop-exit edges + mix edge-id hash ([4e1179a](https://github.com/mjkoo/vitiate/commit/4e1179aab106ff89624dc5eea8a158d28714402a))
+* per-entry watchdog timeout protection ([65eee73](https://github.com/mjkoo/vitiate/commit/65eee73c21631ba8c97ae4bd681ba0e4302f0912))
+
+
+### Bug Fixes
+
+* better adherance to time budget ([33c6e58](https://github.com/mjkoo/vitiate/commit/33c6e58aef21dc0a3316d293e997b7efc7b82100))
+* classify engine panics distinctly from target crashes via panic hook + reserved exit code ([efc7698](https://github.com/mjkoo/vitiate/commit/efc76983f17ff27a63263db4cfeeab14de783e66))
+* correct doc drift, document shipped features, throw on positional FDP string args ([ab4d2d4](https://github.com/mjkoo/vitiate/commit/ab4d2d4da27701ffe1154d056d02dd0daeed0473))
+* **deps:** hold sha2 at 0.10 to satisfy cargo-deny duplicate ban ([78e8aeb](https://github.com/mjkoo/vitiate/commit/78e8aeb45a177901fae780f2b5071364dfb98491))
+* drain calibration cmplog, install panic hook, recover shmem input on unknown exit codes ([c4ac7ab](https://github.com/mjkoo/vitiate/commit/c4ac7ab2dcaf385e2c2d50ed7bccbf303732685b))
+* feature-set corpus admission restores fuzzing discovery rate ([319a753](https://github.com/mjkoo/vitiate/commit/319a753cfb0d391e89a4116e99a074acad86d5cf))
+* fix breaking pnpm allowed builds change ([71be8b5](https://github.com/mjkoo/vitiate/commit/71be8b517ec98007543175c94ca8d717130ff30c))
+* fix cmplog draining behavior ([09cc683](https://github.com/mjkoo/vitiate/commit/09cc683446040ca8f4287d35c830ec545510ddfb))
+* fix race condition causing git error during cargo deny ([030b03b](https://github.com/mjkoo/vitiate/commit/030b03b15bd0969d39289ed3fcb17e396c5847a3))
+* fix watchdog race condition where timeouts could be misattributed ([54dedb1](https://github.com/mjkoo/vitiate/commit/54dedb1bf2516709e78c853415d586ea3dbb7e02))
+* fix windows path issues, pnpm audit ([e697f1a](https://github.com/mjkoo/vitiate/commit/e697f1aa888c2bc74df2e9afd03be5916907255a))
+* keep detector findings when prototype restore fails ([108c4a3](https://github.com/mjkoo/vitiate/commit/108c4a3b44317708681ecbd7de98ecfcbf73dd98))
+* prefix-aware artifact scan, merge VITIATE_OPTIONS, tolerate unknown flags, keep empty inputs ([f214eb4](https://github.com/mjkoo/vitiate/commit/f214eb4e3b000750ff84f037db8843721e474501))
+* resolve @vitiate/core to source in tsconfig so type-check passes without a build ([3e0d919](https://github.com/mjkoo/vitiate/commit/3e0d919cbe68a2a766ed47dd7d17a5484682baea))
+* treat OOM/SIGKILL and startup-crash storms as infrastructure failures, not target crashes ([0e10723](https://github.com/mjkoo/vitiate/commit/0e107238afb20660bb6e42ab0494a6a18cb42563))
+* zero coverage map after replay/minimize; propagate map size to workers ([eb83534](https://github.com/mjkoo/vitiate/commit/eb8353484efefe9b25d1f865c80c8e99883f299b))
+
 ## [0.3.1](https://github.com/mjkoo/vitiate/compare/v0.3.0...v0.3.1) (2026-06-21)
 
 
