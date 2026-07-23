@@ -57,9 +57,9 @@
     "test:e2e": "vitest run --config test/vitest.e2e.config.ts"
   },
   "dependencies": {
-    "@optique/core": "1.1.1",
-    "@optique/run": "1.1.1",
-    "@swc/core": "^1.15.43",
+    "@optique/core": "1.2.0",
+    "@optique/run": "1.2.0",
+    "@swc/core": "^1.15.46",
     "@vitiate/engine": "workspace:*",
     "@vitiate/swc-plugin": "workspace:*",
     "cjs-module-lexer": "^2.2.0",
@@ -67,7 +67,7 @@
     "esbuild": "^0.28.1",
     "escape-string-regexp": "^5.0.0",
     "ipaddr.js": "^2.4.0",
-    "magic-string": "^1.0.0",
+    "magic-string": "^1.1.0",
     "valibot": "^1.4.2"
   },
   "peerDependencies": {
@@ -78,7 +78,7 @@
     "@types/node-forge": "^1.3.14",
     "jpeg-js": "^0.4.4",
     "node-forge": "^1.3.1",
-    "tsdown": "^0.22.8",
+    "tsdown": "^0.22.14",
     "vite": "^8.1.5",
     "vitest": "^4.1.10"
   }

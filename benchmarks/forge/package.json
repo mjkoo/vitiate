@@ -13,7 +13,7 @@
   "devDependencies": {
     "@types/node-forge": "^1.3.14",
     "@vitiate/core": "workspace:*",
-    "typescript": "^6.0.3",
+    "typescript": "^7.0.2",
     "vite": "^8.1.5",
     "vitest": "^4.1.10",
     "vitiate": "workspace:*"
