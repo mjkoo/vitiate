@@ -50,7 +50,7 @@
     "test": "node test/smoke.mjs && node test/panic-exit.mjs"
   },
   "devDependencies": {
-    "@napi-rs/cli": "^3.7.3"
+    "@napi-rs/cli": "^3.7.4"
   },
   "optionalDependencies": {
     "@vitiate/engine-darwin-arm64": "workspace:*",
