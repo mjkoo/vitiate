@@ -7,7 +7,7 @@
     "@vitiate/core": "workspace:*"
   },
   "devDependencies": {
-    "vite": "^8.1.5",
-    "vitest": "^4.1.10"
+    "vite": "^8.2.2",
+    "vitest": "^5.0.0"
   }
 }
